@@ -420,7 +420,7 @@ export function HydrateFallback() {
         {/* viewBox 裁到墨迹边界(getBBox x237 y89 w660 h956,外扩 10 单位描边余量),
             SVG 盒 = 兔子可见边界,flex 垂直居中即墨迹居中,文字对齐才有可靠基准 */}
         <Logo aria-hidden viewBox="227 79 680 976" />
-        <span>RikkaHub</span>
+        <span>RikkaHub Desktop PLUS</span>
       </div>
       <div className="sp-dots">
         {[0, 1, 2].map((i) => (

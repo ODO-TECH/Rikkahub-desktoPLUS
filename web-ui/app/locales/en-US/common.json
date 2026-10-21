@@ -222,7 +222,7 @@
     "containerized_suffix": "to pull the latest image, then recreate the container.",
     "updating_percent": "Updating · {{percent}}%",
     "updating": "Updating…",
-    "linux_ready": "✅ The new version is ready (binary + frontend). Click below to apply, then restart Rikkahub manually. Your data directory and settings are untouched.",
+    "linux_ready": "✅ The new version is ready (binary + frontend). Click below to apply, then restart RikkaHub Desktop PLUS manually. Your data directory and settings are untouched.",
     "installer_cached": "✅ Update package is ready:",
     "installer_downloaded": "Update downloaded. Click below to restart and update:",
     "installer_keep_data": "The installer preserves your data directory and settings automatically.",
@@ -244,7 +244,7 @@
     "installer_launched": "Installer launched; the app will exit shortly",
     "installer_launch_failed": "Failed to launch installer",
     "installer_launch_failed_msg": "Failed to launch installer: {{message}}",
-    "applied_restart": "Update applied. Restart Rikkahub to take effect",
+    "applied_restart": "Update applied. Restart RikkaHub Desktop PLUS to take effect",
     "apply_failed": "Failed to apply update"
   },
   "errors": {

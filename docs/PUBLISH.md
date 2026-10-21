@@ -24,9 +24,22 @@ fork、爬虫、Google 缓存都会留下）。
 
 ## 1. 在 GitHub 建一个空仓库
 
-New repository → 名字随意（例如 `rikkahub-desktop-community`）→ **只建空仓库**：
+New repository → 仓库名用 `rikkahub-desktop-plus` → **只建空仓库**：
 不要勾 "Add a README"、不要选 LICENSE、不要加 `.gitignore` —— 这三个都会让首次推送
 因为「远端已有提交」而失败。可见性选 Public（这就是个开源分支）。
+
+README、关于页、侧栏与崩溃报告按钮里的链接都按 `ODO-TECH/rikkahub-desktop-plus` 写死了。
+换仓库名就要同步改 `web-ui/app/components/settings/about.tsx`、
+`web-ui/app/components/conversation-sidebar.tsx`、`web-ui/app/components/startup-gate.tsx`。
+
+### 仓库简介（About）
+
+GitHub 仓库页右上角的 Description 建议直接填：
+
+> RikkaHub Desktop 的社区增强分支：Windows 原生 WebView2 壳、SQLite 本地数据、stdio MCP、SSH 远程设备、Kelivo 同步与 12 项备份，并提供飞牛 OS / Docker 自托管部署。
+
+Topics 建议：`llm` `ai-client` `desktop-app` `docker` `self-hosted` `bun` `react` `tauri`
+`webview2` `mcp` `sqlite` `ssh` `nas` `fnos` `windows` `linux`。
 
 ## 2. 推上去
 

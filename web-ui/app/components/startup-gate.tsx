@@ -88,7 +88,7 @@ export function StartupGate() {
             <Button
               variant="outline"
               onClick={() =>
-                void openExternal("https://github.com/yuh-G/rikkahub-desktop/issues/new")
+                void openExternal("https://github.com/ODO-TECH/rikkahub-desktop-plus/issues/new")
               }
             >
               <Bug className="size-4" />

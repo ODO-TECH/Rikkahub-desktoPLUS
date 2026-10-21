@@ -222,7 +222,7 @@
     "containerized_suffix": "拉取最新镜像后重建容器。",
     "updating_percent": "正在更新 · {{percent}}%",
     "updating": "正在更新…",
-    "linux_ready": "✅ 新版本已下载就绪（含二进制与前端）。点击下方按钮应用更新，应用后需手动重启 Rikkahub 生效。数据目录与配置不受影响。",
+    "linux_ready": "✅ 新版本已下载就绪（含二进制与前端）。点击下方按钮应用更新，应用后需手动重启 RikkaHub Desktop PLUS 生效。数据目录与配置不受影响。",
     "installer_cached": "✅ 更新包已就绪：",
     "installer_downloaded": "更新包已下载完成，点击下方按钮重启并更新：",
     "installer_keep_data": "安装过程会自动保留你的数据目录和配置。",
@@ -244,7 +244,7 @@
     "installer_launched": "安装程序已启动，应用即将退出",
     "installer_launch_failed": "启动安装程序失败",
     "installer_launch_failed_msg": "启动安装程序失败：{{message}}",
-    "applied_restart": "更新已应用，请重启 Rikkahub 生效",
+    "applied_restart": "更新已应用，请重启 RikkaHub Desktop PLUS 生效",
     "apply_failed": "应用更新失败"
   },
   "errors": {

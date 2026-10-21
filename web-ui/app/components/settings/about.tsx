@@ -121,28 +121,20 @@ export function AboutSection() {
       action: undefined,
     },
     {
-      key: "website",
-      label: t("settings:about.website"),
-      value: "https://rikkahub-desktop.pages.dev",
-      icon: Globe,
-      onClick: () => void openExternal("https://rikkahub-desktop.pages.dev/"),
-      action: undefined,
-    },
-    {
       key: "github",
       label: "GitHub",
-      value: "https://github.com/yuh-G/rikkahub-desktop",
+      value: "https://github.com/ODO-TECH/rikkahub-desktop-plus",
       icon: Github,
-      onClick: () => void openExternal("https://github.com/yuh-G/rikkahub-desktop/"),
+      onClick: () => void openExternal("https://github.com/ODO-TECH/rikkahub-desktop-plus/"),
       action: undefined,
     },
     {
       key: "license",
       label: t("settings:about.license"),
-      value: "https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE",
+      value: "https://github.com/ODO-TECH/rikkahub-desktop-plus/blob/main/LICENSE",
       icon: FileClock,
       onClick: () =>
-        void openExternal("https://github.com/yuh-G/rikkahub-desktop/blob/master/LICENSE"),
+        void openExternal("https://github.com/ODO-TECH/rikkahub-desktop-plus/blob/main/LICENSE"),
       action: undefined,
     },
   ];
@@ -150,8 +142,8 @@ export function AboutSection() {
     <>
       <SettingsStack>
         <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <img src="/app-icon.png" alt="RikkaHub" className="size-24 rounded-[18%] shadow-sm" />
-          <div className="text-2xl font-semibold tracking-normal">RikkaHub</div>
+          <img src="/app-icon.png" alt="RikkaHub Desktop PLUS" className="size-24 rounded-[18%] shadow-sm" />
+          <div className="text-2xl font-semibold tracking-normal">RikkaHub Desktop PLUS</div>
         </div>
         <SettingsRows>
           {aboutRows.map((row) => {

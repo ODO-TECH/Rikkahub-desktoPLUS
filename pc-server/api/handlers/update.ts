@@ -28,6 +28,8 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
   // when that happens we fall back to scraping the public `github.com/<repo>/releases/latest`
   // redirect, which doesn't hit the API and isn't rate-limited.
   if (path === "update/check" && request.method === "GET") {
+    // 更新检查仍指向上游：本分支只发布源码，没有自己的 Release 通道。
+    // 指向不存在的仓库会让 releases/latest 返回非 tag 重定向，前端收到 502。
     const repo = "yuh-G/rikkahub-desktop";
 
     // 按当前运行平台挑选 release asset。命名约定：

@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: 报告 RikkaHub PC 的 bug 或异常
+about: 报告 RikkaHub Desktop PLUS 的 bug 或异常
 title: ''
 labels: bug
 assignees: ''
@@ -25,7 +25,7 @@ Attach relevant screenshots or screen recordings.
 
 ## 版本信息 | Version Information
 
-- RikkaHub PC 版本 / Version: (例如 1.0.0)
+- RikkaHub Desktop PLUS 版本 / Version: (例如 2.0.0-preview-v5)
 - Windows 版本 / Windows Version: (例如 Windows 11 24H2)
 - 模型供应商 / Provider: (OpenAI / Claude / Google / 其他兼容)
 - 模型 / Model: (例如 gpt-5, claude-opus-4-6)

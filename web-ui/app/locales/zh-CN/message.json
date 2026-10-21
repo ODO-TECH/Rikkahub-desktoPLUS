@@ -62,7 +62,7 @@
     "export_success": "已导出",
     "export_success_desc": "文件已保存:{{filename}}",
     "export_show_in_folder": "在文件夹中显示",
-    "export_image_watermark": "由 Rikkahub Desktop 生成 · rikkahub-desktop.pages.dev",
+    "export_image_watermark": "由 RikkaHub Desktop PLUS 生成",
     "open_model_settings": "打开模型设置",
     "generation_failed": "生成失败",
     "copy_error": "复制错误信息",

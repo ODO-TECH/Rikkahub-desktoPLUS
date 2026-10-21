@@ -17,7 +17,7 @@
     "back": "返回",
     "close": "关闭设置",
     "dialog_title": "设置",
-    "meta_title": "RikkaHub 设置"
+    "meta_title": "RikkaHub Desktop PLUS 设置"
   },
   "nav_search": {
     "placeholder": "搜索设置",
@@ -162,7 +162,6 @@
   "about": {
     "version": "版本",
     "system": "系统",
-    "website": "官网",
     "check_update": "检查更新",
     "check_failed": "检查更新失败",
     "license": "许可证"

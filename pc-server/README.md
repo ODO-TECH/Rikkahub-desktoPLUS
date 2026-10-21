@@ -1,76 +1,67 @@
 # pc-server
 
-The Bun-runtime backend for RikkaHub PC. A single-file HTTP server (`server.ts`) that owns
-all state, talks to LLM providers, runs tools, serves SSE streams, and ships static frontend
-assets.
+RikkaHub Desktop PLUS 的 Bun 后端。`server.ts` 只负责进程生命周期、端口绑定与路由装配，业务按目录拆分：会话、推理引擎、工具、MCP、备份、SSH、工作区、文件提取。
 
-## Run from source
+## 从源码运行
 
-```powershell
-bun run server.ts
+先在仓库根目录还原 `pi/` 引擎（见 [../docs/BUILD.md](../docs/BUILD.md)），然后：
+
+```bash
+bun install
+bun run server.ts          # http://localhost:17455
 ```
 
-Listens on `http://localhost:17455` by default on the desktop (the default port changed
-from 8080 in v2.0.0-preview-v4 — containers stay pinned to 8080 via `ENV PORT=8080`). All persistent state lives under `../pc-data/` next to
-the project root (or `RIKKAHUB_PC_DATA_DIR` if set).
+- 桌面默认端口 `17455`，可用 `--port=<n>` 或 `PORT` 覆盖。
+- 容器内固定 `11451`（镜像 `ENV PORT`），不做端口顺延。
+- 持久化数据在 `../pc-data/`（或 `RIKKAHUB_PC_DATA_DIR` 指定的目录）。
 
-Override the port:
+## 编译单文件
 
-```powershell
-bun run server.ts --port=8081
-# or
-PORT=8081 bun run server.ts
+```bash
+bun run compile            # → ../dist/rikkahub-pc.exe（Windows x64）
+bun run compile:linux      # → ../dist/rikkahub-pc（Linux x64）
 ```
 
-## Compile to a portable Windows exe
+产物自带 Bun 运行时，运行时从自身所在目录查找 `icons/` 与 `web-ui/build/client/`，找不到时回退到源码目录。
 
-```powershell
-bun run compile
-# → ../dist/rikkahub-pc.exe
+## 验证
+
+```bash
+bun run typecheck
+bun test
+bun run smoke:request-chain      # mock 供应商 / MCP / WebDAV / S3 全链路
+bun run smoke:backup-roundtrip   # 备份导出 → 恢复往返
 ```
 
-The exe is fully self-contained: it bundles `server.ts` plus the Bun runtime. At runtime it
-looks for `icons/` and `web-ui/build/client/` next to itself, then falls back to the source
-tree, so the same exe works in dev (`bun run compile` followed by `../dist/rikkahub-pc.exe`)
-and in a shipped archive.
+测试数据走 `test-preload.ts` 重定向的临时沙箱，不会读写真实 `pc-data/`。Windows 上恒定的 3 个失败见 `docs/BUILD.md` 第 7 节。
 
-## Run the smoke test
+## 目录
 
-```powershell
-bun run smoke:request-chain
-```
+| 目录 | 职责 |
+| --- | --- |
+| `api/` | HTTP 路由与鉴权；`handlers/` 按域拆分 |
+| `conversations/` | SQLite 会话库、消息节点、全文索引 |
+| `engines/`、`pi-engine/`、`subprocess-engine/` | 对话引擎适配与 pi 子进程桥接 |
+| `inference-engine/`、`model-providers/` | 供应商接入、审批流与模型目录 |
+| `agents/`、`assistants/` | 全局 agent 指引、助手与人设 |
+| `app-config/` | 默认设置、提示词、统计端点 |
+| `tools/` | 内置工具、MCP（Streamable HTTP / stdio） |
+| `workspace/` | 工作区、路径边界、shell 工具 |
+| `files/` | 附件与文档文本提取（子进程 worker） |
+| `backup/` | 本地 zip、WebDAV、S3、Kelivo 导入导出 |
+| `persistence/` | 设置 JSON、实例锁、启动卫生 |
+| `foundation/` | 路径、端口、平台检测等无业务依赖的基础件 |
+| `ssh/` | 远程设备与单次命令执行 |
+| `media/`、`search/` | 语音输入、搜索服务 |
+| `memory/` | 助手记忆与待确认记忆 |
+| `commands/` | 斜杠命令注册表 |
+| `observability/` | 错误上报、启动里程碑与崩溃取证 |
+| `updates/` | 版本号与更新检查（仅上游 Release） |
 
-Spins up mock LLM, MCP, WebDAV, and S3 servers and exercises the full request chain end-to-end
-into a scratch `pc-data/smoke-request-chain/` directory. Use this as the canary after edits.
+## 约定
 
-## Layout
-
-```
-server.ts          # The whole backend in one file. Sections in order:
-                   #   1. Type definitions
-                   #   2. Default settings (providers, search, assistants, prompts)
-                   #   3. State load/save + throttled IO
-                   #   4. SSE broadcast helpers
-                   #   5. Transformer pipeline (regex, OCR, template, prompt injection)
-                   #   6. Provider clients (OpenAI / Claude / Google + streaming + tools)
-                   #   7. Tool dispatch (local + MCP + search + skills)
-                   #   8. Search service implementations (17 services)
-                   #   9. Backup (WebDAV, S3 with AWS SigV4)
-                   #  10. Route table
-scripts/
-  request-chain-smoke.ts   # End-to-end mock-server test runner
-package.json       # dev / start / compile / smoke:request-chain scripts
-```
-
-## Conventions
-
-- Keep `server.ts` as a single file by design — easier to compile, ship, and audit.
-- New features go inline; aim for short comments that explain non-obvious invariants
-  (throttle coalescing, provider quirks, streaming reconnection), not what the code does.
-- Provider-specific request building goes through `applyCustomBody`, `applyRequestHeaders`,
-  `responseApi*ForProvider`, `reasoningPayloadForProvider`. Don't bypass these.
-- Streaming is driven by the `StreamHooks` shape: `{ message, conversation, node }`. Pushing
-  through `addStreamText` / `appendReasoningDelta` / `replaceLoadingReasoningWithTool`
-  automatically broadcasts to SSE clients.
-- Never log API keys or store them anywhere outside `pc-data/state.json` (which is
-  user-local and gitignored).
+- **模块单向依赖**：`foundation/` 不感知业务；路由层不直接写库。
+- **凭据只落 `pc-data/state.json`**，不写日志、不进仓库。
+- 注释写「为什么」与不变量（节流合并、供应商怪癖、流式重连），不复述代码。
+- 数据格式变更必须带一次性迁移与回退路径。
+- 新增外部命令依赖时，Windows 与 Linux 两条分支都要有解析路径；容器里没有的运行时（如 Node）不要假设存在。

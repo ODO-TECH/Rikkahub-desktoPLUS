@@ -1,6 +1,6 @@
-# desktop-shell — Windows 原生桌面壳（WinForms + 系统 WebView2）
+# desktop-shell — RikkaHub Desktop PLUS 的 Windows 原生壳（WinForms + 系统 WebView2）
 
-English: a thin native Windows shell that hides the Bun backend, opens one
+English: the thin native Windows shell of RikkaHub Desktop PLUS. It hides the Bun backend, opens one
 WebView2 window, and lives in the tray. It is deliberately **not** Electron: it
 reuses the Edge WebView2 runtime that ships with Windows 10 1809+ / Windows 11,
 so the whole shell is a ~200 KB `RikkaHub.exe` instead of a ~150 MB Chromium

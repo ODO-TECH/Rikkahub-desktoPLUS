@@ -136,7 +136,7 @@ namespace RikkaHubShell
             try
             {
                 StringBuilder builder = new StringBuilder();
-                builder.AppendLine("# RikkaHub desktop shell settings");
+                builder.AppendLine("# RikkaHub Desktop PLUS desktop shell settings");
                 builder.AppendLine("port=" + Port);
                 builder.AppendLine("minimizeToTray=" + (MinimizeToTray ? "1" : "0"));
                 builder.AppendLine("lowVramMode=" + (LowVramMode ? "1" : "0"));
@@ -166,52 +166,52 @@ namespace RikkaHubShell
             values = new Dictionary<string, string>();
             if (zh)
             {
-                values["open"] = "打开 RikkaHub";
+                values["open"] = "打开 RikkaHub Desktop PLUS";
                 values["closeBehavior"] = "关闭按钮行为";
                 values["toTray"] = "最小化到托盘";
                 values["quitDirect"] = "直接退出程序";
                 values["lowVram"] = "低显存模式（软件渲染，下次启动生效）";
                 values["openDataDir"] = "打开数据目录";
-                values["quit"] = "退出 RikkaHub";
-                values["trayTitle"] = "RikkaHub 仍在后台运行";
+                values["quit"] = "退出 RikkaHub Desktop PLUS";
+                values["trayTitle"] = "RikkaHub Desktop PLUS 仍在后台运行";
                 values["trayBody"] = "点击托盘图标重新打开，右键托盘菜单可退出。";
                 values["lowVramTitle"] = "低显存模式已更新";
-                values["lowVramBody"] = "下次启动 RikkaHub 时生效。";
-                values["startupFailed"] = "RikkaHub 启动失败";
-                values["startupFailedBody"] = "无法启动 RikkaHub 后端服务。";
+                values["lowVramBody"] = "下次启动 RikkaHub Desktop PLUS 时生效。";
+                values["startupFailed"] = "RikkaHub Desktop PLUS 启动失败";
+                values["startupFailedBody"] = "无法启动 RikkaHub Desktop PLUS 后端服务。";
                 values["logLabel"] = "日志";
                 values["runtimeTitle"] = "需要 Microsoft Edge WebView2";
-                values["runtimeBody"] = "RikkaHub 使用系统自带的 Edge WebView2 渲染界面，本机尚未安装。\n\n是否现在打开微软官方下载页面？安装完成后重新打开 RikkaHub 即可。";
+                values["runtimeBody"] = "RikkaHub Desktop PLUS 使用系统自带的 Edge WebView2 渲染界面，本机尚未安装。\n\n是否现在打开微软官方下载页面？安装完成后重新打开 RikkaHub Desktop PLUS 即可。";
                 values["componentTitle"] = "WebView2 组件缺失";
-                values["componentBody"] = "RikkaHub 目录里缺少 WebView2 组件文件，请重新解压完整的桌面壳压缩包。\n\n缺少文件：";
+                values["componentBody"] = "RikkaHub Desktop PLUS 目录里缺少 WebView2 组件文件，请重新解压完整的桌面壳压缩包。\n\n缺少文件：";
                 values["serverMissingDetail"] = "未找到 rikkahub-pc.exe。请把桌面壳放在便携版目录内，或在 shell.ini 里配置 serverPath。";
                 values["serverTimeout"] = "后端启动超时（90 秒）。";
-                values["crashTitle"] = "RikkaHub 界面进程异常";
+                values["crashTitle"] = "RikkaHub Desktop PLUS 界面进程异常";
                 values["crashBody"] = "界面渲染进程已异常退出，请关闭后重新打开。";
             }
             else
             {
-                values["open"] = "Open RikkaHub";
+                values["open"] = "Open RikkaHub Desktop PLUS";
                 values["closeBehavior"] = "When closing the window";
                 values["toTray"] = "Minimize to tray";
                 values["quitDirect"] = "Quit the app";
                 values["lowVram"] = "Low VRAM mode (software rendering, next launch)";
                 values["openDataDir"] = "Open data folder";
-                values["quit"] = "Quit RikkaHub";
-                values["trayTitle"] = "RikkaHub is still running";
+                values["quit"] = "Quit RikkaHub Desktop PLUS";
+                values["trayTitle"] = "RikkaHub Desktop PLUS is still running";
                 values["trayBody"] = "Click the tray icon to reopen. Right-click it to quit.";
                 values["lowVramTitle"] = "Low VRAM mode updated";
-                values["lowVramBody"] = "Takes effect the next time RikkaHub starts.";
-                values["startupFailed"] = "RikkaHub failed to start";
-                values["startupFailedBody"] = "The RikkaHub backend did not start.";
+                values["lowVramBody"] = "Takes effect the next time RikkaHub Desktop PLUS starts.";
+                values["startupFailed"] = "RikkaHub Desktop PLUS failed to start";
+                values["startupFailedBody"] = "The RikkaHub Desktop PLUS backend did not start.";
                 values["logLabel"] = "Log";
                 values["runtimeTitle"] = "Microsoft Edge WebView2 is required";
-                values["runtimeBody"] = "RikkaHub uses the system Edge WebView2 runtime, which is not installed.\n\nOpen the official Microsoft download page now? Reopen RikkaHub after installing.";
+                values["runtimeBody"] = "RikkaHub Desktop PLUS uses the system Edge WebView2 runtime, which is not installed.\n\nOpen the official Microsoft download page now? Reopen RikkaHub Desktop PLUS after installing.";
                 values["componentTitle"] = "WebView2 components are missing";
-                values["componentBody"] = "The WebView2 files are missing from the RikkaHub folder. Please extract the complete desktop shell package.\n\nMissing: ";
+                values["componentBody"] = "The WebView2 files are missing from the RikkaHub Desktop PLUS folder. Please extract the complete desktop shell package.\n\nMissing: ";
                 values["serverMissingDetail"] = "rikkahub-pc.exe was not found. Put the desktop shell inside the portable folder, or set serverPath in shell.ini.";
                 values["serverTimeout"] = "The backend did not start within 90 seconds.";
-                values["crashTitle"] = "RikkaHub renderer failed";
+                values["crashTitle"] = "RikkaHub Desktop PLUS renderer failed";
                 values["crashBody"] = "The UI renderer exited unexpectedly. Please close and reopen the app.";
             }
         }
@@ -509,7 +509,7 @@ namespace RikkaHubShell
             instanceMutex = new Mutex(true, @"Local\RikkaHub.Desktop.Shell", out created);
             if (!created)
             {
-                Native.ActivateExistingWindow("RikkaHub");
+                Native.ActivateExistingWindow("RikkaHub Desktop PLUS");
                 return;
             }
 
@@ -524,7 +524,7 @@ namespace RikkaHubShell
             Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
             {
                 Log.Write("unhandled UI exception: " + e.Exception);
-                MessageBox.Show(e.Exception.Message, "RikkaHub", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(e.Exception.Message, "RikkaHub Desktop PLUS", MessageBoxButtons.OK, MessageBoxIcon.Error);
             };
             AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
             {
@@ -621,7 +621,7 @@ namespace RikkaHubShell
             appIcon = LoadAppIcon();
             splashHtml = LoadTextResource("RikkaHubSplash");
 
-            Text = "RikkaHub";
+            Text = "RikkaHub Desktop PLUS";
             Icon = appIcon;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1280, 840);
@@ -637,7 +637,7 @@ namespace RikkaHubShell
 
             tray = new NotifyIcon();
             tray.Icon = appIcon != null ? appIcon : SystemIcons.Application;
-            tray.Text = "RikkaHub";
+            tray.Text = "RikkaHub Desktop PLUS";
             tray.Visible = true;
             tray.MouseClick += delegate(object sender, MouseEventArgs e)
             {
@@ -1070,7 +1070,7 @@ namespace RikkaHubShell
                 else if (!quitting && !restartingBackend)
                 {
                     Log.Write("server exited unexpectedly");
-                    ShowBalloon("RikkaHub", "RikkaHub 后端服务已退出，请从托盘退出后重新打开。");
+                    ShowBalloon("RikkaHub Desktop PLUS", "RikkaHub Desktop PLUS 后端服务已退出，请从托盘退出后重新打开。");
                 }
             };
 

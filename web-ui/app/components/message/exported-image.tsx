@@ -247,12 +247,12 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
                 marginTop: 4,
               }}
             >
-              {new Date().toLocaleString()} · Rikkahub Desktop
+              {new Date().toLocaleString()} · RikkaHub Desktop PLUS
             </div>
           </div>
           <img
             src={APP_ICON_SRC}
-            alt="Rikkahub Desktop"
+            alt="RikkaHub Desktop PLUS"
             crossOrigin="anonymous"
             style={{ width: 48, height: 48, borderRadius: 12, objectFit: "cover" }}
           />

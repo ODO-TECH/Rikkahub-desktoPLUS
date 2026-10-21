@@ -1344,13 +1344,13 @@ export const ConversationSidebar = React.memo(
             <ThemeModeToggle />
 
             <a
-              href="https://rikkahub-desktop.pages.dev/"
+              href="https://github.com/ODO-TECH/rikkahub-desktop-plus"
               target="_blank"
               rel="noopener noreferrer"
               className="ml-auto truncate whitespace-nowrap text-xs font-normal text-foreground/80 hover:text-foreground transition-colors"
-              title="RikkaHub"
+              title="RikkaHub Desktop PLUS"
             >
-              RikkaHub
+              RikkaHub PLUS
             </a>
           </div>
 

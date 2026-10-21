@@ -17,7 +17,7 @@
     "back": "Back",
     "close": "Close settings",
     "dialog_title": "Settings",
-    "meta_title": "RikkaHub Settings"
+    "meta_title": "RikkaHub Desktop PLUS Settings"
   },
   "nav_search": {
     "placeholder": "Search settings",
@@ -162,7 +162,6 @@
   "about": {
     "version": "Version",
     "system": "System",
-    "website": "Website",
     "check_update": "Check for updates",
     "check_failed": "Failed to check for updates",
     "license": "License"
