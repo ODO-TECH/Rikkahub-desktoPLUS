@@ -28,6 +28,7 @@
 - [平台支持](#平台支持)
 - [快速开始](#快速开始)
 - [构建](#构建)
+- [仓库结构](#仓库结构)
 - [数据目录与备份](#数据目录与备份)
 - [配置参考](#配置参考)
 - [已知限制](#已知限制)
@@ -227,6 +228,21 @@ Tauri NSIS 流程、内嵌 bash bundle 的生成、便携版目录布局与 Linu
 docker build -t rikkahub .
 docker run -d --name rikkahub -p 8080:8080 -v rikkahub-data:/app/pc-data rikkahub
 ```
+
+## 仓库结构
+
+| 路径 | 内容 |
+| --- | --- |
+| `pc-server/` | Bun 后端：会话、推理引擎、MCP、备份、SSH、工作区 |
+| `web-ui/` | React 19 + React Router 7 前端 SPA（Tailwind v4、shadcn/ui） |
+| `web-ui/src-tauri/` | 上游 Tauri v2 壳（Windows 安装包、Linux 打包） |
+| `desktop-shell/` | 本分支的 Windows 原生壳（WinForms + WebView2） |
+| `pi-patches/` | 给 pi 引擎的受控补丁 |
+| `pi-model-data/` | 与 pi 基线严格配对的模型目录快照 |
+| `fonts/`、`icons/` | 内置字体与供应商图标 |
+| `functions/` | 上游的 Cloudflare Pages 统计端点源码 |
+| `docs/` | 构建、发布与排查文档 |
+| `.github/` | CI、Linux 产物与 Docker 发布工作流 |
 
 ## 数据目录与备份
 
