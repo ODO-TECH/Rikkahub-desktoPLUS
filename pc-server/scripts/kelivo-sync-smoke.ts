@@ -160,13 +160,28 @@ function prepareSyntheticState() {
 function unzipTo(zip: string, dir: string) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const ps = [
-    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-    `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zip.replace(/'/g, "''")}', '${dir.replace(/'/g, "''")}')`,
-  ].join("; ");
-  const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps]);
+  // 跨平台解压，与 backup/zip.ts createZipFromDirectory、backup/import.ts 的分支对称：
+  // Windows 只有 PowerShell 稳（zip/unzip 不保证在 PATH，且非 ASCII 名会坏），Linux/macOS
+  // 用 unzip（CI 与 NAS 容器都走这条）。此前这里无条件 spawn powershell.exe，Linux CI
+  // 上直接 ENOENT，validate 模式的两个契约测试全红。
+  const proc =
+    process.platform === "win32"
+      ? Bun.spawnSync({
+          cmd: [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            [
+              "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+              `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zip.replace(/'/g, "''")}', '${dir.replace(/'/g, "''")}')`,
+            ].join("; "),
+          ],
+          timeout: 60_000,
+        })
+      : Bun.spawnSync({ cmd: ["unzip", "-q", "-o", zip, "-d", dir], timeout: 60_000 });
   if (proc.exitCode !== 0) {
-    throw new Error(new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 500));
+    throw new Error(`unzipTo failed (exit ${proc.exitCode}): ${new TextDecoder().decode(proc.stderr ?? new Uint8Array()).slice(0, 500)}`);
   }
 }
 
