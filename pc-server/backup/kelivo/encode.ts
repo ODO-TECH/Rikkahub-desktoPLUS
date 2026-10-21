@@ -28,6 +28,9 @@ import { listAllConversationMetas } from "../../conversations/read-queries";
 import { defaultAssistant } from "../../assistants/index";
 import { createZipFromDirectory } from "../zip";
 import { KELIVO_SCHEMA_SQL, KELIVO_SCHEMA_VERSION } from "./schema";
+// 版本号单一真源：写进 manifest 的 appVersion 过去是硬编码字面量，改版本号时
+// bump-version 覆盖不到它，导出的包会长期自报一个旧版本。
+import { APP_VERSION } from "../../updates/index";
 
 const KELIVO_BACKUP_FORMAT_VERSION = 3;
 const KELIVO_MINIMUM_READABLE_FORMAT = 3;
@@ -756,7 +759,7 @@ export function createKelivoBackupZipToPath(targetZipPath: string): KelivoExport
       minimumReadableFormatVersion: KELIVO_MINIMUM_READABLE_FORMAT,
       payloadKind: "sqlite",
       createdAtUtc: new Date().toISOString(),
-      appVersion: "rikkahub-pc-2.0.0-preview-v5",
+      appVersion: `rikkahub-pc-${APP_VERSION}`,
       includeChats: scope.conversations,
       includeFiles: false,
       secretsIncluded: true,

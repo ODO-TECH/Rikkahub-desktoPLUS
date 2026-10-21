@@ -45,6 +45,14 @@ const targets: Array<{ file: string; pattern: RegExp; replacement: string }> = [
     pattern: /const APP_VERSION = "[^"]+";/,
     replacement: `const APP_VERSION = "${newVersion}";`,
   },
+  {
+    // Cargo.lock 里 rikkahub 包自身的版本必须与 Cargo.toml 同步：Tauri 打包与 CI 的
+    // rust-check 都跑 `cargo build --locked`，lock 与 manifest 不一致时直接失败，
+    // 且报错出现在 Rust 阶段，离"忘了改版本号"很远。
+    file: join(root, "web-ui", "src-tauri", "Cargo.lock"),
+    pattern: /(\[\[package\]\]\nname = "rikkahub"\nversion = )"[^"]+"/,
+    replacement: `$1"${newVersion}"`,
+  },
 ];
 
 for (const target of targets) {

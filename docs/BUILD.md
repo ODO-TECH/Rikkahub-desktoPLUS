@@ -222,18 +222,25 @@ Windows 上 `bun test` 有 3 个恒定失败，不是回归、不必 bisect：2 
 
 ## 9. 发布你自己的版本前，必改的两处
 
-1. **更新检查指向的仓库**：`pc-server/api/handlers/update.ts` 里的
-   `const repo = "yuh-G/rikkahub-desktop"` 决定「检查更新」去哪个 GitHub Release 取版本。
-   保持现状 = 你的构建会提示升级到上游的包（会覆盖你的版本）；改成你自己的仓库并
-   自己发 Release 才符合分支语义。
-2. **Windows 下载源**：`pc-server/updates/index.ts` 的 `UPDATE_R2_BASE` 指向上游维护者的
-   公开 R2 桶。若你自建分发，换掉它；不换的话至少知道下载链接不来自你。
+1. **更新检查指向的仓库**：`pc-server/updates/index.ts` 的 `UPDATE_REPO` 决定
+   「检查更新」去哪个 GitHub Release 取版本。本分支已指向
+   `ODO-TECH/Rikkahub-desktoPLUS`；分叉给别人用时要改成对方的仓库。误指上游 =
+   你的构建会提示升级到上游的包（会覆盖你的版本），`updates/update-channel.test.ts`
+   对这一点有断言，改错会直接红。
+2. **Windows 下载源**：同文件的 `UPDATE_R2_BASE` 默认为空，即一律走 GitHub Release
+   资产直链。自建 CDN 镜像时再填自己的桶地址；`hasUpdateMirror()` 会同时放开
+   `update/download` 的主机白名单。**不要**指回上游维护者的公开 R2 桶——那里只有
+   上游的安装包。
+
+Windows 发布物是 portable zip，不是 NSIS 安装器：`pickUpdateAsset` 只认 `*-setup.exe`，
+挑不到就返回空下载链接，前端落到「打开 Release 页手动下载」分支。想恢复应用内自动安装，
+先把 NSIS 产物接进发布流程。
 
 改 Tauri 打包身份时还有：`web-ui/src-tauri/tauri.conf.json` 的 `identifier` / `publisher` /
 `copyright`，与 `Cargo.toml` 的 `authors`。另外「设置 → 关于」页里有三条硬编码链接
 （`web-ui/app/components/settings/about.tsx`：官网 `rikkahub-desktop.pages.dev`、GitHub 仓库、
-LICENSE 页）和 `web-ui/app/components/startup-gate.tsx` 的「反馈 issue」链接，全都指向上游；
-本分支不发安装包，保留它们是为了让使用者能找到官方下载，你要自己发版就把这几处换成自己的地址。
+LICENSE 页）和 `web-ui/app/components/startup-gate.tsx` 的「反馈 issue」链接，注意区分
+哪些该指向上游（许可证与致谢）哪些该指向自己（仓库、下载）。
 `LICENSE` 里的商业授权联系方式属于上游维护者，
 分发本分支时请连同它一起保留（AGPL v3 与上游双许可都要求保留声明）。
 

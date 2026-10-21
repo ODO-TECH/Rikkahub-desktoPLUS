@@ -7,9 +7,51 @@ import { join } from "node:path";
 import { skipVersionPath, updatesCacheDir } from "../foundation/paths";
 import type { GithubRelease } from "../foundation/types";
 
-// 访问都快(GitHub Release 在国内常需代理)。Windows 走 R2(Rikkahub_<tag>_x64-setup.exe);
-// Linux R2 无预编译包,仍走 GitHub Release 直链。
-export const UPDATE_R2_BASE = "https://pub-d26eee7d911c4bab937ebe1729a4cefe.r2.dev";
+// 更新检查的发布通道。必须指向**本仓库**：上游 Releases 的包不含本分支任何改动，
+// 一旦被当成「新版本」下载并覆盖安装，SQLite 活库 / stdio MCP / WebView2 壳会被整体
+// 换回上游形态，这是本分支最容易自伤的地方。写成常量并由 update-channel.test.ts 钉死。
+export const UPDATE_REPO = "ODO-TECH/Rikkahub-desktoPLUS";
+
+// 可选的下载镜像（Cloudflare R2 公共桶）。留空 = 不使用镜像，一律走 GitHub Release
+// 资产直链。上游的 R2 桶只能取到上游的安装包，绝不能指向它。
+export const UPDATE_R2_BASE = "";
+
+export function hasUpdateMirror(): boolean {
+  return UPDATE_R2_BASE.trim() !== "";
+}
+
+export type UpdatePlatform = "win" | "mac" | "linux";
+export type UpdateAsset = { name?: string; browser_download_url?: string; size?: number };
+
+// 按运行平台挑资产。容器化部署没有可持久替换的二进制，直接不给资产（前端提示 docker pull）。
+//
+// Windows 只认 NSIS 安装器（*-setup.exe）：前端的 Windows 更新流程是把下载好的路径交给
+// launch_installer 执行，而本分支发布的是 **便携 zip**（RikkaHub-Desktop-PLUS-<tag>-windows-x64-portable.zip），
+// zip 既不可执行也不能就地替换二进制。挑不到安装器时返回 undefined，前端落到
+// update-dialog 里已有的「打开 Release 页手动下载」分支——比丢给它一个 zip 让它失败要好。
+export function pickUpdateAsset(
+  assets: NonNullable<GithubRelease["assets"]>,
+  platform: UpdatePlatform,
+  containerized: boolean,
+): UpdateAsset | undefined {
+  if (containerized) return undefined;
+  if (platform === "linux") {
+    return assets.find((a) => /linux[-_]x64.*\.tar\.gz$/i.test(a.name ?? ""));
+  }
+  if (platform === "mac") {
+    return assets.find((a) => /\.dmg$/i.test(a.name ?? ""))
+      ?? assets.find((a) => /(?:macos|darwin|mac)[-_]x64/i.test(a.name ?? ""));
+  }
+  return assets.find((a) => /x64[-_]setup\.exe$/i.test(a.name ?? ""));
+}
+
+// GitHub API 被限流（未认证 60 req/hr/IP）时的兜底：按命名约定拼资产名。
+// 只对 Linux 预测——产物是 tar.gz，download 端会解压后返回内部二进制路径。
+// Windows 返回 null：本分支不发布 NSIS 安装器，预测一个 .exe 名字只会让用户点出 404。
+export function predictUpdateAssetName(tag: string, platform: UpdatePlatform): string | null {
+  if (platform === "linux") return `Rikkahub_${tag}_linux_x64.tar.gz`;
+  return null;
+}
 
 export function readSkippedVersion(): string {
   try { return readFileSync(skipVersionPath, "utf-8").trim(); } catch { return ""; }
@@ -22,7 +64,7 @@ export function writeSkippedVersion(version: string) {
 // 一次同步本处 + tauri.conf.json + Cargo.toml 三处；请勿手改单处（CI 的
 // check-version-sync.ts 会红灯）。更新检查用本值对比 GitHub release tag，
 // 关于页也原样展示。
-export const APP_VERSION = "2.0.0-preview-v5";
+export const APP_VERSION = "0.0.2";
 
 export async function fetchGithubLatestRelease(repo: string): Promise<GithubRelease> {
   const res = await fetchWithTimeout(`https://api.github.com/repos/${repo}/releases/latest`, {

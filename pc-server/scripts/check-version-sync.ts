@@ -20,10 +20,16 @@ const cargoVersion = cargoSource.match(/^version = "([^"]+)"/m)?.[1];
 const aboutSource = readFileSync(join(root, "web-ui", "app", "components", "settings", "about.tsx"), "utf8");
 const aboutVersion = aboutSource.match(/const APP_VERSION = "([^"]+)"/)?.[1];
 
+// Cargo.lock 的 rikkahub 包版本：Tauri/CI 都用 `cargo build --locked`，lock 与 Cargo.toml
+// 不一致时构建直接失败。校验它，比等到 Rust 阶段报错便宜得多。
+const cargoLockSource = readFileSync(join(root, "web-ui", "src-tauri", "Cargo.lock"), "utf8");
+const cargoLockVersion = cargoLockSource.match(/\[\[package\]\]\nname = "rikkahub"\nversion = "([^"]+)"/)?.[1];
+
 const versions: Record<string, string | undefined> = {
   "pc-server/updates/index.ts APP_VERSION": appVersion,
   "web-ui/src-tauri/tauri.conf.json": tauriVersion,
   "web-ui/src-tauri/Cargo.toml": cargoVersion,
+  "web-ui/src-tauri/Cargo.lock (package rikkahub)": cargoLockVersion,
   "web-ui/app/components/settings/about.tsx": aboutVersion,
 };
 

@@ -12,9 +12,13 @@ import {
   APP_VERSION,
   fetchGithubLatestRelease,
   fetchLatestReleaseFromHtmlRedirect,
+  hasUpdateMirror,
+  pickUpdateAsset,
+  predictUpdateAssetName,
   probeCachedInstaller,
   readSkippedVersion,
   UPDATE_R2_BASE,
+  UPDATE_REPO,
   writeSkippedVersion,
 } from "../../updates/index";
 import { error, json, readJson, sseHeaders } from "../request";
@@ -28,35 +32,15 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
   // when that happens we fall back to scraping the public `github.com/<repo>/releases/latest`
   // redirect, which doesn't hit the API and isn't rate-limited.
   if (path === "update/check" && request.method === "GET") {
-    // 更新检查仍指向上游：本分支只发布源码，没有自己的 Release 通道。
-    // 指向不存在的仓库会让 releases/latest 返回非 tag 重定向，前端收到 502。
-    const repo = "yuh-G/rikkahub-desktop";
+    // 发布通道是本仓库(UPDATE_REPO)，不是上游：上游 Releases 的包不含本分支改动，
+    // 装上会把 SQLite 活库/stdio MCP/WebView2 壳覆盖回上游形态。资产选择与命名预测
+    // 的规则见 updates/index.ts 的 pickUpdateAsset / predictUpdateAssetName。
+    const repo = UPDATE_REPO;
 
-    // 按当前运行平台挑选 release asset。命名约定：
-    //   Windows: Rikkahub_<tag>_x64-setup.exe   (NSIS 安装器,含 exe+web-ui+icons)
-    //   Linux:   Rikkahub_<tag>_linux_x64.tar.gz (二进制 + 前端资源一起打包,
-    //            因为前端由 routeStatic 在运行时从文件系统读取,不嵌入二进制)
-    //   macOS:   暂未发布 —— 返回 undefined,前端引导用户去 Release 页手动下载。
     // 容器化部署(Docker 等)无法通过替换二进制持久更新,直接返回 undefined,
     // 前端会提示用 docker pull 升级镜像。
-    const pickAsset = (assets: NonNullable<GithubRelease["assets"]>): NonNullable<GithubRelease["assets"]>[number] | undefined => {
-      if (RUNNING_IN_CONTAINER) return undefined;
-      if (RUNTIME_PLATFORM === "linux") {
-        return assets.find((a) => /linux[-_]x64.*\.tar\.gz$/i.test(a.name ?? ""));
-      }
-      if (RUNTIME_PLATFORM === "mac") {
-        return assets.find((a) => /\.dmg$/i.test(a.name ?? ""))
-          ?? assets.find((a) => /(?:macos|darwin|mac)[-_]x64/i.test(a.name ?? ""));
-      }
-      return assets.find((a) => /x64[-_]setup\.exe$/i.test(a.name ?? ""))
-        ?? assets.find((a) => /\.exe$/i.test(a.name ?? ""));
-    };
-
-    // API 不可用(rate limit)时的兜底:按命名约定直接拼 asset URL。
-    const predictAssetName = (tag: string): string =>
-      RUNTIME_PLATFORM === "linux" ? `Rikkahub_${tag}_linux_x64.tar.gz`
-      : RUNTIME_PLATFORM === "mac" ? `Rikkahub_${tag}_mac_x64.dmg`
-      : `Rikkahub_${tag}_x64-setup.exe`;
+    const pickAsset = (assets: NonNullable<GithubRelease["assets"]>) =>
+      pickUpdateAsset(assets, RUNTIME_PLATFORM, RUNNING_IN_CONTAINER);
 
     // Helper: build the JSON response for a given release tag + metadata, apply skip logic.
     const buildResponse = (fields: Record<string, unknown>) => {
@@ -73,9 +57,9 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
       if (!RUNNING_IN_CONTAINER && RUNTIME_PLATFORM === "win") {
         fields.cachedInstallerPath = probeCachedInstaller(String(fields.fileName ?? ""), latest, isNewer && !fields.isSkipped);
       }
-      // Windows 下载源改走 R2 镜像(国内/全球都快,与官网同源);fileName 即 R2 对象名。
-      // Linux R2 无预编译包,保留 GitHub Release 直链。
-      if (!RUNNING_IN_CONTAINER && RUNTIME_PLATFORM === "win" && String(fields.fileName ?? "")) {
+      // 可选镜像(默认未配置)：只有显式设了 UPDATE_R2_BASE 且该桶里确实镜像了本仓库的
+      // 资产时才改走它；否则一律用 GitHub Release 直链。绝不能指向上游的 R2 桶。
+      if (hasUpdateMirror() && !RUNNING_IN_CONTAINER && String(fields.fileName ?? "")) {
         fields.downloadUrl = `${UPDATE_R2_BASE}/${fields.fileName}`;
       }
       return json(fields);
@@ -121,9 +105,12 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
           source: "api",
         });
       } catch {
-        // API failed (rate limit etc.) — use the version from redirect + predicted asset URL.
-        // 容器化或 macOS(无发布物)时不预测 URL,让前端引导用户手动处理。
-        if (RUNNING_IN_CONTAINER || RUNTIME_PLATFORM === "mac") {
+        // API failed (rate limit etc.) — 用 redirect 拿到的版本号，资产名按约定预测。
+        // predictUpdateAssetName 对 Windows/macOS 返回 null：本分支不发布可被
+        // launch_installer 消费的安装器，猜一个名字只会让用户点到 404。没有资产名时
+        // 返回空 downloadUrl，前端落到「打开 Release 页手动下载」分支。
+        const predicted = predictUpdateAssetName(redirect.tag, RUNTIME_PLATFORM);
+        if (!predicted) {
           return buildResponse({
             latest: redirect.tag,
             title: `v${redirect.tag}`,
@@ -135,14 +122,13 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
             source: "redirect",
           });
         }
-        const fileName = predictAssetName(redirect.tag);
         return buildResponse({
           latest: redirect.tag,
           title: `v${redirect.tag}`,
           notes: "",
           htmlUrl: redirect.htmlUrl,
-          downloadUrl: `https://github.com/${repo}/releases/download/v${redirect.tag}/${fileName}`,
-          fileName,
+          downloadUrl: `https://github.com/${repo}/releases/download/v${redirect.tag}/${predicted}`,
+          fileName: predicted,
           size: 0,
           source: "redirect",
         });
@@ -180,8 +166,12 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
         return "";
       }
     })();
-    const r2Host = new URL(UPDATE_R2_BASE).host.toLowerCase();
-    if (host !== "github.com" && host !== r2Host && !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.githubusercontent\.com$/.test(host)) {
+    const r2Host = hasUpdateMirror() ? new URL(UPDATE_R2_BASE).host.toLowerCase() : "";
+    const trustedHost =
+      host === "github.com"
+      || (r2Host !== "" && host === r2Host)
+      || /^[a-z0-9-]+(\.[a-z0-9-]+)*\.githubusercontent\.com$/.test(host);
+    if (!trustedHost) {
       return error(`Refusing to download from untrusted host: ${host}`, 400);
     }
     const sanitized = String(body.fileName ?? "").replace(/[^A-Za-z0-9._\-]/g, "") || "rikkahub-update";
