@@ -5,7 +5,8 @@
   原生 Windows 桌面 LLM 聊天客户端，多供应商切换、本地数据优先、无遥测、无云端账号。<br/>
   也能在 Linux / Docker 上跑。macOS 不做（见下文）。
 
-  Community fork of **RikkaHub Desktop** — 一个基于 Android 版 RikkaHub 移植到桌面的项目。
+  Community fork of **RikkaHub Desktop** — 一个基于 Android 版 RikkaHub 移植到桌面的项目。<br/>
+  由社区开发者 **ODO_Tech** 维护。
 </div>
 
 ---
@@ -18,15 +19,16 @@
    LLM 客户端。产品设计、品牌与理念的全部来源。
 2. [RikkaHub Desktop](https://github.com/yuh-G/rikkahub-desktop) —— 上面那个产品的 PC 移植版
    （Tauri + Bun 后端），本分支的**直接上游**。
-3. **本仓库** —— RikkaHub Desktop 的**社区分支**：把 PC 版继续朝「本地数据结构化 + Windows
-   桌面体验 + 本地/远程工具链」方向打磨。功能取舍按我自己日常使用的判断来，不追求和上游一致。
+3. **本仓库** —— RikkaHub Desktop 的**社区分支**，由社区开发者 **ODO_Tech** 维护：把 PC 版继续
+   朝「本地数据结构化 + Windows 桌面体验 + 本地/远程工具链」方向打磨。功能取舍按我自己日常
+   使用的判断来，不追求和上游一致，也和上游没有任何隶属关系。
 
 现成安装包请用上源的 Releases；**本分支只发布源码**，不提供二进制下载（原因见
 [docs/BUILD.md](docs/BUILD.md)：Windows 安装包需要本机 MSVC/Rust 工具链，我没有把它做成 CI 流水线）。
 
 ## 更新节奏：缓慢但长期
 
-一句实话：**我是业余时间维护，更新很慢，但不会弃更。**
+一句实话：**我（ODO_Tech）是业余时间维护，更新很慢，但不会弃更。**
 
 - 没有 roadmap，没有 SLA，不承诺任何功能的时间点；提交间隔可能几周也可能几个月。
 - 每个进来的改动都在自己机器上真跑过（typecheck + 单元测试 + 便携版实测），
@@ -213,8 +215,8 @@ tunnelling or SFTP yet), optional two-way [Kelivo](https://github.com/Chevey339/
 sync (8 import categories, schema-v3 export), and a 12-item `backupScope` that
 governs local / WebDAV / S3 / Kelivo backups consistently.
 
-Maintained in spare time — updates are **slow but long-term**, with no roadmap or
-SLA; every change is type-checked, unit-tested and run on a real machine before it lands.
+Maintained by community developer **ODO_Tech** in spare time — updates are **slow but long-term**,
+with no roadmap or SLA; every change is type-checked, unit-tested and run on a real machine before it lands.
 Source is released under the same **segmented dual licensing** as upstream
 (AGPLv3 for non-commercial / personal / educational / research use or ≤ 50 users;
 see [LICENSE](LICENSE) — the commercial-contact details there belong to the

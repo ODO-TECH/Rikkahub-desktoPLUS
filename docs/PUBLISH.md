@@ -1,38 +1,31 @@
 # 把这个目录推到 GitHub
 
 面向「手上只有这台 Windows 机器、不想碰命令行细节」的发布流程。命令都在 **Git Bash**
-里执行（开始菜单里的 *Git Bash*，本项目机器上装在 `D:\Software\Produce\Git`，
-用哪个安装都一样）。
+里执行（装 Git for Windows 后开始菜单里的 *Git Bash*，用哪个安装都一样）。
 
 ## 0. 先确认提交身份（这一步决定别人能不能从 commit 反查到你）
 
-这个目录已经 `git init` 并做过一次初始提交，作者姓名/邮箱写在 commit 元数据里 ——
-GitHub 页面上任何人点开提交都能看到。本仓库当前设的是**匿名仓库级身份**
-（只影响这一个仓库，不动你的全局 git 配置）：
+这个目录已经 `git init` 并做过提交，作者姓名/邮箱写在 commit 元数据里 ——
+GitHub 页面上任何人点开提交都能看到。本仓库当前设的是**仓库级署名身份**
+（只影响这一个仓库，不动全局 git 配置）：
 
 ```bash
 cd "<这个目录的路径>"
-git config user.name            # 现在显示的是仓库级设置
-git config user.email
+git config user.name            # ODO_Tech
+git config user.email           # ODO_Tech@users.noreply.github.com
 ```
 
-想要提交记录挂到你自己的 GitHub 账号（有头像、绿格子），把这两行换成你的：
+`ODO_Tech@users.noreply.github.com` 是 GitHub 的匿名转发邮箱，不会暴露真实邮箱；
+账号建好之后，如果想让提交挂头像、计入绿格子，把它换成 **Settings → Emails** 里那串带数字
+ID 的形式，然后重写已有提交的作者：
 
 ```bash
-git config user.name  "你的 GitHub 用户名"
-git config user.email "12345678+你的用户名@users.noreply.github.com"
+git config user.email "12345678+ODO_Tech@users.noreply.github.com"
+git commit --amend --reset-author --no-edit          # 只改最新一次提交
 ```
 
-那串 `用户ID+用户名@users.noreply.github.com` 在 GitHub 的
-**Settings → Emails** 里能看到，它不会暴露你的真实邮箱 —— **不要用真实邮箱**，
-一旦推上去，邮箱就永久公开（GitHub 上没有真正删干净的_history_：fork、爬虫、
-Google 缓存都会留下）。
-
-已经提交过再改身份，用：
-
-```bash
-git commit --amend --reset-author --no-edit
-```
+**不要用真实邮箱**，一旦推上去，邮箱就永久公开（GitHub 上没有真正删干净的 history：
+fork、爬虫、Google 缓存都会留下）。
 
 ## 1. 在 GitHub 建一个空仓库
 
@@ -44,7 +37,7 @@ New repository → 名字随意（例如 `rikkahub-desktop-community`）→ **�
 
 ```bash
 cd "<这个目录的路径>"
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
+git remote add origin https://github.com/ODO_Tech/<仓库名>.git
 git push -u origin main
 ```
 
