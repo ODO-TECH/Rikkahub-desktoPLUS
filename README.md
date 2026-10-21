@@ -16,7 +16,7 @@
 
 ---
 
-本仓库是 **RikkaHub Desktop** 的社区分支，由 [@ODO-TECH](https://github.com/ODO-TECH) 维护。分支在上游功能的基础上，集中改进三个方面：Windows 原生桌面体验、本地数据的有序存储与备份粒度、本地与远程工具链（stdio MCP、SSH）。
+本仓库是 **RikkaHub Desktop** 的社区分支，由 [@ODO-TECH](https://github.com/ODO-TECH) 维护。分支在上游功能的基础上，集中改进三个方面：Windows 原生桌面体验、本地数据的结构化存储与备份粒度、本地与远程工具链（stdio MCP、SSH）。
 
 本分支**只发布源码**，不提供安装包、预编译产物或更新通道。
 
@@ -99,7 +99,7 @@
 ### 4. Windows 桌面壳
 
 - `desktop-shell/` 为 WinForms + 系统 Edge WebView2 实现，**不是 Electron**，不捆绑 Chromium。
-- 复用 Windows 10 1809+ / Windows 11 自带的常青 WebView2 运行时，安装体积不随 Chromium 增长。
+- 复用系统的 Edge WebView2 运行时（Windows 10 / 11 随 Edge 提供）；检测不到时会提示并打开微软官方下载页，不会静默失败。安装体积不随 Chromium 增长。
 - 壳负责：隐藏拉起后端、启动屏、托盘常驻或直接退出、Job Object 防止孤儿子进程、`rikkahub://restart` 自定义协议重启，并向页面注入 `window.__RIKKAHUB_SHELL__`。
 - 使用系统自带的 `csc.exe`（.NET Framework 4.8）单文件编译，不需要 Visual Studio。
 - Tauri 壳保留（上游形态；Linux 打包与 NSIS 安装包依赖它），两种壳可共存。
