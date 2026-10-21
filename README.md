@@ -48,11 +48,9 @@ Windows 便携版在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub
 | 2 | [RikkaHub Desktop](https://github.com/yuh-G/rikkahub-desktop)（Tauri + Bun） | 本分支的直接上游 |
 | 3 | 本仓库（RikkaHub Desktop PLUS） | 基于上游源码的社区增强分支，由 ODO-TECH 维护 |
 
-本分支与上游没有隶属关系，也不代表上游发布任何内容。版本号自成一个体系（当前 `0.0.2`），不再与上游对齐：更新检查查的是本仓库 Release，两边的 tag 混用只会让 `compareSemver` 判错。功能取舍以本分支的维护方向为准，不保证与上游逐项一致。
+本分支与上游没有隶属关系，也不代表上游发布任何内容。版本号自成一个体系，不再与上游对齐：更新检查查的是本仓库 Release，两边的 tag 混用只会让 `compareSemver` 判错。功能取舍以本分支的维护方向为准，不保证与上游逐项一致。
 
 本分支的 Windows 发布物只在本仓库 Releases 提供；上游 Releases 的包不含本分支的任何改动，不能用来验证本分支的行为。
-
-发布纪律：Release 的 tag 必须与 `pc-server/updates/index.ts` 的 `APP_VERSION` 逐字相同（用 `bun run version:bump <x.y.z>` 改版本号，它同时改四处）。`compareSemver` 按段比较，`APP_VERSION` 高于 tag 时更新检查永远判定「已是最新」，用户就再也收不到提示；tag 高于 `APP_VERSION` 时又会把本该已装上的版本重复推一遍。
 
 ## 相对上游的变更
 
@@ -145,7 +143,7 @@ Kelivo 的 8 类选项由同一份 `backupScope` 派生，避免两套开关各�
 ### 8. 网络与端口
 
 - 端口设置位于「设置 → 数据管理 → Web 服务」，直接输入端口号，提供「保存」与「保存并重启」。
-- 桌面默认端口 `17455`；容器内固定 `11451`（镜像契约；114514 超出 TCP 端口上限 65535）。
+- 桌面默认端口 `17455`；容器内固定 `11451`（喜）。
 - 默认只监听回环地址（`127.0.0.1` 与 `::1`）；需要局域网或反向代理访问时，用 `--host 0.0.0.0` 或 `RIKKAHUB_HOST` 显式开放，并同时设置访问密码。
 
 ## 冷启动优化
@@ -166,9 +164,9 @@ Kelivo 的 8 类选项由同一份 `backupScope` 派生，避免两套开关各�
 | --- | --- | --- |
 | Windows 10 / 11 x64 | 主要目标 | 便携版 + WebView2 壳；Tauri NSIS 安装包需要 MSVC 与 Rust |
 | Linux x64 | 构建链保留 | 上游打包方式与 Dockerfile 可用；本分支未在真实 Linux 主机上验证 |
-| Docker（amd64 / arm64） | 支持 | Debian slim 运行时，自带 bash、zip/unzip 与字体注册；面向飞牛 OS 等 Linux NAS 提供 compose 编排 |
+| Docker（amd64 / arm64） | 支持 | Debian slim 运行时，自带 bash、zip/unzip 与字体注册；面向Linux NAS 提供 compose 编排 |
 | macOS | 不支持 | 维护者没有 Mac 设备，无法构建、签名与验证；上游 Tauri 的 mac 配置保留但明确不受支持 |
-| Android | 不适用 | 见上游 RikkaHub |
+| Android | 不适用 | 见上游 RikkaHub（Re塞高） |
 
 ## 快速开始
 
@@ -226,14 +224,14 @@ build.cmd              # → dist\RikkaHub.exe
 
 Tauri NSIS 流程、内嵌 bash bundle 的生成与便携版目录布局见 [docs/BUILD.md](docs/BUILD.md)。
 
-## 容器部署（Docker / 飞牛 OS）
+## 容器部署（Docker）
 
-镜像与 compose 文件在仓库根目录，面向飞牛 OS 与其他 Linux NAS：浏览器访问界面，后端与数据都在容器里。
+镜像与 compose 文件在仓库根目录，面向飞牛 OS 等 Linux NAS：浏览器访问界面，后端与数据都在容器里。
 完整的构建参数、反向代理与排障细节见 [docs/DOCKER.md](docs/DOCKER.md)。
 
 ### 端口
 
-容器内固定 **11451**。TCP 端口合法范围是 1–65535，`114514` 超出上限会被内核与 `docker -p` 拒绝，所以取同一串数字的有效前缀。
+容器内固定 **11451**。`114514` 超出TCP 端口合法范围上限会被内核与 `docker -p` 拒绝（悲）
 宿主机端口可用 `RIKKAHUB_HTTP_PORT` 覆盖；容器内不做端口顺延，端口冲突会直接启动失败。桌面版默认端口仍是 `17455`，两者互不影响。
 
 ### 快速启动
