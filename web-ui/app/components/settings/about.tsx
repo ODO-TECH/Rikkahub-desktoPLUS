@@ -123,18 +123,18 @@ export function AboutSection() {
     {
       key: "github",
       label: "GitHub",
-      value: "https://github.com/ODO-TECH/rikkahub-desktop-plus",
+      value: "https://github.com/ODO-TECH/Rikkahub-desktoPLUS",
       icon: Github,
-      onClick: () => void openExternal("https://github.com/ODO-TECH/rikkahub-desktop-plus/"),
+      onClick: () => void openExternal("https://github.com/ODO-TECH/Rikkahub-desktoPLUS/"),
       action: undefined,
     },
     {
       key: "license",
       label: t("settings:about.license"),
-      value: "https://github.com/ODO-TECH/rikkahub-desktop-plus/blob/main/LICENSE",
+      value: "https://github.com/ODO-TECH/Rikkahub-desktoPLUS/blob/main/LICENSE",
       icon: FileClock,
       onClick: () =>
-        void openExternal("https://github.com/ODO-TECH/rikkahub-desktop-plus/blob/main/LICENSE"),
+        void openExternal("https://github.com/ODO-TECH/Rikkahub-desktoPLUS/blob/main/LICENSE"),
       action: undefined,
     },
   ];

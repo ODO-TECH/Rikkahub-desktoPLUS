@@ -24,13 +24,15 @@ fork、爬虫、Google 缓存都会留下）。
 
 ## 1. 在 GitHub 建一个空仓库
 
-New repository → 仓库名用 `rikkahub-desktop-plus` → **只建空仓库**：
+New repository → 仓库名用 `Rikkahub-desktoPLUS` → **只建空仓库**：
 不要勾 "Add a README"、不要选 LICENSE、不要加 `.gitignore` —— 这三个都会让首次推送
 因为「远端已有提交」而失败。可见性选 Public（这就是个开源分支）。
 
-README、关于页、侧栏与崩溃报告按钮里的链接都按 `ODO-TECH/rikkahub-desktop-plus` 写死了。
+README、关于页、侧栏与崩溃报告按钮里的链接都按 `ODO-TECH/Rikkahub-desktoPLUS` 写死了。
 换仓库名就要同步改 `web-ui/app/components/settings/about.tsx`、
-`web-ui/app/components/conversation-sidebar.tsx`、`web-ui/app/components/startup-gate.tsx`。
+`web-ui/app/components/conversation-sidebar.tsx`、`web-ui/app/components/startup-gate.tsx`
+与 `web-ui/src-tauri/tauri.conf.json`。Docker 镜像名保持小写 `rikkahub-desktop-plus`
+（镜像名不允许大写），与仓库名无关。
 
 ### 仓库简介（About）
 

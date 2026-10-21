@@ -39,7 +39,7 @@
     "active": true,
     "targets": ["nsis"],
     "publisher": "ODO-TECH",
-    "homepage": "https://github.com/ODO-TECH/rikkahub-desktop-plus",
+    "homepage": "https://github.com/ODO-TECH/Rikkahub-desktoPLUS",
     "category": "Productivity",
     "copyright": "© 2026 yuh-G. Based on RikkaHub by @re-ovo. Community branch by ODO-TECH.",
     "shortDescription": "Native Windows and Linux LLM chat client, self-hostable with Docker.",

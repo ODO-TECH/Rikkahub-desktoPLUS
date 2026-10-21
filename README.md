@@ -18,7 +18,7 @@
 
 **RikkaHub Desktop PLUS** 是 [RikkaHub Desktop](https://github.com/yuh-G/rikkahub-desktop) 的社区增强分支，由 [@ODO-TECH](https://github.com/ODO-TECH) 维护。在保留上游全部能力的前提下，本分支集中改进四个方面：Windows 原生桌面体验、本地数据的结构化存储与备份粒度、本地与远程工具链（stdio MCP、SSH），以及面向 Linux NAS 的容器化部署。
 
-本分支**只发布源码**，不提供安装包、预编译产物或更新通道。项目名中的 PLUS 只代表本分支的增量，不属于上游品牌；数据目录、环境变量前缀与技术标识符保持不变，可与上游版本共用同一份 `pc-data/`。
+Windows 便携版安装包在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub-desktoPLUS/releases) 提供，与仓库源码同版本；除此之外没有自动构建通道，应用内的更新检查仍指向上游仓库。项目名中的 PLUS 只代表本分支的增量，不属于上游品牌；数据目录、环境变量前缀与技术标识符保持不变，可与上游版本共用同一份 `pc-data/`。
 
 ## 目录
 
@@ -398,7 +398,6 @@ pc-data/
 - **MiMo 没有实时语音。** 仅听写，无实时通话模式。
 - **SSE 已移除。** 依赖 SSE 语义的第三方配置需改为 Streamable HTTP。
 - **Kelivo 导出不含附件。**
-- **只发布源码。** 没有 CI 发布的二进制与更新通道；更新检查仍指向上游仓库，见 [docs/BUILD.md](docs/BUILD.md) 第 9 节。
 
 ## 隐私与网络行为
 
