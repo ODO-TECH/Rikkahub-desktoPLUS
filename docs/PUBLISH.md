@@ -11,18 +11,13 @@ GitHub 页面上任何人点开提交都能看到。本仓库当前设的是**�
 
 ```bash
 cd "<这个目录的路径>"
-git config user.name            # ODO_Tech
-git config user.email           # ODO_Tech@users.noreply.github.com
+git config user.name            # ODO-TECH
+git config user.email           # 233463747+ODO-TECH@users.noreply.github.com
 ```
 
-`ODO_Tech@users.noreply.github.com` 是 GitHub 的匿名转发邮箱，不会暴露真实邮箱；
-账号建好之后，如果想让提交挂头像、计入绿格子，把它换成 **Settings → Emails** 里那串带数字
-ID 的形式，然后重写已有提交的作者：
-
-```bash
-git config user.email "12345678+ODO_Tech@users.noreply.github.com"
-git commit --amend --reset-author --no-edit          # 只改最新一次提交
-```
+`233463747+ODO-TECH@users.noreply.github.com` 是 GitHub 为该账号分配的匿名转发邮箱：
+提交会挂到 [@ODO-TECH](https://github.com/ODO-TECH) 名下并计入贡献图，真实邮箱不会出现。
+数字 ID 是该账号的固定前缀，不要手改成别的数字。
 
 **不要用真实邮箱**，一旦推上去，邮箱就永久公开（GitHub 上没有真正删干净的 history：
 fork、爬虫、Google 缓存都会留下）。
@@ -37,7 +32,7 @@ New repository → 名字随意（例如 `rikkahub-desktop-community`）→ **�
 
 ```bash
 cd "<这个目录的路径>"
-git remote add origin https://github.com/ODO_Tech/<仓库名>.git
+git remote add origin https://github.com/ODO-TECH/<仓库名>.git
 git push -u origin main
 ```
 
