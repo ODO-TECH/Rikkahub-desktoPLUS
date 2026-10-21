@@ -1,0 +1,60 @@
+# 运行时数据 —— 本地状态、上传文件、生成的图片。
+# 里面有 API Key、对话历史和用户隐私内容，任何情况下都不入库。
+/pc-data/
+/dist/pc-data/
+/pc-server/pc-data/
+
+# 构建产物 —— 由 bun run build / compile / tauri build / desktop-shell\build.cmd 重新生成。
+/dist/
+/web-ui/build/
+/web-ui/.react-router/
+/web-ui/src-tauri/binaries/*.exe
+/web-ui/src-tauri/gen/
+/web-ui/src-tauri/permissions/
+/web-ui/src-tauri/target/
+/target/
+/desktop-shell/dist/
+/desktop-shell/sdk/
+/desktop-shell/*_master.png
+
+# 内嵌 bash 运行时的二进制产物与 staging（~8.5MB/24MB）。由
+# pc-server/scripts/build-bash-bundle.ts 从本机 Git for Windows 抽取生成：
+# 源码进仓库、产物不进，与 dist/ 同一套纪律。
+# bash-bundle.version.json（版本戳）是例外——进仓库，runtime 据此判定落地覆盖。
+/pc-server/assets/bash/
+/pc-server/assets/bash-bundle.tar.gz
+
+# pi/ 是本地浅克隆的上游 vendor（见 docs/BUILD.md）：仓库只跟踪 pi-patches/
+# 与 pi-model-data/，CI 与构建脚本按固定基线重建 pi/。
+/pi/
+
+# 依赖
+node_modules/
+
+# 日志与本地调试残留
+*.log
+/desktop-shell/webview2-data/
+/shell.ini
+
+# 编辑器 / 操作系统
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# 本地私有资料：AI 记忆/代理指导文档、过程稿、参考仓库、临时校验目录。
+# 均无构建依赖，删掉跟踪不影响编译。
+.claude/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+/tmp_doc/
+/analytics/
+/.verify-drag/
+/Rikkahub-Android/
+/cherry-studio/
+/lobehub/
+/opencode-dev/
+/kelivo/
+/codex/
+/Reference-project/

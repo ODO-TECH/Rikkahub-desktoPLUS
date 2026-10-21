@@ -1,0 +1,598 @@
+// 双层标签页状态机(M2-1;J 轮窗格分栏;L 轮分区模型一级分栏)不变量:
+// openTabs 非空/无重复 = 各组成员 + 幽灵;groups 非空、组非空、成员 ⊆ openTabs;
+// activeTab ∈ openTabs 且在组里时必是该组成员;
+// 可见列总数 Σ|panes[c]|(c = 各组焦点标签)≤ MAX_PANES;同会话跨窗格去重;
+// 多窗格下空窗格即收起;关闭=收起(二层状态保留);工作区删除后标签自愈回落。
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import {
+  CHAT_CONTAINER,
+  MAX_PANES,
+  flattenColumns,
+  groupSiblingOf,
+  sanitizePersistedTabs,
+  useContainerTabsStore,
+} from "~/stores/container-tabs-store";
+
+function reset() {
+  useContainerTabsStore.setState({
+    openTabs: [CHAT_CONTAINER],
+    groups: [[CHAT_CONTAINER]],
+    activeTab: CHAT_CONTAINER,
+    panes: {},
+    focusedPane: {},
+  });
+}
+
+beforeEach(reset);
+
+const store = () => useContainerTabsStore.getState();
+const panes = (container: string) => store().panes[container] ?? [];
+
+describe("容器标签", () => {
+  test("首启迁移即默认态:仅对话模式容器", () => {
+    expect(store().openTabs).toEqual([CHAT_CONTAINER]);
+    expect(store().groups).toEqual([[CHAT_CONTAINER]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("openContainer 幂等打开并激活;新容器追加进焦点组", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws1");
+    expect(store().openTabs).toEqual([CHAT_CONTAINER, "ws1"]);
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1"]]); // 新容器追加进焦点组
+    expect(store().activeTab).toBe("ws1");
+  });
+
+  test("关闭激活容器 → 激活同组右邻,无右邻取左邻", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    store().activateContainer("ws1");
+    store().closeContainer("ws1");
+    expect(store().openTabs).toEqual([CHAT_CONTAINER, "ws2"]);
+    expect(store().activeTab).toBe("ws2");
+    store().closeContainer("ws2");
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("关闭组焦点容器 → 焦点先给同组的组内右邻,不隔着组飞", () => {
+    // 搭出分组 [[chat], [ws1]]:ws1 在组里,把 chat 拆到它左侧成独立组。
+    // (对比"激活":激活是接替焦点组席位;分栏才是各自独立成组。)
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1", "ws2"]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+    store().closeContainer(CHAT_CONTAINER);
+    // 关 chat:它的组里没有组内邻,整组消失 → 焦点落到剩余组焦点 ws1
+    expect(store().activeTab).toBe("ws1");
+    expect(store().groups).toEqual([["ws1", "ws2"]]);
+  });
+
+  test("关闭同组非焦点容器 → 焦点不动,本组只是少了枚标签", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    // 把 ws2 拆到 chat 左侧成独立组,再拖回 chat 组尾 → [[chat, ws1, ws2]]
+    store().splitContainerBeside("ws2", CHAT_CONTAINER, "left");
+    store().moveContainerToGroup("ws2", 0);
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1", "ws2"]]);
+    expect(store().activeTab).toBe("ws2");
+    store().closeContainer("ws2");
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1"]]);
+    // 焦点给同组左邻(ws1 在 ws2 左边,chat 在组首不是邻)
+    expect(store().activeTab).toBe("ws1");
+  });
+
+  test("关闭独占幽灵 → 焦点移回唯一组的焦点标签", () => {
+    store().openContainer("ws1");
+    // 此刻 ws1 追加进 chat 的组,chat 在组里但不是焦点;ws1 独占焦点位
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1"]]);
+    expect(store().activeTab).toBe("ws1");
+    // 把 chat 移出组成幽灵,再激活它独占
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1"]]);
+    store().activateContainer(CHAT_CONTAINER);
+    store().closeContainer(CHAT_CONTAINER);
+    // chat 关掉后只剩 ws1 所在组
+    expect(store().openTabs).toEqual(["ws1"]);
+    expect(store().activeTab).toBe("ws1");
+    expect(store().groups).toEqual([["ws1"]]);
+  });
+
+  test("关闭非激活容器不动 activeTab", () => {
+    store().openContainer("ws1");
+    store().closeContainer(CHAT_CONTAINER);
+    expect(store().openTabs).toEqual(["ws1"]);
+    expect(store().activeTab).toBe("ws1");
+  });
+
+  test("关到最后一个回落对话模式", () => {
+    store().closeContainer(CHAT_CONTAINER);
+    expect(store().openTabs).toEqual([CHAT_CONTAINER]);
+    expect(store().groups).toEqual([[CHAT_CONTAINER]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+});
+
+describe("会话标签(单窗格)", () => {
+  test("openConversation 连带打开容器并激活会话", () => {
+    store().openConversation("ws1", "c1");
+    expect(store().openTabs).toEqual([CHAT_CONTAINER, "ws1"]);
+    expect(store().activeTab).toBe("ws1");
+    expect(panes("ws1")).toEqual([{ tabs: ["c1"], active: "c1" }]);
+  });
+
+  test("重复打开同会话不重复建标签", () => {
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().openConversation("ws1", "c1");
+    expect(panes("ws1")[0]!.tabs).toEqual(["c1", "c2"]);
+    expect(panes("ws1")[0]!.active).toBe("c1");
+  });
+
+  test("关闭激活会话标签 → 返回应激活的邻居;关闭非激活返回 undefined", () => {
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().openConversation("ws1", "c3");
+    expect(store().closeConversation("ws1", "c1")).toBeUndefined();
+    store().openConversation("ws1", "c2");
+    expect(store().closeConversation("ws1", "c2")).toBe("c3");
+    expect(store().closeConversation("ws1", "c3")).toBeNull();
+    expect(panes("ws1")[0]!.tabs).toEqual([]);
+  });
+
+  test("容器收起后二层状态保留,重开恢复", () => {
+    store().openConversation("ws1", "c1");
+    store().closeContainer("ws1");
+    expect(panes("ws1")[0]!.tabs).toEqual(["c1"]);
+    store().openContainer("ws1");
+    expect(panes("ws1")[0]!.active).toBe("c1");
+  });
+
+  test("forgetConversation 清所有容器中的标签与激活位", () => {
+    store().openConversation(CHAT_CONTAINER, "c1");
+    store().openConversation("ws1", "c1");
+    store().forgetConversation("c1");
+    expect(panes(CHAT_CONTAINER)[0]!.tabs).toEqual([]);
+    expect(panes("ws1")[0]!.tabs).toEqual([]);
+    expect(panes("ws1")[0]!.active).toBeNull();
+  });
+});
+
+describe("窗格分栏(J 轮)", () => {
+  function openThree() {
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().openConversation("ws1", "c3");
+  }
+
+  test("splitConversation 拖出为新窗格并聚焦", () => {
+    openThree();
+    expect(store().splitConversation("ws1", "c2", 1)).toBe(true);
+    expect(panes("ws1")).toEqual([
+      { tabs: ["c1", "c3"], active: "c3" },
+      { tabs: ["c2"], active: "c2" },
+    ]);
+    expect(store().focusedPane.ws1).toBe(1);
+  });
+
+  test("源窗格仅剩一个标签时拒绝分栏", () => {
+    store().openConversation("ws1", "c1");
+    expect(store().splitConversation("ws1", "c1", 1)).toBe(false);
+    expect(panes("ws1")).toHaveLength(1);
+  });
+
+  test("达到 MAX_PANES 上限后拒绝分栏", () => {
+    openThree();
+    store().openConversation("ws1", "c4");
+    store().splitConversation("ws1", "c2", 1);
+    store().splitConversation("ws1", "c3", 2);
+    expect(panes("ws1")).toHaveLength(MAX_PANES);
+    expect(store().splitConversation("ws1", "c4", 1)).toBe(false);
+  });
+
+  test("openConversation 命中其他窗格 → 聚焦过去,不建重复标签", () => {
+    openThree();
+    store().splitConversation("ws1", "c2", 1);
+    store().focusPane("ws1", 0);
+    store().openConversation("ws1", "c2");
+    expect(store().focusedPane.ws1).toBe(1);
+    expect(panes("ws1")[0]!.tabs).toEqual(["c1", "c3"]);
+    expect(panes("ws1")[1]!.tabs).toEqual(["c2"]);
+  });
+
+  test("moveConversationToPane 跨栏移动;源窗格空了即收起", () => {
+    openThree();
+    store().splitConversation("ws1", "c3", 1);
+    store().moveConversationToPane("ws1", "c1", 1);
+    expect(panes("ws1")).toEqual([
+      { tabs: ["c2"], active: "c2" },
+      { tabs: ["c3", "c1"], active: "c1" },
+    ]);
+    store().moveConversationToPane("ws1", "c2", 1);
+    // 源窗格(0)收起,只剩一个窗格,下标回落
+    expect(panes("ws1")).toEqual([{ tabs: ["c3", "c1", "c2"], active: "c2" }]);
+    expect(store().focusedPane.ws1).toBe(0);
+  });
+
+  test("关闭窗格最后一个标签 → 窗格收起,聚焦回落并返回导航目标", () => {
+    openThree();
+    store().splitConversation("ws1", "c3", 1);
+    // 聚焦在新窗格(1),关掉它唯一的标签
+    expect(store().closeConversation("ws1", "c3")).toBe("c2");
+    expect(panes("ws1")).toEqual([{ tabs: ["c1", "c2"], active: "c2" }]);
+    expect(store().focusedPane.ws1).toBe(0);
+  });
+
+  test("非聚焦窗格内关闭激活标签 → 状态更新但不导航(返回 undefined)", () => {
+    openThree();
+    store().openConversation("ws1", "c4");
+    store().splitConversation("ws1", "c4", 1);
+    store().focusPane("ws1", 0);
+    // 窗格1 的激活标签 c4 有邻居时:先给它加一个
+    store().moveConversationToPane("ws1", "c3", 1);
+    store().focusPane("ws1", 0);
+    expect(store().closeConversation("ws1", "c3")).toBeUndefined();
+    expect(panes("ws1")[1]!.tabs).toEqual(["c4"]);
+  });
+
+  test("closeConversationsBatch 作用于 anchor 所在窗格;全关时窗格收起", () => {
+    openThree();
+    store().splitConversation("ws1", "c3", 1);
+    store().moveConversationToPane("ws1", "c2", 1);
+    // 窗格1 = [c3, c2](聚焦),窗格0 = [c1]
+    expect(store().closeConversationsBatch("ws1", "all", "c3")).toBe("c1");
+    expect(panes("ws1")).toEqual([{ tabs: ["c1"], active: "c1" }]);
+  });
+
+  test("forgetConversation 收起随之变空的窗格", () => {
+    openThree();
+    store().splitConversation("ws1", "c3", 1);
+    store().forgetConversation("c3");
+    expect(panes("ws1")).toEqual([{ tabs: ["c1", "c2"], active: "c2" }]);
+    expect(store().focusedPane.ws1).toBe(0);
+  });
+
+  test("focusPane 返回目标窗格激活会话", () => {
+    openThree();
+    store().splitConversation("ws1", "c2", 1);
+    expect(store().focusPane("ws1", 0)).toBe("c3");
+    expect(store().focusPane("ws1", 99)).toBe("c2");
+    expect(store().focusedPane.ws1).toBe(1);
+  });
+});
+
+describe("pruneWorkspaces", () => {
+  test("删除的工作区标签被清理,激活位回落", () => {
+    store().openConversation("ws1", "c1");
+    store().openContainer("ws2");
+    store().activateContainer("ws1");
+    store().pruneWorkspaces(new Set(["ws2"]));
+    expect(store().openTabs).toEqual([CHAT_CONTAINER, "ws2"]);
+    // 激活的 ws1 被清,焦点回落到 chat 所在组的焦点(chat)
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws2"]]);
+    expect(store().panes.ws1).toBeUndefined();
+  });
+
+  test("chat 容器永不被清理", () => {
+    store().pruneWorkspaces(new Set());
+    expect(store().openTabs).toEqual([CHAT_CONTAINER]);
+  });
+
+  test("分栏中的容器被删除 → 该组消失,剩余组接管焦点", () => {
+    store().openConversation(CHAT_CONTAINER, "c0");
+    store().openConversation("ws1", "c1");
+    // 落点语义:key 拆到"已在屏上的" anchor 旁。此刻分组是 [[ws1]]。
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1"]]);
+    store().pruneWorkspaces(new Set());
+    expect(store().groups).toEqual([[CHAT_CONTAINER]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+});
+
+describe("一级容器分栏(L 轮分区模型)", () => {
+  test("splitContainerBeside 左/右拆组并聚焦;屏幕顺序 = 标签顺序", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    // 标签条 [chat, ws1, ws2](新容器追加进焦点组,全在 chat 组里)
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1", "ws2"]]);
+    expect(store().splitContainerBeside(CHAT_CONTAINER, "ws2", "left")).toBe(true);
+    // chat 被移到 ws2 左侧 → 组次序 = [chat] [ws1 ws2];ws1 留在原组
+    expect(store().openTabs).toEqual([CHAT_CONTAINER, "ws1", "ws2"]);
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1", "ws2"]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("anchor 未打开时拒绝(落点必须是已开标签)", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    expect(store().splitContainerBeside("ws2", "ghost", "right")).toBe(false);
+    expect(store().splitContainerBeside("ghost", "ws1", "right")).toBe(false);
+  });
+
+  test("可见列总数受 MAX_PANES 约束(二级窗格一并计入)", () => {
+    store().openContainer("ws2");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().openConversation("ws1", "c3");
+    // 先把 ws1 拆出焦点组,腾出列额再二级分栏
+    store().splitContainerBeside("ws1", CHAT_CONTAINER, "right");
+    store().splitConversation("ws1", "c2", 1);
+    store().splitConversation("ws1", "c3", 2);
+    // chat 组 [chat,ws2](焦点 ws2,1 列) + ws1 组 [ws1](焦点,2 列) = 3 列到顶
+    expect(panes("ws1")).toHaveLength(2);
+    // ws3 从未打开 → 不在屏上,拆它进来 = 增列 → 超额拒绝
+    store().openContainer("ws3"); // 追加进焦点组(chat 组),仍 1 列
+    expect(store().canSplitContainer("ws3")).toBe(true); // 已在屏上,横移不增列
+    // 把 ws3 移出成幽灵,再拆 = 真增列 → 超额
+    store().unsplitContainer("ws3");
+    expect(store().canSplitContainer("ws3")).toBe(false);
+    expect(store().splitContainerBeside("ws3", "ws1", "right")).toBe(false);
+    // 收掉 ws1 的第二列(关掉 pane1 唯一的标签 c2)后放得下
+    store().closeConversation("ws1", "c2");
+    expect(panes("ws1")).toHaveLength(1);
+    expect(store().canSplitContainer("ws3")).toBe(true);
+    expect(store().splitContainerBeside("ws3", "ws1", "right")).toBe(true);
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws2"], ["ws1"], ["ws3"]]);
+  });
+
+  test("分栏中二级再分栏受总列数约束", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    // 已占 2 列(chat 1 + ws1 1),ws1 内再分一栏 = 3 列,恰好到顶
+    expect(store().splitConversation("ws1", "c2", 1)).toBe(true);
+    expect(flattenColumns(store().groups, store().panes, store().activeTab)).toHaveLength(MAX_PANES);
+    // 再分就超了
+    store().openConversation("ws1", "c3");
+    expect(store().splitConversation("ws1", "c3", 1)).toBe(false);
+  });
+
+  test("moveContainerToGroup 组间移动;原组抽空即消失", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws2", "b1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    store().splitContainerBeside("ws2", "ws1", "right");
+    // [[chat], [ws1], [ws2]]
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1"], ["ws2"]]);
+    // 把 ws2 挪进 ws1 的组
+    expect(store().moveContainerToGroup("ws2", 1)).toBe(true);
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1", "ws2"]]);
+    expect(store().activeTab).toBe("ws2");
+  });
+
+  test("moveContainerToGroup 直接并入幽灵(标签栏落空白处的顺手版),不顶替席位", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws2", "b1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    // ws2 移出成幽灵,再把它的标签拖进 ws1 所在组的空白处
+    store().unsplitContainer("ws2");
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1"]]);
+    expect(store().moveContainerToGroup("ws2", 1)).toBe(true);
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1", "ws2"]]);
+    expect(store().activeTab).toBe("ws2");
+  });
+
+  test("moveContainerBeside 同组重排 + 跨组插入", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws2", "b1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    store().moveContainerToGroup("ws2", 1); // [[chat], [ws1, ws2]]
+    // 同组:ws2 挪到 ws1 左
+    expect(store().moveContainerBeside("ws2", "ws1", "left")).toBe(true);
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws2", "ws1"]]);
+    // 跨组:chat 挪到 ws1 右侧
+    expect(store().moveContainerBeside(CHAT_CONTAINER, "ws1", "right")).toBe(true);
+    expect(store().groups).toEqual([["ws2", "ws1", CHAT_CONTAINER]]);
+  });
+
+  test("焦点标签拖出本组 = 以同组兄弟为锚点拆新组(拖拽落点的实际调用序)", () => {
+    store().openContainer("ws1");
+    store().openContainer("ws2");
+    // 一个组三枚标签,焦点是 ws2(最后打开的);屏上只有一列,归 ws2 所有
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1", "ws2"]]);
+    expect(store().activeTab).toBe("ws2");
+    // 焦点标签落到自己那列的右缘:锚点只能取同组兄弟,拿自己当锚点会被 key===anchor 挡掉
+    const sibling = groupSiblingOf(store().groups, "ws2");
+    expect(sibling).not.toBeNull();
+    expect(store().splitContainerBeside("ws2", sibling!, "right")).toBe(true);
+    expect(store().groups).toEqual([[CHAT_CONTAINER, "ws1"], ["ws2"]]);
+    expect(store().activeTab).toBe("ws2");
+  });
+
+  test("groupSiblingOf:组里只剩它自己 = null(已是独立组,无处可拆)", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    expect(store().groups).toEqual([[CHAT_CONTAINER], ["ws1"]]);
+    expect(groupSiblingOf(store().groups, CHAT_CONTAINER)).toBeNull();
+    expect(groupSiblingOf(store().groups, "ws1")).toBeNull();
+    // 幽灵态(不在任何组)同样无兄弟
+    store().openContainer("ws2");
+    store().unsplitContainer("ws2");
+    expect(groupSiblingOf(store().groups, "ws2")).toBeNull();
+  });
+
+  test("unsplitContainer 移出分栏回幽灵态;唯一组时拒绝", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    // 把 chat 移出分栏 → 回幽灵,ws1 组独占
+    expect(store().unsplitContainer(CHAT_CONTAINER)).toBe(true);
+    expect(store().groups).toEqual([["ws1"]]);
+    expect(store().activeTab).toBe("ws1"); // 焦点移交:chat 的组空了,交给剩余组
+    expect(store().openTabs).toEqual(["ws1", CHAT_CONTAINER]); // chat 缀幽灵尾
+    // 唯一组再移出 = 无"外"可退
+    expect(store().unsplitContainer("ws1")).toBe(false);
+  });
+
+  test("已在屏上的容器再拆 = 横移成独立组(先脱离原组再落位)", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    // [chat, ws1],把 chat 挪到 ws1 右侧:先脱离原组,再落到右侧
+    expect(store().unsplitContainer(CHAT_CONTAINER)).toBe(true);
+    expect(store().splitContainerBeside(CHAT_CONTAINER, "ws1", "right")).toBe(true);
+    expect(store().groups).toEqual([["ws1"], [CHAT_CONTAINER]]);
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("激活未分栏容器 → 接替焦点组席位,其余组留着", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws2", "b1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    // 分组 [[chat], [ws1]],聚焦 chat;把 ws2 移出成幽灵,再激活 → 接替 chat 的席位
+    store().unsplitContainer("ws2");
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+    store().activateContainer("ws2");
+    expect(store().groups).toEqual([["ws2"], ["ws1"]]);
+    expect(store().activeTab).toBe("ws2");
+    // chat 仍开着(幽灵态),标签栏不掉
+    expect(store().openTabs).toContain(CHAT_CONTAINER);
+  });
+
+  test("关闭分栏中的容器标签 → 该组消失,焦点落到剩余组", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    store().closeContainer(CHAT_CONTAINER);
+    expect(store().groups).toEqual([["ws1"]]);
+    expect(store().activeTab).toBe("ws1");
+  });
+
+  test("非焦点列关闭会话不返回导航目标(路由只跟焦点列)", () => {
+    store().openConversation("ws1", "c1");
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation(CHAT_CONTAINER, "a2");
+    store().splitContainerBeside("ws1", CHAT_CONTAINER, "right");
+    // 聚焦在 ws1;关掉 chat 组里的激活会话
+    expect(store().activeTab).toBe("ws1");
+    expect(store().closeConversation(CHAT_CONTAINER, "a2")).toBeUndefined();
+    expect(panes(CHAT_CONTAINER)[0]!.active).toBe("a1");
+  });
+
+  test("focusPane 跨容器把焦点交给目标列", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    expect(store().activeTab).toBe(CHAT_CONTAINER);
+    expect(store().focusPane("ws1", 0)).toBe("c1");
+    expect(store().activeTab).toBe("ws1");
+  });
+
+  test("flattenColumns 摊平次序 = groups × 各组焦点容器的窗格", () => {
+    store().openConversation(CHAT_CONTAINER, "a1");
+    store().openConversation("ws1", "c1");
+    store().openConversation("ws1", "c2");
+    store().splitContainerBeside(CHAT_CONTAINER, "ws1", "left");
+    store().splitConversation("ws1", "c2", 1);
+    const columns = flattenColumns(store().groups, store().panes, store().activeTab);
+    expect(columns.map((column) => [column.container, column.paneIndex])).toEqual([
+      [CHAT_CONTAINER, 0],
+      ["ws1", 0],
+      ["ws1", 1],
+    ]);
+  });
+
+  test("分栏容器无窗格记录时也占一列(兜底空窗格)", () => {
+    store().openContainer("ws1");
+    const columns = flattenColumns([["ws1"]], {}, "ws1");
+    expect(columns).toHaveLength(1);
+    expect(columns[0]!.pane.tabs).toEqual([]);
+  });
+});
+
+// 存量用户的布局要能无损升级:这条路径出错等于开机丢标签/丢工作区。
+describe("持久化自愈与迁移", () => {
+  test("v1(conversationTabs)→ 单窗格 + 单容器独占", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      activeTab: "ws1",
+      conversationTabs: { ws1: ["c1", "c2", "c1"] },
+      activeConversation: { ws1: "c2" },
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.groups).toEqual([["ws1"]]);
+    expect(parsed!.panes.ws1).toEqual([{ tabs: ["c1", "c2"], active: "c2" }]);
+  });
+
+  test("v2(无布局字段)→ 激活容器独占,不擅自分栏", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      activeTab: CHAT_CONTAINER,
+      panes: { ws1: [{ tabs: ["c1"], active: "c1" }] },
+      focusedPane: { ws1: 0 },
+    });
+    expect(parsed!.groups).toEqual([[CHAT_CONTAINER]]);
+    expect(parsed!.activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("v3(layout 字段)/v4(一维 groups)→ v5(二维 groups):语义 = 各自单容器组", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      layout: [CHAT_CONTAINER, "ws1"],
+      activeTab: "ws1",
+      panes: {},
+      focusedPane: {},
+    });
+    expect(parsed!.groups).toEqual([[CHAT_CONTAINER], ["ws1"]]);
+    expect(parsed!.activeTab).toBe("ws1");
+  });
+
+  test("v5 恢复时守住可见列上限:装不下的容器被挤出分栏", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      groups: [[CHAT_CONTAINER], ["ws1"]],
+      activeTab: CHAT_CONTAINER,
+      panes: {
+        ws1: [
+          { tabs: ["c1"], active: "c1" },
+          { tabs: ["c2"], active: "c2" },
+          { tabs: ["c3"], active: "c3" },
+        ],
+      },
+      focusedPane: {},
+    });
+    // chat(1 列) + ws1(3 列) = 4 > MAX_PANES,ws1 被挤出
+    expect(parsed!.groups).toEqual([[CHAT_CONTAINER]]);
+    expect(
+      flattenColumns(parsed!.groups, parsed!.panes, parsed!.activeTab).length,
+    ).toBeLessThanOrEqual(MAX_PANES);
+  });
+
+  test("groups 里的未打开容器与重复项被剔除;activeTab 幽灵态独占保留", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      groups: [["ws1", "ws1", "ghost"]],
+      activeTab: "ghost",
+      panes: {},
+      focusedPane: {},
+    });
+    // "ghost" 不在 openTabs(视为失效)被剔除;activeTab 不在场 → 回落到首枚在场标签
+    expect(parsed!.groups).toEqual([["ws1"]]);
+    expect(parsed!.activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("activeTab 不在场时回落到首枚在场标签", () => {
+    const parsed = sanitizePersistedTabs({
+      openTabs: [CHAT_CONTAINER, "ws1"],
+      groups: [["ws1"]],
+      activeTab: "ghost",
+      panes: {},
+      focusedPane: {},
+    });
+    expect(parsed!.activeTab).toBe(CHAT_CONTAINER);
+  });
+
+  test("openTabs 缺失/全非法 → 整份数据作废(交由默认态兜底)", () => {
+    expect(sanitizePersistedTabs({ groups: [["ws1"]] })).toBeNull();
+    expect(sanitizePersistedTabs(null)).toBeNull();
+  });
+});

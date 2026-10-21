@@ -1,0 +1,34 @@
+web-ui/node_modules/
+pc-server/node_modules/
+web-ui/build/
+dist/
+pc-data/
+.git/
+.gitignore
+**/*.exe
+**/*.cmd
+**/*.nsi
+**/*.nsh
+web-ui/src-tauri/
+docs/
+.github/
+CLAUDE.md
+README*.md
+# 本地参考仓库/临时资料(gitignored,CI checkout 里不存在,但本地 docker build 的
+# 上下文按目录原样打包——不排除的话几个 GB 的无关代码全被送进 daemon)。
+Rikkahub-Android/
+cherry-studio/
+lobehub/
+kelivo/
+opencode-dev/
+tmp_doc/
+# pi/ 是本地 vendor 浅克隆(基线 + pi-patches),镜像构建时在容器内按 docs/BUILD.md
+# 的同一条命令重新 clone,宿主机副本不进上下文。
+pi/
+# desktop-shell/ 是 Windows 原生壳(C#/WebView2),与 Linux 镜像无关。
+desktop-shell/
+# D11(复查)注释纠偏:下面两个不属于上面那组"gitignored 参考资料"——functions/ 是
+# 入库的 Cloudflare Pages 遥测代码,analytics/ 是本地分析资料;都与桌面端 docker
+# 构建无关,同样不进上下文。
+analytics/
+functions/

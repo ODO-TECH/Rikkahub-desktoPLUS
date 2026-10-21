@@ -1,0 +1,50 @@
+[package]
+name = "rikkahub"
+version = "2.0.0-preview-v5"
+description = "Rikkahub — a native Windows LLM chat client."
+authors = ["yuh-G"]
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "rikkahub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-os = "2"
+tauri-plugin-single-instance = "2"
+# 专题8:窗口尺寸/位置/最大化状态的记忆(官方插件,自动多屏/DPI 处理)。
+tauri-plugin-window-state = "2"
+# 域4-1(专题-交互审查 2A):审批等待桌面通知——AI 等审批而窗口失焦时提醒用户回来决策。
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Lightweight locale detection (~3 KB) — used to render the tray menu in the
+# user's system language instead of hard-coding Chinese.
+sys-locale = "0.3"
+# issue12:托盘图标按 DPI 精确缩放。系统托盘在 150%/125% 等缩放下需要 24/20px 图标,
+# 之前直接喂 32px 由 Windows 拉伸导致模糊;现在运行时从 256px 源图 Lanczos 缩放到精确尺寸。
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

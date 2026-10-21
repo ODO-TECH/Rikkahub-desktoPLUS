@@ -1,0 +1,227 @@
+{
+  "conversations": {
+    "meta": {
+      "title": "RikkaHub Web",
+      "description": "RikkaHub 网页客户端"
+    },
+    "preview": {
+      "empty_message": "空消息",
+      "image": "[图片]",
+      "video": "[视频]",
+      "audio": "[音频]",
+      "document": "[文档]",
+      "document_with_name": "[文档] {{name}}",
+      "thinking": "[思考]",
+      "tool_call": "[工具调用]",
+      "tool_with_name": "[工具] {{name}}"
+    },
+    "errors": {
+      "load_detail_failed": "加载会话详情失败"
+    },
+    "empty_state": {
+      "select_title": "请选择会话",
+      "select_description": "选择左侧会话以查看消息",
+      "loading_title": "加载中...",
+      "loading_description": "正在加载会话详情",
+      "error_title": "加载失败",
+      "no_message_title": "暂无消息",
+      "no_message_description": "当前会话还没有消息"
+    },
+    "welcome_prompt": "有什么可以帮助你的？",
+    "share": {
+      "cancel": "取消选择",
+      "select_all": "全选 / 取消全选",
+      "confirm": "导出选中消息"
+    },
+    "user": {
+      "default_name": "用户"
+    },
+    "header": {
+      "select_conversation": "请选择会话",
+      "cache_hit_rate": "缓存命中率：{{rate}}%"
+    },
+    "custom_prompt": {
+      "button": "会话系统提示词",
+      "button_active": "会话系统提示词 ✎",
+      "placeholder": "覆盖当前会话的 system prompt",
+      "clear": "清除",
+      "save": "保存",
+      "cancel": "取消",
+      "saved": "会话系统提示词已保存",
+      "edit_aria": "编辑会话系统提示词",
+      "dialog_title": "会话系统提示词",
+      "dialog_description": "仅对当前会话生效。留空时会回退到助手默认系统提示词。",
+      "dialog_placeholder": "在这里覆盖当前会话的 system prompt"
+    },
+    "theme_toggle": {
+      "to_light": "切换到浅色模式",
+      "to_dark": "切换到深色模式"
+    },
+    "compaction_divider": "上下文已压缩",
+    "compress": {
+      "busy": "已有压缩正在进行，请稍候",
+      "error": {
+        "compact_context_too_short": "当前会话上下文过短，暂不需要压缩",
+        "compact_already_compacted": "刚完成压缩，无需再次压缩",
+        "compress_in_progress": "已有压缩正在进行，请稍候"
+      },
+      "dialog_title": "压缩对话历史",
+      "dialog_description": "使用场景模型中的上下文压缩模型，将较早消息压缩成摘要并保留最近消息。",
+      "workspace_description": "压缩工作区引擎的工作记忆：由当前对话模型将较早的执行历史归纳为摘要，界面消息记录保持不变，下一轮生成即按压缩后的上下文进行。",
+      "target_tokens": "目标 Token",
+      "keep_recent": "保留最近消息",
+      "additional_prompt": "额外要求",
+      "additional_placeholder": "可留空，例如：保留人物关系、关键参数和待办事项",
+      "cancel": "取消",
+      "start": "开始压缩",
+      "success": "对话历史已压缩",
+      "workspace_success": "引擎工作记忆已压缩",
+      "aborted": "已中止压缩，上下文未受影响",
+      "failed": "压缩失败"
+    },
+    "engine_status": {
+      "compacting": "正在压缩上下文",
+      "compacting_auto": "上下文接近上限，正在自动压缩…",
+      "compacting_progress": "正在压缩上下文（{{current}}/{{total}}）",
+      "retrying": "上游响应异常，正在自动重试（第 {{attempt}}/{{max}} 次）…",
+      "elapsed_seconds": "已处理 {{seconds}}秒",
+      "elapsed_minutes": "已处理 {{minutes}}分{{seconds}}秒",
+      "interrupt": "中止 (Esc)"
+    },
+    "awaiting_approval": {
+      "status": "等待审批",
+      "elapsed_seconds": "已等待 {{seconds}}秒",
+      "elapsed_minutes": "已等待 {{minutes}}分{{seconds}}秒",
+      "notification_title": "AI 正在等待你的审批",
+      "notification_body": "「{{summary}}」等待你审批"
+    },
+    "translate": {
+      "dialog_title": "选择翻译语言",
+      "dialog_description": "译文会保存在当前回复下方，不会进入下一轮上下文。",
+      "cancel": "取消",
+      "confirm": "翻译",
+      "failed": "翻译失败",
+      "lang": {
+        "zh-CN": "简体中文",
+        "zh-TW": "繁体中文",
+        "en-US": "英语",
+        "ja-JP": "日语",
+        "ko-KR": "韩语",
+        "fr-FR": "法语",
+        "de-DE": "德语",
+        "es-ES": "西班牙语"
+      }
+    },
+    "optimize_context": {
+      "user": "用户",
+      "assistant": "助手"
+    },
+    "scroll_to_bottom": "滚动到底部",
+    "greeting": {
+      "morning": "早上好",
+      "noon": "中午好",
+      "afternoon": "下午好",
+      "evening": "晚上好",
+      "night": "夜深了"
+    },
+    "greeting_line": "{{greeting}}，有什么可以帮助你的？"
+  },
+  "workspace": {
+    "tabs": {
+      "chat": "对话",
+      "close": "关闭标签",
+      "missing": "已删除的工作区",
+      "untitled": "新对话",
+      "new_container": "新建容器",
+      "new_conversation": "新对话",
+      "ctx_rename": "重命名",
+      "ctx_close": "关闭",
+      "ctx_close_others": "关闭其他",
+      "ctx_close_right": "关闭右侧",
+      "ctx_close_all": "关闭全部",
+      "rename_title": "重命名会话",
+      "rename_placeholder": "输入新标题…",
+      "rename_failed": "重命名失败",
+      "cache_hit_rate": "会话缓存命中率：{{rate}}%",
+      "unsplit": "移出分栏",
+      "ctx_split_left": "分栏到左侧",
+      "ctx_split_right": "分栏到右侧",
+      "ctx_unsplit": "移出分栏",
+      "split_full": "最多同时分栏 {{max}} 列，请先关掉一列",
+      "drop_hint_split": "在此侧拆出新栏",
+      "drop_hint_merge": "并入这一栏"
+    },
+    "create": {
+      "managed": "默认工作区",
+      "managed_hint": "应用为你托管，开箱即用",
+      "folder": "打开现有文件夹",
+      "folder_hint": "AI 将操作该目录，需要你的信任授权",
+      "chat": "对话模式",
+      "chat_hint": "纯对话，不触碰文件",
+      "failed": "创建工作区失败",
+      "folder_dialog_desc": "选择一个真实目录作为工作区根目录。AI 将在你授权后读写该目录并执行命令。",
+      "folder_path_placeholder": "输入或选择目录路径…",
+      "browse": "浏览…",
+      "cancel": "取消",
+      "confirm": "创建",
+      "pick_failed": "打开目录选择器失败"
+    },
+    "trust": {
+      "title": "信任此文件夹？",
+      "description": "授权后，AI 将获得以下能力（可随时在设置中撤销）：",
+      "point_rw": "读取和修改该目录内的所有文件",
+      "point_shell": "在该目录下执行 shell 命令（命令可访问目录之外的系统资源）",
+      "point_revoke": "危险命令与工作区外写入默认需你批准；权限档位可随时调整",
+      "decline": "暂不信任",
+      "confirm": "信任并开始",
+      "failed": "操作失败"
+    },
+    "empty": {
+      "managed_intro": "这里的文件由 AI 与你共同维护——让它读写文件、执行命令，把想法变成成果",
+      "folder_intro": "AI 可以读写这个目录并执行命令，从一句话开始安排工作",
+      "example_1": "看看这个目录里有什么，给我一份结构概览",
+      "example_2": "创建一份 TODO.md，帮我把接下来的任务拆成清单",
+      "example_3": "把我接下来粘贴的内容整理成一篇笔记存成文件",
+      "missing_title": "找不到项目文件夹",
+      "missing_desc": "该工作区绑定的目录不存在或已被移动。AI 暂时无法读写文件，重新绑定到一个文件夹即可继续使用（其下的会话原样保留）。",
+      "missing_rebind": "重新绑定文件夹"
+    },
+    "menu": {
+      "existing": "工作区",
+      "rename": "重命名",
+      "delete": "删除",
+      "rename_title": "重命名工作区",
+      "rename_placeholder": "输入新名称…",
+      "rename_confirm": "保存",
+      "rename_failed": "重命名失败",
+      "delete_confirm_title": "删除工作区「{{name}}」？",
+      "delete_confirm_desc": "仅移除工作区记录与会话，不会删除磁盘上的文件。",
+      "delete_failed": "删除工作区失败",
+      "reveal": "在资源管理器中显示",
+      "reveal_failed": "打开资源管理器失败",
+      "edit_title": "编辑工作区",
+      "name_label": "工作区名称",
+      "path_label": "路径",
+      "missing_badge": "文件夹缺失",
+      "missing_hint": "找不到该目录，可重新绑定到一个新文件夹（绑定后需重新授权信任）",
+      "rebind": "重新绑定",
+      "rebind_failed": "重新绑定失败",
+      "rebind_notice": "路径已变更，保存后将重新授权信任"
+    },
+    "shell": {
+      "title": "未找到可用的 bash 终端",
+      "desc": "内置终端正在后台准备，稍候重新检测即可；也可以在设置里指定自己的 bash 路径。在此之前，AI 已自动改挂内置的 grep / find / ls 只读检索工具。",
+      "set_path": "指定 bash 路径",
+      "install": "下载 Git for Windows",
+      "recheck": "重新检测",
+      "recheck_ok": "检测成功，bash 已可用，会话将挂载完整工具",
+      "recheck_fail": "仍未找到可用的 bash——请稍候再试（内置终端仍在准备），或在设置里指定 bash 路径"
+    }
+  },
+  "window_controls": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
+  }
+}

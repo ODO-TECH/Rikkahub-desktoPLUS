@@ -1,0 +1,345 @@
+import React from "react";
+import { useTranslation } from "react-i18next";
+import { Plus, Trash2, Pencil, Check, X, FileJson } from "lucide-react";
+
+import api from "~/services/api";
+import { useMemoryStore } from "~/stores";
+import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
+import {
+  SettingsGroup,
+  SettingsRow,
+  SettingsRows,
+  SettingsStack,
+  SettingsSwitchRow,
+} from "~/components/settings/shared";
+import { Switch } from "~/components/ui/switch";
+import { cn } from "~/lib/utils";
+import { Button } from "~/components/ui/button";
+import { Textarea } from "~/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Input } from "~/components/ui/input";
+import { confirmDialog } from "~/stores/confirm-store";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "~/components/ui/dialog";
+import { GlobalAgentsCard } from "~/components/memory/global-agents-card";
+
+// 新增一条记忆:单行输入,Enter 或「添加」提交(输入法组字中的 Enter 不算)。
+function MemoryAddInput({ value, onChange, onSubmit, className }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
+        placeholder={t("settings:memory.add_placeholder")}
+        aria-label={t("settings:memory.add")}
+      />
+      <Button variant="tertiary" size="compact" className="shrink-0" disabled={!value.trim()} onClick={onSubmit}>
+        <Plus />
+        {t("settings:common.add")}
+      </Button>
+    </div>
+  );
+}
+
+// 单条记忆:展示 + 行内编辑/删除。变更后后端 broadcast memory SSE,store 自动刷新(无需回调)。
+function MemoryItem({ entry, scope, assistantId }: {
+  entry: MemoryEntry;
+  scope: "global" | "assistant";
+  assistantId?: string;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(entry.content);
+  React.useEffect(() => setDraft(entry.content), [entry.content]);
+
+  const save = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    const path = scope === "global" ? "memory/global" : `memory/assistant/${assistantId}`;
+    await api.post(path, { id: entry.id, content });
+    setEditing(false);
+  };
+  const remove = async () => {
+    // R8-1:破坏性删除必须确认(记忆无回收站,删了就没了)
+    if (!(await confirmDialog({ title: t("settings:memory.delete_confirm"), danger: true }))) return;
+    const path = scope === "global"
+      ? `memory/global/${entry.id}`
+      : `memory/assistant/${assistantId}/${entry.id}`;
+    await api.delete(path);
+  };
+
+  return (
+    <div className="py-2 text-sm">
+      {editing ? (
+        <div className="space-y-2">
+          <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} />
+          <div className="flex gap-1">
+            <Button size="compact" onClick={() => void save()}><Check className="size-3.5" /></Button>
+            <Button size="compact" variant="tertiary" onClick={() => { setEditing(false); setDraft(entry.content); }}><X className="size-3.5" /></Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 whitespace-pre-wrap break-words">{entry.content}</div>
+          <div className="flex shrink-0 gap-1">
+            <Button size="icon" variant="ghost" className="size-6" onClick={() => setEditing(true)}><Pencil className="size-3" /></Button>
+            <Button size="icon" variant="ghost" className="size-6" onClick={() => void remove()}><Trash2 className="size-3" /></Button>
+          </div>
+        </div>
+      )}
+      {editing === false && entry.source === "ai" && (
+        <div className="mt-1 text-xs text-muted-foreground">{t("settings:memory.source_ai")}</div>
+      )}
+    </div>
+  );
+}
+
+export function MemorySection({
+  settings,
+  onSettings,
+}: {
+  settings: Settings;
+  onSettings: (settings: Settings) => void;
+}) {
+  const { t } = useTranslation();
+  const strategyId = React.useId();
+  const snapshot = useMemoryStore((s) => s.snapshot);
+  const ms = settings.memorySettings ?? { globalEnabled: false, writeStrategy: "ask" as WriteStrategy };
+  const [newGlobal, setNewGlobal] = React.useState("");
+  const [newByAssistant, setNewByAssistant] = React.useState<Record<string, string>>({});
+  const [assistantQuery, setAssistantQuery] = React.useState("");
+
+  const updateMemorySettings = async (patch: Partial<{ globalEnabled: boolean; writeStrategy: WriteStrategy }>) => {
+    const next = { ...ms, ...patch };
+    onSettings({ ...settings, memorySettings: next });
+    await api.post("settings/memory-settings", patch);
+  };
+
+  const batchButton = (scope: "global" | "assistant") => (
+    <Button
+      variant="ghost"
+      size="compact"
+      className="text-[var(--ds-text-secondary)]"
+      title={t("settings:memory.batch_edit_hint")}
+      onClick={() => openBatch(scope)}
+    >
+      <FileJson />
+      {t("settings:memory.batch_edit")}
+    </Button>
+  );
+
+  const addGlobal = async () => {
+    const content = newGlobal.trim();
+    if (!content) return;
+    await api.post("memory/global", { content });
+    setNewGlobal("");
+  };
+  const addAssistant = async (assistantId: string) => {
+    const content = (newByAssistant[assistantId] ?? "").trim();
+    if (!content) return;
+    await api.post(`memory/assistant/${assistantId}`, { content });
+    setNewByAssistant((m) => ({ ...m, [assistantId]: "" }));
+  };
+
+  // 助手 enableMemory 开关:更新助手配置(POST settings/assistant/detail 触发 settings SSE)
+  const setAssistantMemory = async (assistantId: string, enabled: boolean) => {
+    const assistants = settings.assistants.map((a) => (a.id === assistantId ? { ...a, enableMemory: enabled } : a));
+    onSettings({ ...settings, assistants });
+    const updated = assistants.find((x) => x.id === assistantId);
+    if (updated) await api.post("settings/assistant/detail", updated);
+  };
+
+  // 批量编辑(高级用户直接编辑原始 JSON,§9.3)。实时 JSON.parse 校验;提交前二次确认;
+  // 后端带 schema 校验 + .bak 备份,失败可从 .bak 恢复。
+  const [batchTarget, setBatchTarget] = React.useState<"global" | "assistant" | null>(null);
+  const [batchText, setBatchText] = React.useState("");
+  const [batchError, setBatchError] = React.useState<string | null>(null);
+  const openBatch = (target: "global" | "assistant") => {
+    const data = target === "global" ? snapshot!.globalMemories : snapshot!.assistantMemories;
+    setBatchTarget(target);
+    setBatchText(JSON.stringify(data, null, 2));
+    setBatchError(null);
+  };
+  const saveBatch = async () => {
+    if (!batchTarget) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(batchText);
+    } catch (e) {
+      setBatchError(t("settings:memory.batch_json_error", { msg: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
+    if (!(await confirmDialog({ title: t("settings:memory.batch_confirm"), danger: true }))) return;
+    const batchPath = batchTarget === "global" ? "memory/batch/global" : "memory/batch/assistant";
+    const body = batchTarget === "global" ? { memories: parsed } : { assistants: parsed };
+    try {
+      await api.post(batchPath, body);
+      setBatchTarget(null);
+    } catch (e) {
+      setBatchError(t("settings:memory.batch_save_error", { msg: e instanceof Error ? e.message : String(e) }));
+    }
+  };
+
+  if (!snapshot) {
+    return (
+      <div className="p-4 text-muted-foreground">{t("common:conversation_sidebar.loading")}</div>
+    );
+  }
+  // U4:助手名搜索过滤(助手多时快速定位)
+  const filteredAssistants = settings.assistants.filter((a) =>
+    (a.name || "").toLowerCase().includes(assistantQuery.trim().toLowerCase()),
+  );
+
+  return (
+    <>
+      <SettingsStack>
+      <GlobalAgentsCard />
+      <SettingsRows>
+        <SettingsRow
+          label={t("settings:memory.write_strategy_title")}
+          description={t("settings:memory.write_strategy_subtitle")}
+          htmlFor={strategyId}
+          control={
+            <Select value={ms.writeStrategy} onValueChange={(v) => void updateMemorySettings({ writeStrategy: v as WriteStrategy })}>
+              <SelectTrigger id={strategyId} className="w-60 max-w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ask">{t("settings:memory.strategy_ask")}</SelectItem>
+                <SelectItem value="always_assistant">{t("settings:memory.strategy_always_assistant")}</SelectItem>
+                <SelectItem value="always_global" disabled={!ms.globalEnabled}>{t("settings:memory.strategy_always_global")}</SelectItem>
+                <SelectItem value="readonly">{t("settings:memory.strategy_readonly")}</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+      </SettingsRows>
+
+      <SettingsGroup
+        title={t("settings:memory.global_title")}
+        description={t("settings:memory.global_subtitle")}
+        action={batchButton("global")}
+      >
+        <SettingsRows>
+          <SettingsSwitchRow
+            label={t("settings:memory.global_enable")}
+            checked={ms.globalEnabled}
+            onCheckedChange={(v) => void updateMemorySettings({ globalEnabled: v })}
+          />
+        </SettingsRows>
+        <div className={ms.globalEnabled ? undefined : "opacity-50"}>
+          {snapshot.globalMemories.length === 0 && (
+            <div className="py-2 text-sm text-[var(--ds-text-secondary)]">{t("settings:memory.empty_global")}</div>
+          )}
+          <SettingsRows>
+            {snapshot.globalMemories.map((m) => (
+              <MemoryItem key={m.id} entry={m} scope="global" />
+            ))}
+          </SettingsRows>
+          {ms.globalEnabled && (
+            <MemoryAddInput value={newGlobal} onChange={setNewGlobal} onSubmit={() => void addGlobal()} className="pt-2" />
+          )}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("settings:memory.assistant_title")}
+        description={t("settings:memory.assistant_subtitle")}
+        action={batchButton("assistant")}
+      >
+        <div className="space-y-2 pt-2">
+          <Input
+            value={assistantQuery}
+            onChange={(e) => setAssistantQuery(e.target.value)}
+            placeholder={t("settings:memory.search_assistant")}
+            className="text-sm"
+          />
+          <SettingsRows>
+          {filteredAssistants.map((a) => {
+            const group = snapshot.assistantMemories.find((g) => g.assistantId === a.id);
+            const mems = group?.memories ?? [];
+            return (
+              <div key={a.id} className="space-y-2 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">{a.name || t("settings:memory.unnamed_assistant")}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">{t("settings:memory.enable_memory")}</span>
+                    <Switch checked={a.enableMemory === true} onCheckedChange={(v) => void setAssistantMemory(a.id, v)} />
+                  </div>
+                </div>
+                {a.enableMemory === true && (
+                  <div className="space-y-1.5 pl-2">
+                    {mems.length === 0 && (
+                      <div className="text-sm text-muted-foreground">{t("settings:memory.empty_assistant")}</div>
+                    )}
+                    <SettingsRows>
+                      {mems.map((m) => (
+                        <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={a.id} />
+                      ))}
+                    </SettingsRows>
+                    <MemoryAddInput
+                      value={newByAssistant[a.id] ?? ""}
+                      onChange={(value) => setNewByAssistant((m) => ({ ...m, [a.id]: value }))}
+                      onSubmit={() => void addAssistant(a.id)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          </SettingsRows>
+          {assistantQuery.trim() !== "" && filteredAssistants.length === 0 ? (
+            <div className="py-6 text-center text-sm text-[var(--ds-text-secondary)]">
+              {t("settings:memory.search_no_match")}
+            </div>
+          ) : null}
+          {/* 孤儿记忆:assistant_memory.json 里有但 settings.assistants 已删除的(M4 保留,可编辑/删除) */}
+          {snapshot.assistantMemories
+            .filter((g) => !settings.assistants.some((a) => a.id === g.assistantId))
+            .map((g) => (
+              <div key={g.assistantId} className="space-y-2 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] px-3 py-2">
+                <div className="text-xs text-[var(--ds-text-secondary)]">
+                  {t("settings:memory.orphan_group", { name: g.assistantName, n: g.memories.length })}
+                </div>
+                <SettingsRows>
+                  {g.memories.map((m) => (
+                    <MemoryItem key={m.id} entry={m} scope="assistant" assistantId={g.assistantId} />
+                  ))}
+                </SettingsRows>
+              </div>
+            ))}
+        </div>
+      </SettingsGroup>
+      </SettingsStack>
+
+      {/* 批量编辑对话框(高级用户直接编辑原始 JSON,实时校验 + 二次确认)*/}
+      <Dialog open={batchTarget !== null} onOpenChange={(o) => !o && setBatchTarget(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("settings:memory.batch_edit_title")}</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={batchText}
+            onChange={(e) => setBatchText(e.target.value)}
+            className="min-h-96 font-mono text-xs"
+          />
+          {batchError && <div className="text-sm text-destructive">{batchError}</div>}
+          <DialogFooter>
+            <Button variant="tertiary" onClick={() => setBatchTarget(null)}>{t("settings:memory.cancel")}</Button>
+            <Button onClick={() => void saveBatch()}>{t("settings:memory.save")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+

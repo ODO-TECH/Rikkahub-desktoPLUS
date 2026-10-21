@@ -1,0 +1,1988 @@
+@import "./fonts.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* ===== 默认主题(2026-08-01 前端重构 A0 定稿) =====
+     暖奶油画布 + 白色浮起面板 + 墨绿品牌色,取自参考项目 design-tokens.css。
+     预置(data-theme)与用户自定义主题照旧覆写这些同名变量,机制不变。 */
+  /* 斜杠指令染色(拍板 2026-09-05):编辑器代码蓝,深浅主题共用同一档——只在
+     :root 声明一次,各主题块不覆写即全局继承(方案 §4.3)。 */
+  --command: #3b82f6;
+  --background: #f2eee6;
+  --foreground: #181b19;
+  --card: #ffffff;
+  --card-foreground: #181b19;
+  --popover: #ffffff;
+  --popover-foreground: #181b19;
+  --primary: #2d4739;
+  --primary-foreground: rgba(255, 255, 255, 0.9);
+  --secondary: #f6f4ef;
+  --secondary-foreground: #181b19;
+  --muted: #f6f4ef;
+  --muted-foreground: rgba(24, 27, 25, 0.64);
+  --accent: rgba(55, 61, 58, 0.06);
+  --accent-foreground: #181b19;
+  --destructive: #b64a34;
+  --destructive-foreground: rgba(255, 255, 255, 0.92);
+  --border: rgba(24, 27, 25, 0.1);
+  --input: rgba(24, 27, 25, 0.08);
+  --ring: color-mix(in srgb, #2d4739 60%, transparent);
+  /* 板块分界线专用:比 --border 更淡,用于侧边栏边界、正文顶栏下沿等"区域分隔",
+     让大区块之间的界线退到背景里,不抢视觉。输入框/卡片等仍用 --border。 */
+  --divider: rgba(24, 27, 25, 0.06);
+  /* AI 图标底色:固定中性底,不被花色主题染色,只随明暗模式切换。 */
+  --ai-icon-bg: #f6f4ef;
+  --chart-1: oklch(0.81 0.1 252);
+  --chart-2: oklch(0.62 0.19 260);
+  --chart-3: oklch(0.55 0.22 263);
+  --chart-4: oklch(0.49 0.22 264);
+  --chart-5: oklch(0.42 0.18 266);
+  /* 顶带高度:画布顶部"Logo 品牌行 + 窗口控制钮"那条窄带的唯一锚,
+     也是侧栏卡顶边与主卡顶边对齐同一水平线的依据。
+     32px = v4 顶部几何(窗控 pt-1.5+22px=28px,品牌行距顶 4px 高 28px 底 32px):
+     收窄后卡顶上移 8px,窗控(距顶 6px 高 22px 底 28px)仍在带内、坐标不变。 */
+  --app-band-h: 2rem;
+  --sidebar: #f6f4ef;
+  --sidebar-foreground: #181b19;
+  --sidebar-primary: #2d4739;
+  --sidebar-primary-foreground: rgba(255, 255, 255, 0.9);
+  --sidebar-accent: rgba(55, 61, 58, 0.08);
+  --sidebar-accent-foreground: #181b19;
+  --sidebar-border: rgba(24, 27, 25, 0.06);
+  --sidebar-ring: color-mix(in srgb, #2d4739 60%, transparent);
+  --font-sans:
+    "Inter Variable", "Inter", "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  /* 全应用唯一的等宽令牌:font-mono 工具类与 --rikkahub-code-font 同源,一处改全屏改。
+     设计(与界面/对话字体的关系见 --rikkahub-chat-font 注):
+     - 拉丁字形:Cascadia Code(随包分发的 @font-face,所有机器渲染一致);
+     - 中文字形:Cascadia 无 CJK 覆盖 → 穿透到 --rikkahub-chat-font(对话字体链,
+       含用户设置的中文覆盖族),代码注释的中文与对话观感一致;
+     - 栈尾保留系统等宽兜底(不依赖 @font-face 加载完成的极端场景)。
+     连字刻意关闭:栈内字体默认开连字,渲染层由 markdown.css 的 .inline-code /
+     .code-block-content 组件类单源声明关闭(=>、!= 合成单字形读代码碍眼)——
+     组件类跟渲染器走,消息正文/思考区/工具卡/工作台等所有上下文都覆盖。 */
+  --rikkahub-code-font:
+    "Cascadia Code", var(--rikkahub-chat-font, var(--font-sans)), ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-mono: var(--rikkahub-code-font);
+  --radius: 0.75rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 2px 0px oklch(0 0 0 / 0.02);
+  --shadow-xs: 0 1px 2px 0px oklch(0 0 0 / 0.02);
+  --shadow-sm: 0 1px 2px 0px oklch(0 0 0 / 0.04);
+  --shadow: 0 1px 3px 0px oklch(0 0 0 / 0.04), 0 1px 2px -1px oklch(0 0 0 / 0.04);
+  --shadow-md: 0 4px 12px -1px oklch(0 0 0 / 0.04), 0 2px 6px -1px oklch(0 0 0 / 0.02);
+  --shadow-lg: 0 10px 25px -3px oklch(0 0 0 / 0.04), 0 4px 12px -4px oklch(0 0 0 / 0.02);
+  --shadow-xl: 0 20px 40px -4px oklch(0 0 0 / 0.06), 0 8px 16px -8px oklch(0 0 0 / 0.03);
+  --shadow-2xl: 0 25px 50px -12px oklch(0 0 0 / 0.1);
+  /* 语义化层级阴影：比原 --shadow-* 更强调“悬浮感”与材质层级 */
+  --shadow-float: 0 1px 2px -1px oklch(0 0 0 / 0.08);
+  --shadow-card: 0 4px 12px -2px oklch(0 0 0 / 0.06), 0 2px 4px -1px oklch(0 0 0 / 0.04);
+  --shadow-elevated: 0 12px 32px -4px oklch(0 0 0 / 0.1), 0 4px 8px -2px oklch(0 0 0 / 0.05);
+  --shadow-strong: 0 24px 48px -8px oklch(0 0 0 / 0.12);
+  /* 语义化表面色：让组件引用统一的层级概念，而非直接依赖 --card/--popover */
+  --surface: var(--background);
+  --surface-elevated: var(--card);
+  --surface-floating: var(--popover);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* ===== DS 设计令牌(--ds-*) =====
+     阴影/圆角/动效为主题中性;带色令牌一律由语义变量派生(color-mix),
+     预置/自定义主题无需覆写即可正确适配。表面色阶仅默认主题的组件样式使用。 */
+  --ds-surface-100: #ffffff;
+  --ds-surface-200: #faf9f5;
+  --ds-surface-300: #f6f4ef;
+  --ds-surface-400: #f2eee6;
+  /* 侧栏动作模块卡(「新建/搜索/多选」)卡面。单一切换点:若用户反馈不要这块
+     显色,只把此值改为 transparent,卡片形态(圆角/内边距/行 hover)原样保留,
+     视觉上"看不出是张卡";显色期间与 surface-400 同值。 */
+  --sidebar-module-card-bg: var(--ds-surface-400);
+  --ds-on-surface: rgba(55, 61, 58, 0.06);
+  --ds-on-surface-active: rgba(55, 61, 58, 0.08);
+  /* 默认头像底色:前景色 8% 相对晕染(非固定灰)。固定灰在某个表面必撞色
+     ——本次撞侧栏(surface-300 同值)致圆形轮廓隐形;相对晕染随所在表面自适应,
+     任何底上都能与背景拉开一档。刻意比悬停晕染(on-surface 6%)略深一档,
+     轮廓可辨即可;暗色在 .dark 块取 10%。 */
+  --avatar-fallback-bg: rgba(55, 61, 58, 0.08);
+  --ds-pill-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+  --ds-success: #287d46;
+  --ds-warning: #916300;
+  --ds-success-bg: color-mix(in srgb, var(--ds-success) 8%, var(--card));
+  --ds-warning-bg: color-mix(in srgb, var(--ds-warning) 8%, var(--card));
+  /* danger 直接派生 destructive(各主题已各自定义),明暗与花色主题无需另写 */
+  --ds-danger: var(--destructive);
+  --ds-danger-bg: color-mix(in srgb, var(--destructive) 8%, var(--card));
+  --ds-radius-sm: 8px;
+  --ds-radius-md: 12px;
+  --ds-radius-lg: 18px;
+  --ds-radius-pill: 64px;
+  --ds-chat-composer-radius: 20px;
+  --ds-elevation-100: inset 0.5px 0.5px 0.5px #ffffff, 0px 0px 0.5px 0.5px rgba(0, 0, 0, 0.04), 0.5px 0.5px 1px rgba(0, 0, 0, 0.08);
+  --ds-elevation-200: 0px 0px 0px 0.5px color-mix(in srgb, var(--primary) 12%, transparent), 0px 9px 4px rgba(0, 0, 0, 0.01), 0px 5px 3px rgba(0, 0, 0, 0.02), 0px 2px 2px rgba(0, 0, 0, 0.03), 0px 1px 1px rgba(0, 0, 0, 0.04), inset 0.5px 0.5px 0.5px rgba(255, 255, 255, 0.85);
+  --ds-elevation-300: inset 0 0 0.5px 0.5px rgba(255, 255, 255, 0.8), 0 0 0 0.5px rgba(0, 0, 0, 0.04), 0px 3px 6px 0px rgba(0, 0, 0, 0.04), 0px 11px 11px 0px rgba(0, 0, 0, 0.03), 0px 24px 15px 0px rgba(0, 0, 0, 0.02), 0px 43px 17px 0px rgba(0, 0, 0, 0.01);
+  --ds-chat-composer-shadow: inset 0 0 0.5px rgba(255, 255, 255, 0.84), 0 0 0 0.5px rgba(0, 0, 0, 0.1), 0 0 4px -1px rgba(0, 0, 0, 0.05), 0 0 14px -5px rgba(0, 0, 0, 0.07), 0 0 28px -10px rgba(0, 0, 0, 0.07);
+  --ds-chat-composer-shadow-focus: inset 0 0 0.5px rgba(255, 255, 255, 0.88), 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 0 6px -2px rgba(0, 0, 0, 0.07), 0 0 18px -6px rgba(0, 0, 0, 0.09), 0 0 34px -12px rgba(0, 0, 0, 0.1);
+  --ds-input-shadow: 0px 0px 0.5px 0.5px rgba(0, 0, 0, 0.08), 0.5px 0.5px 1px 0px rgba(0, 0, 0, 0.12);
+  --ds-input-shadow-inset: inset 0.5px 0.5px 0.5px 0px white;
+  --ds-input-shadow-hover: 0px 0px 0.5px 0.5px rgba(0, 0, 0, 0.04), 0 0 0 0.5px color-mix(in srgb, var(--primary) 24%, transparent), 0.5px 0.5px 1px 0px rgba(0, 0, 0, 0.08);
+  --ds-input-shadow-focus: 0px 0px 0.5px 0.5px rgba(0, 0, 0, 0.04), 0 0 0 3px color-mix(in srgb, var(--primary) 10%, transparent), 0.5px 0.5px 1px 0px rgba(0, 0, 0, 0.08);
+  --ds-menu-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 2px 1px 5px 0 rgba(50, 48, 48, 0.06), 8px 6px 10px 0 rgba(50, 48, 48, 0.05), 18px 13px 13px 0 rgba(50, 48, 48, 0.03), 31px 24px 16px 0 rgba(50, 48, 48, 0.01);
+  --ds-menu-shadow-inset: inset 0.5px 0.5px 0px 0px white;
+  --ds-ease-swift: cubic-bezier(0.33, 1, 0.68, 1);
+  --ds-ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ds-ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ds-ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ds-duration-fast: 180ms;
+  --ds-duration-base: 240ms;
+  --ds-duration-slow: 350ms;
+  --ds-motion-swift: var(--ds-duration-fast) var(--ds-ease-swift);
+  --ds-motion-soft: var(--ds-duration-base) var(--ds-ease-soft);
+  --ds-motion-spring: var(--ds-duration-base) var(--ds-ease-spring);
+  /* 文字层级/品牌/图标(语义派生:花色主题自动跟随) */
+  --ds-text-primary: var(--foreground);
+  --ds-text-secondary: color-mix(in srgb, var(--foreground) 64%, transparent);
+  --ds-text-tertiary: color-mix(in srgb, var(--foreground) 48%, transparent);
+  --ds-brand-primary: var(--primary);
+  --ds-brand-primary-text: var(--primary-foreground);
+  --ds-action-primary: var(--ds-brand-primary);
+  --ds-action-primary-text: var(--ds-brand-primary-text);
+  /* 图标灰:明暗共用中性灰,不随品牌色染色 */
+  --ds-icon: #7e7f7e;
+  --ds-selection-bg: color-mix(in srgb, var(--primary) 85%, transparent);
+  --ds-surface-input: var(--ds-surface-100);
+  /* 输入卡顶端「附着层」底色(排队消息贴片):刻意是**半透明前景叠色**而非与输入面
+     混出的实色——贴片盖在输入卡上沿,实色会挡掉卡片自身的 inset 描边(暗色/花色主题的
+     轮廓就是那道 inset 环),半透明则让它透出来。由 --foreground 派生,预置/自定义主题
+     自动适配,只有暗色需要更大比例(深底上等比例叠色的色差更弱)。 */
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --ds-popover: var(--popover);
+  --ds-menu-bg: color-mix(in oklch, var(--popover) 96%, white);
+  --ds-menu-shadow-plate: none;
+  --ds-divider: var(--divider);
+  --ds-overlay: rgba(0, 0, 0, 0.3);
+  --ds-duration-bounce: 400ms;
+  --ds-motion-bounce: var(--ds-duration-bounce) var(--ds-ease-bounce);
+}
+
+.dark {
+  /* 暗色:近黑炭底 + 荧绿品牌色;表面色阶反转(100 最暗 → 400 最亮)。 */
+  --background: #191a1a;
+  --foreground: rgba(255, 255, 255, 0.9);
+  --card: #1e1f1f;
+  --card-foreground: rgba(255, 255, 255, 0.9);
+  --popover: #252726;
+  --popover-foreground: rgba(255, 255, 255, 0.9);
+  --primary: #36d385;
+  --primary-foreground: rgba(0, 0, 0, 0.9);
+  --secondary: #252726;
+  --secondary-foreground: rgba(255, 255, 255, 0.9);
+  --muted: #252726;
+  --muted-foreground: rgba(255, 255, 255, 0.5);
+  --accent: rgba(168, 184, 176, 0.08);
+  --accent-foreground: rgba(255, 255, 255, 0.9);
+  --destructive: #e56555;
+  --destructive-foreground: rgba(255, 255, 255, 0.92);
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: color-mix(in srgb, #36d385 60%, transparent);
+  --divider: rgba(255, 255, 255, 0.07);
+  --ai-icon-bg: #2a2d2b;
+  --chart-1: oklch(0.81 0.1 252);
+  --chart-2: oklch(0.62 0.19 260);
+  --chart-3: oklch(0.55 0.22 263);
+  --chart-4: oklch(0.49 0.22 264);
+  --chart-5: oklch(0.42 0.18 266);
+  /* 见 :root 同名变量注释。 */
+  --app-band-h: 2rem;
+  --sidebar: #252726;
+  --sidebar-foreground: rgba(255, 255, 255, 0.9);
+  --sidebar-primary: #36d385;
+  --sidebar-primary-foreground: rgba(0, 0, 0, 0.9);
+  --sidebar-accent: rgba(168, 184, 176, 0.1);
+  --sidebar-accent-foreground: rgba(255, 255, 255, 0.9);
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-ring: color-mix(in srgb, #36d385 60%, transparent);
+  --radius: 0.75rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* 语义化层级阴影：Dark 模式下透明度更高，但保持柔和 */
+  --shadow-float: 0 1px 2px -1px oklch(0 0 0 / 0.18);
+  --shadow-card: 0 4px 12px -2px oklch(0 0 0 / 0.14), 0 2px 4px -1px oklch(0 0 0 / 0.1);
+  --shadow-elevated: 0 12px 32px -4px oklch(0 0 0 / 0.24), 0 4px 8px -2px oklch(0 0 0 / 0.14);
+  --shadow-strong: 0 24px 48px -8px oklch(0 0 0 / 0.32);
+  /* 语义化表面色 */
+  --surface: var(--background);
+  --surface-elevated: var(--card);
+  --surface-floating: var(--popover);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* DS 设计令牌暗色值(预置主题的暗色态一并继承,均为中性/派生色)。 */
+  --ds-surface-100: #191a1a;
+  --ds-surface-200: #1e1f1f;
+  --ds-surface-300: #252726;
+  --ds-surface-400: #2a2d2b;
+  /* 见 :root 同名变量注释(显色值随暗色 surface-400;褪色开关即改 transparent)。 */
+  --sidebar-module-card-bg: var(--ds-surface-400);
+  --ds-on-surface: rgba(168, 184, 176, 0.08);
+  --ds-on-surface-active: rgba(168, 184, 176, 0.16);
+  --avatar-fallback-bg: rgba(168, 184, 176, 0.1);
+  --ds-pill-bg: color-mix(in srgb, var(--primary) 8%, transparent);
+  --ds-success: #4ade80;
+  --ds-warning: #e0a830;
+  --ds-success-bg: color-mix(in srgb, var(--ds-success) 12%, var(--card));
+  --ds-warning-bg: color-mix(in srgb, var(--ds-warning) 12%, var(--card));
+  --ds-danger-bg: color-mix(in srgb, var(--destructive) 12%, var(--card));
+  --ds-elevation-100: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --ds-elevation-200: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 0 9px -4px rgba(0, 0, 0, 0.4), 0 0 32px -8px rgba(0, 0, 0, 0.16);
+  --ds-elevation-300: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 2px 12px -6px rgba(0, 0, 0, 0.44), 0 5px 36px -12px rgba(0, 0, 0, 0.2);
+  --ds-chat-composer-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 0 20px -10px rgba(0, 0, 0, 0.08);
+  --ds-chat-composer-shadow-focus: inset 0 0 0 0.5px rgba(255, 255, 255, 0.13), 0 0 24px -12px rgba(0, 0, 0, 0.1);
+  --ds-input-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --ds-input-shadow-inset: none;
+  --ds-input-shadow-hover: 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+  --ds-input-shadow-focus: 0 0 1px 0.5px color-mix(in srgb, var(--primary) 56%, transparent), 0 0 0 4px color-mix(in srgb, var(--primary) 10%, transparent);
+  --ds-menu-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 0 9px -4px rgba(0, 0, 0, 0.5), 0 0 32px -8px rgba(0, 0, 0, 0.2);
+  --ds-menu-shadow-inset: none;
+  --ds-surface-input: var(--ds-surface-300);
+  --ds-queue-surface: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --ds-menu-bg: var(--ds-surface-400);
+  --ds-overlay: rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme="claude"] {
+  --background: oklch(0.9818 0.0054 95.0986);
+  --foreground: oklch(0.3438 0.0269 95.7226);
+  --card: oklch(0.9818 0.0054 95.0986);
+  --card-foreground: oklch(0.1908 0.002 106.5859);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2671 0.0196 98.939);
+  --primary: oklch(0.6171 0.1375 39.0427);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.9245 0.0138 92.9892);
+  --secondary-foreground: oklch(0.4334 0.0177 98.6048);
+  --muted: oklch(0.9341 0.0153 90.239);
+  --muted-foreground: oklch(0.6059 0.0075 97.4233);
+  --accent: oklch(0.9245 0.0138 92.9892);
+  --accent-foreground: oklch(0.2671 0.0196 98.939);
+  --destructive: oklch(0.1908 0.002 106.5859);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.8847 0.0069 97.3627);
+  --input: oklch(0.7621 0.0156 98.3528);
+  --ring: oklch(0.6171 0.1375 39.0427);
+  --chart-1: oklch(0.5583 0.1276 42.9956);
+  --chart-2: oklch(0.6898 0.1581 290.4107);
+  --chart-3: oklch(0.8816 0.0276 93.128);
+  --chart-4: oklch(0.8822 0.0403 298.1792);
+  --chart-5: oklch(0.5608 0.1348 42.0584);
+  --sidebar: oklch(0.9663 0.008 98.8792);
+  --sidebar-foreground: oklch(0.359 0.0051 106.6524);
+  --sidebar-primary: oklch(0.6171 0.1375 39.0427);
+  --sidebar-primary-foreground: oklch(0.9881 0 0);
+  --sidebar-accent: oklch(0.9245 0.0138 92.9892);
+  --sidebar-accent-foreground: oklch(0.325 0 0);
+  --sidebar-border: oklch(0.9401 0 0);
+  --sidebar-ring: oklch(0.7731 0 0);
+  --radius: 0.5rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="claude"] {
+  --background: oklch(0.2679 0.0036 106.6427);
+  --foreground: oklch(0.8074 0.0142 93.0137);
+  --card: oklch(0.2679 0.0036 106.6427);
+  --card-foreground: oklch(0.9818 0.0054 95.0986);
+  --popover: oklch(0.3085 0.0035 106.6039);
+  --popover-foreground: oklch(0.9211 0.004 106.4781);
+  --primary: oklch(0.6724 0.1308 38.7559);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.9818 0.0054 95.0986);
+  --secondary-foreground: oklch(0.3085 0.0035 106.6039);
+  --muted: oklch(0.2213 0.0038 106.707);
+  --muted-foreground: oklch(0.7713 0.0169 99.0657);
+  --accent: oklch(0.213 0.0078 95.4245);
+  --accent-foreground: oklch(0.9663 0.008 98.8792);
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.3618 0.0101 106.8928);
+  --input: oklch(0.4336 0.0113 100.2195);
+  --ring: oklch(0.6724 0.1308 38.7559);
+  --chart-1: oklch(0.5583 0.1276 42.9956);
+  --chart-2: oklch(0.6898 0.1581 290.4107);
+  --chart-3: oklch(0.213 0.0078 95.4245);
+  --chart-4: oklch(0.3074 0.0516 289.323);
+  --chart-5: oklch(0.5608 0.1348 42.0584);
+  --sidebar: oklch(0.2357 0.0024 67.7077);
+  --sidebar-foreground: oklch(0.8074 0.0142 93.0137);
+  --sidebar-primary: oklch(0.325 0 0);
+  --sidebar-primary-foreground: oklch(0.9881 0 0);
+  --sidebar-accent: oklch(0.168 0.002 106.6177);
+  --sidebar-accent-foreground: oklch(0.8074 0.0142 93.0137);
+  --sidebar-border: oklch(0.9401 0 0);
+  --sidebar-ring: oklch(0.7731 0 0);
+  --radius: 0.5rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+}
+
+:root[data-theme="mono"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.1448 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.1448 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.1448 0 0);
+  --primary: oklch(0.5555 0 0);
+  --primary-foreground: oklch(0.9851 0 0);
+  --secondary: oklch(0.9702 0 0);
+  --secondary-foreground: oklch(0.2046 0 0);
+  --muted: oklch(0.9702 0 0);
+  --muted-foreground: oklch(0.5486 0 0);
+  --accent: oklch(0.9702 0 0);
+  --accent-foreground: oklch(0.2046 0 0);
+  --destructive: oklch(0.583 0.2387 28.4765);
+  --destructive-foreground: oklch(0.9702 0 0);
+  --border: oklch(0.9219 0 0);
+  --input: oklch(0.9219 0 0);
+  --ring: oklch(0.709 0 0);
+  --chart-1: oklch(0.5555 0 0);
+  --chart-2: oklch(0.5555 0 0);
+  --chart-3: oklch(0.5555 0 0);
+  --chart-4: oklch(0.5555 0 0);
+  --chart-5: oklch(0.5555 0 0);
+  --sidebar: oklch(0.9851 0 0);
+  --sidebar-foreground: oklch(0.1448 0 0);
+  --sidebar-primary: oklch(0.2046 0 0);
+  --sidebar-primary-foreground: oklch(0.9851 0 0);
+  --sidebar-accent: oklch(0.9702 0 0);
+  --sidebar-accent-foreground: oklch(0.2046 0 0);
+  --sidebar-border: oklch(0.9219 0 0);
+  --sidebar-ring: oklch(0.709 0 0);
+  --radius: 0rem;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="mono"] {
+  --background: oklch(0.1448 0 0);
+  --foreground: oklch(0.9851 0 0);
+  --card: oklch(0.2134 0 0);
+  --card-foreground: oklch(0.9851 0 0);
+  --popover: oklch(0.2686 0 0);
+  --popover-foreground: oklch(0.9851 0 0);
+  --primary: oklch(0.5555 0 0);
+  --primary-foreground: oklch(0.9851 0 0);
+  --secondary: oklch(0.2686 0 0);
+  --secondary-foreground: oklch(0.9851 0 0);
+  --muted: oklch(0.2686 0 0);
+  --muted-foreground: oklch(0.709 0 0);
+  --accent: oklch(0.3715 0 0);
+  --accent-foreground: oklch(0.9851 0 0);
+  --destructive: oklch(0.7022 0.1892 22.2279);
+  --destructive-foreground: oklch(0.2686 0 0);
+  --border: oklch(0.3407 0 0);
+  --input: oklch(0.4386 0 0);
+  --ring: oklch(0.5555 0 0);
+  --chart-1: oklch(0.5555 0 0);
+  --chart-2: oklch(0.5555 0 0);
+  --chart-3: oklch(0.5555 0 0);
+  --chart-4: oklch(0.5555 0 0);
+  --chart-5: oklch(0.5555 0 0);
+  --sidebar: oklch(0.2046 0 0);
+  --sidebar-foreground: oklch(0.9851 0 0);
+  --sidebar-primary: oklch(0.9851 0 0);
+  --sidebar-primary-foreground: oklch(0.2046 0 0);
+  --sidebar-accent: oklch(0.2686 0 0);
+  --sidebar-accent-foreground: oklch(0.9851 0 0);
+  --sidebar-border: oklch(1 0 0);
+  --sidebar-ring: oklch(0.4386 0 0);
+  --radius: 0rem;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+}
+
+:root[data-theme="claude-plus"] {
+  --background: oklch(0.9818 0.0054 95.0986);
+  --foreground: oklch(0.3438 0.0269 95.7226);
+  --card: oklch(0.9665 0.0067 97.3521);
+  --card-foreground: oklch(0.1908 0.002 106.5859);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2671 0.0196 98.939);
+  --primary: oklch(0.6171 0.1375 39.0427);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.9245 0.0138 92.9892);
+  --secondary-foreground: oklch(0.4334 0.0177 98.6048);
+  --muted: oklch(0.9341 0.0153 90.239);
+  --muted-foreground: oklch(0.5341 0.0078 97.4503);
+  --accent: oklch(0.9245 0.0138 92.9892);
+  --accent-foreground: oklch(0.2671 0.0196 98.939);
+  --destructive: oklch(0.1908 0.002 106.5859);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.8847 0.0069 97.3627);
+  --input: oklch(0.7621 0.0156 98.3528);
+  --ring: oklch(0.6171 0.1375 39.0427);
+  --chart-1: oklch(0.5583 0.1276 42.9956);
+  --chart-2: oklch(0.6898 0.1581 290.4107);
+  --chart-3: oklch(0.8816 0.0276 93.128);
+  --chart-4: oklch(0.8822 0.0403 298.1792);
+  --chart-5: oklch(0.5608 0.1348 42.0584);
+  --sidebar: oklch(0.9663 0.008 98.8792);
+  --sidebar-foreground: oklch(0.359 0.0051 106.6524);
+  --sidebar-primary: oklch(0.6171 0.1375 39.0427);
+  --sidebar-primary-foreground: oklch(0.9881 0 0);
+  --sidebar-accent: oklch(0.9245 0.0138 92.9892);
+  --sidebar-accent-foreground: oklch(0.325 0 0);
+  --sidebar-border: oklch(0.9401 0 0);
+  --sidebar-ring: oklch(0.7731 0 0);
+  --radius: 1rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="claude-plus"] {
+  --background: oklch(0.2679 0.0036 106.6427);
+  --foreground: oklch(0.9576 0.0027 106.4494);
+  --card: oklch(0.2928 0.0018 106.5092);
+  --card-foreground: oklch(0.9818 0.0054 95.0986);
+  --popover: oklch(0.3085 0.0035 106.6039);
+  --popover-foreground: oklch(0.9211 0.004 106.4781);
+  --primary: oklch(0.6724 0.1308 38.7559);
+  --primary-foreground: oklch(0.1908 0.002 106.5859);
+  --secondary: oklch(0.9818 0.0054 95.0986);
+  --secondary-foreground: oklch(0.3085 0.0035 106.6039);
+  --muted: oklch(0.2213 0.0038 106.707);
+  --muted-foreground: oklch(0.7713 0.0169 99.0657);
+  --accent: oklch(0.213 0.0078 95.4245);
+  --accent-foreground: oklch(0.9663 0.008 98.8792);
+  --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.3618 0.0101 106.8928);
+  --input: oklch(0.4336 0.0113 100.2195);
+  --ring: oklch(0.6724 0.1308 38.7559);
+  --chart-1: oklch(0.5583 0.1276 42.9956);
+  --chart-2: oklch(0.6898 0.1581 290.4107);
+  --chart-3: oklch(0.213 0.0078 95.4245);
+  --chart-4: oklch(0.3074 0.0516 289.323);
+  --chart-5: oklch(0.5608 0.1348 42.0584);
+  --sidebar: oklch(0.2357 0.0024 67.7077);
+  --sidebar-foreground: oklch(0.8074 0.0142 93.0137);
+  --sidebar-primary: oklch(0.325 0 0);
+  --sidebar-primary-foreground: oklch(0.9881 0 0);
+  --sidebar-accent: oklch(0.168 0.002 106.6177);
+  --sidebar-accent-foreground: oklch(0.8074 0.0142 93.0137);
+  --sidebar-border: oklch(0.9401 0 0);
+  --sidebar-ring: oklch(0.7731 0 0);
+  --radius: 1rem;
+  --shadow-x: 0;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: oklch(0 0 0);
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+}
+
+:root[data-theme="vermillion"] {
+  --background: oklch(0.9787 0.0017 247.8391);
+  --foreground: oklch(0.2213 0.0066 258.3651);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2213 0.0066 258.3651);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2213 0.0066 258.3651);
+  --primary: oklch(0.5895 0.1791 31.9223);
+  --primary-foreground: oklch(0.9787 0.0017 247.8391);
+  --secondary: oklch(0.9599 0.0025 228.7845);
+  --secondary-foreground: oklch(0.3405 0.0129 267.1584);
+  --muted: oklch(0.9512 0.0034 247.8591);
+  --muted-foreground: oklch(0.6306 0.0158 254.6546);
+  --accent: oklch(0.9599 0.0025 228.7845);
+  --accent-foreground: oklch(0.3405 0.0129 267.1584);
+  --destructive: oklch(0.5895 0.1791 31.9223);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.9113 0.0052 247.8814);
+  --input: oklch(0.9113 0.0052 247.8814);
+  --ring: oklch(0.5895 0.1791 31.9223);
+  --chart-1: oklch(0.5895 0.1791 31.9223);
+  --chart-2: oklch(0.6306 0.0158 254.6546);
+  --chart-3: oklch(0.7103 0.1273 29.4985);
+  --chart-4: oklch(0.4906 0.0128 256.74);
+  --chart-5: oklch(0.4905 0.1514 31.0346);
+  --sidebar: oklch(0.96 0.0025 228.78);
+  --sidebar-foreground: oklch(0.2213 0.0066 258.3651);
+  --sidebar-primary: oklch(0.2213 0.0066 258.3651);
+  --sidebar-primary-foreground: oklch(0.9787 0.0017 247.8391);
+  --sidebar-accent: oklch(0.9113 0.0052 247.8814);
+  --sidebar-accent-foreground: oklch(0.2213 0.0066 258.3651);
+  --sidebar-border: oklch(0.9113 0.0052 247.8814);
+  --sidebar-ring: oklch(0.5895 0.1791 31.9223);
+  --radius: 0.5rem;
+  --shadow-x: 0rem;
+  --shadow-y: 0.25rem;
+  --shadow-blur: 0.5rem;
+  --shadow-spread: 0rem;
+  --shadow-opacity: 0.1;
+  --shadow-color: #17171c;
+  --shadow-2xs: 0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.05);
+  --shadow-xs: 0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.05);
+  --shadow-sm:
+    0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.1),
+    0rem 1px 2px -1px hsl(240 9.8039% 10% / 0.1);
+  --shadow:
+    0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.1),
+    0rem 1px 2px -1px hsl(240 9.8039% 10% / 0.1);
+  --shadow-md:
+    0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.1),
+    0rem 2px 4px -1px hsl(240 9.8039% 10% / 0.1);
+  --shadow-lg:
+    0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.1),
+    0rem 4px 6px -1px hsl(240 9.8039% 10% / 0.1);
+  --shadow-xl:
+    0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.1),
+    0rem 8px 10px -1px hsl(240 9.8039% 10% / 0.1);
+  --shadow-2xl: 0rem 0.25rem 0.5rem 0rem hsl(240 9.8039% 10% / 0.25);
+  --tracking-normal: -0.025em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="vermillion"] {
+  --background: oklch(0.191 0.0043 264.4658);
+  --foreground: oklch(0.9489 0.0029 264.5417);
+  --card: oklch(0.2299 0.0065 258.3639);
+  --card-foreground: oklch(0.9489 0.0029 264.5417);
+  --popover: oklch(0.2299 0.0065 258.3639);
+  --popover-foreground: oklch(0.9489 0.0029 264.5417);
+  --primary: oklch(0.5895 0.1791 31.9223);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.2682 0.008 264.432);
+  --secondary-foreground: oklch(0.741 0.0106 267.3329);
+  --muted: oklch(0.2682 0.008 264.432);
+  --muted-foreground: oklch(0.5401 0.0139 259.8239);
+  --accent: oklch(0.2682 0.008 264.432);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.5895 0.1791 31.9223);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.2998 0.0084 255.5649);
+  --input: oklch(0.2998 0.0084 255.5649);
+  --ring: oklch(0.5895 0.1791 31.9223);
+  --chart-1: oklch(0.5895 0.1791 31.9223);
+  --chart-2: oklch(0.5401 0.0139 259.8239);
+  --chart-3: oklch(0.7103 0.1273 29.4985);
+  --chart-4: oklch(0.741 0.0106 267.3329);
+  --chart-5: oklch(0.8011 0.0869 27.9542);
+  --sidebar: oklch(0.2 0.0043 264.47);
+  --sidebar-foreground: oklch(0.9489 0.0029 264.5417);
+  --sidebar-primary: oklch(0.9489 0.0029 264.5417);
+  --sidebar-primary-foreground: oklch(0.191 0.0043 264.4658);
+  --sidebar-accent: oklch(0.2682 0.008 264.432);
+  --sidebar-accent-foreground: oklch(0.9489 0.0029 264.5417);
+  --sidebar-border: oklch(0.2998 0.0084 255.5649);
+  --sidebar-ring: oklch(0.5895 0.1791 31.9223);
+  --radius: 0.5rem;
+  --shadow-x: 0rem;
+  --shadow-y: 0.3rem;
+  --shadow-blur: 0.6rem;
+  --shadow-spread: 0rem;
+  --shadow-opacity: 0.6;
+  --shadow-color: #14181f;
+  --shadow-2xs: 0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.3);
+  --shadow-xs: 0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.3);
+  --shadow-sm:
+    0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.6),
+    0rem 1px 2px -1px hsl(218.1818 21.5686% 10% / 0.6);
+  --shadow:
+    0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.6),
+    0rem 1px 2px -1px hsl(218.1818 21.5686% 10% / 0.6);
+  --shadow-md:
+    0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.6),
+    0rem 2px 4px -1px hsl(218.1818 21.5686% 10% / 0.6);
+  --shadow-lg:
+    0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.6),
+    0rem 4px 6px -1px hsl(218.1818 21.5686% 10% / 0.6);
+  --shadow-xl:
+    0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 0.6),
+    0rem 8px 10px -1px hsl(218.1818 21.5686% 10% / 0.6);
+  --shadow-2xl: 0rem 0.3rem 0.6rem 0rem hsl(218.1818 21.5686% 10% / 1.5);
+}
+
+:root[data-theme="amber-mono"] {
+  --background: rgb(250, 250, 250);
+  --foreground: rgb(23, 23, 23);
+  --card: rgb(245, 245, 245);
+  --card-foreground: rgb(23, 23, 23);
+  --popover: rgb(245, 245, 245);
+  --popover-foreground: rgb(23, 23, 23);
+  --primary: rgb(225, 113, 0);
+  --primary-foreground: rgb(250, 250, 249);
+  --secondary: rgb(250, 250, 249);
+  --secondary-foreground: rgb(41, 37, 36);
+  --muted: rgb(231, 229, 228);
+  --muted-foreground: rgb(28, 25, 23);
+  --accent: rgb(250, 250, 249);
+  --accent-foreground: rgb(68, 64, 59);
+  --destructive: rgb(231, 0, 11);
+  --destructive-foreground: rgb(250, 250, 249);
+  --border: rgb(214, 211, 209);
+  --input: rgb(166, 160, 155);
+  --ring: rgb(225, 113, 0);
+  --chart-1: rgb(225, 113, 0);
+  --chart-2: rgb(255, 105, 0);
+  --chart-3: rgb(240, 177, 0);
+  --chart-4: rgb(251, 44, 54);
+  --chart-5: rgb(246, 51, 154);
+  --sidebar: rgb(250, 250, 249);
+  --sidebar-foreground: rgb(41, 37, 36);
+  --sidebar-primary: rgb(23, 23, 23);
+  --sidebar-primary-foreground: rgb(225, 113, 0);
+  --sidebar-accent: rgb(250, 250, 249);
+  --sidebar-accent-foreground: rgb(41, 37, 36);
+  --sidebar-border: rgb(214, 211, 209);
+  --sidebar-ring: rgb(225, 113, 0);
+  --radius: 0rem;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="amber-mono"] {
+  --background: rgb(10, 10, 10);
+  --foreground: rgb(245, 245, 245);
+  --card: rgb(23, 23, 23);
+  --card-foreground: rgb(245, 245, 244);
+  --popover: rgb(23, 23, 23);
+  --popover-foreground: rgb(245, 245, 244);
+  --primary: rgb(225, 113, 0);
+  --primary-foreground: rgb(245, 245, 244);
+  --secondary: rgb(41, 37, 36);
+  --secondary-foreground: rgb(245, 245, 244);
+  --muted: rgb(28, 25, 23);
+  --muted-foreground: rgb(166, 160, 155);
+  --accent: rgb(68, 64, 59);
+  --accent-foreground: rgb(245, 245, 244);
+  --destructive: rgb(193, 0, 7);
+  --destructive-foreground: rgb(245, 245, 244);
+  --border: rgb(68, 64, 59);
+  --input: rgb(41, 37, 36);
+  --ring: rgb(151, 60, 0);
+  --chart-1: rgb(187, 77, 0);
+  --chart-2: rgb(202, 53, 0);
+  --chart-3: rgb(166, 95, 0);
+  --chart-4: rgb(193, 0, 7);
+  --chart-5: rgb(198, 0, 92);
+  --sidebar: rgb(23, 23, 23);
+  --sidebar-foreground: rgb(245, 245, 244);
+  --sidebar-primary: rgb(187, 77, 0);
+  --sidebar-primary-foreground: rgb(245, 245, 244);
+  --sidebar-accent: rgb(41, 37, 36);
+  --sidebar-accent-foreground: rgb(245, 245, 244);
+  --sidebar-border: rgb(68, 64, 59);
+  --sidebar-ring: rgb(151, 60, 0);
+  --radius: 0rem;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-sm: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow-md: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
+  --shadow-lg: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
+  --shadow-xl: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+}
+
+:root[data-theme="mx-brutalist"] {
+  --background: rgb(244, 247, 242);
+  --foreground: rgb(5, 20, 13);
+  --card: rgb(252, 253, 251);
+  --card-foreground: rgb(5, 20, 13);
+  --popover: rgb(252, 253, 251);
+  --popover-foreground: rgb(5, 20, 13);
+  --primary: rgb(0, 143, 71);
+  --primary-foreground: rgb(255, 255, 255);
+  /* 满饱和纯红在本主题里是「信号/图表点缀色」(chart-2 同款),不是表面填充色:
+     被 shadcn 语义槽当大面背景消费时(工作区胶囊 bg-secondary、模型图标托底)
+     整块红砸在画布上。表面槽改用灰绿瓷片,点缀色留给 chart/destructive。 */
+  --secondary: rgb(228, 236, 230);
+  --secondary-foreground: rgb(5, 20, 13);
+  --muted: rgb(245, 237, 214);
+  --muted-foreground: rgb(66, 59, 36);
+  --accent: rgb(255, 153, 10);
+  --accent-foreground: rgb(5, 20, 13);
+  --destructive: rgb(230, 0, 0);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(0, 0, 0);
+  --input: rgb(255, 255, 255);
+  --ring: rgb(0, 143, 71);
+  --chart-1: rgb(0, 143, 71);
+  --chart-2: rgb(245, 0, 0);
+  --chart-3: rgb(255, 153, 10);
+  --chart-4: rgb(255, 51, 187);
+  --chart-5: rgb(0, 191, 230);
+  --sidebar: rgb(0, 61, 31);
+  --sidebar-foreground: rgb(255, 255, 255);
+  --sidebar-primary: rgb(255, 153, 10);
+  --sidebar-primary-foreground: rgb(0, 61, 31);
+  --sidebar-accent: rgb(0, 92, 46);
+  --sidebar-accent-foreground: rgb(255, 255, 255);
+  --sidebar-border: rgb(0, 0, 0);
+  --sidebar-ring: rgb(255, 153, 10);
+  --radius: 0px;
+  --shadow-x: 4px;
+  --shadow-y: 4px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 1;
+  --shadow-color: hsl(0, 0%, 0%);
+  --shadow-2xs: 4px 4px 0px 0px hsl(0 0% 0% / 0.5);
+  --shadow-xs: 4px 4px 0px 0px hsl(0 0% 0% / 0.5);
+  --shadow-sm: 4px 4px 0px 0px hsl(0 0% 0% / 1), 4px 1px 2px -1px hsl(0 0% 0% / 1);
+  --shadow: 4px 4px 0px 0px hsl(0 0% 0% / 1), 4px 1px 2px -1px hsl(0 0% 0% / 1);
+  --shadow-md: 4px 4px 0px 0px hsl(0 0% 0% / 1), 4px 2px 4px -1px hsl(0 0% 0% / 1);
+  --shadow-lg: 4px 4px 0px 0px hsl(0 0% 0% / 1), 4px 4px 6px -1px hsl(0 0% 0% / 1);
+  --shadow-xl: 4px 4px 0px 0px hsl(0 0% 0% / 1), 4px 8px 10px -1px hsl(0 0% 0% / 1);
+  --shadow-2xl: 4px 4px 0px 0px hsl(0 0% 0% / 2.5);
+  --tracking-normal: 0.02em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="mx-brutalist"] {
+  --background: rgb(2, 18, 10);
+  --foreground: rgb(255, 249, 229);
+  --card: rgb(6, 35, 20);
+  --card-foreground: rgb(255, 249, 229);
+  --popover: rgb(6, 35, 20);
+  --popover-foreground: rgb(255, 249, 229);
+  --primary: rgb(0, 245, 122);
+  --primary-foreground: rgb(0, 10, 5);
+  /* 与亮色同一修法:secondary 语义槽被当大面表面填充(工作区胶囊/图标托底),
+     满饱和信号红只做点缀(chart-2/destructive),表面槽换沉暗绿片。 */
+  --secondary: rgb(13, 38, 26);
+  --secondary-foreground: rgb(255, 249, 229);
+  --muted: rgb(15, 46, 31);
+  --muted-foreground: rgb(204, 198, 179);
+  --accent: rgb(255, 166, 41);
+  --accent-foreground: rgb(0, 10, 5);
+  --destructive: rgb(255, 0, 0);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(255, 249, 229);
+  --input: rgb(18, 43, 31);
+  --ring: rgb(255, 166, 41);
+  --chart-1: rgb(0, 245, 122);
+  --chart-2: rgb(255, 51, 51);
+  --chart-3: rgb(255, 166, 41);
+  --chart-4: rgb(255, 102, 204);
+  --chart-5: rgb(51, 221, 255);
+  --sidebar: rgb(0, 10, 5);
+  --sidebar-foreground: rgb(255, 249, 229);
+  --sidebar-primary: rgb(0, 245, 122);
+  --sidebar-primary-foreground: rgb(0, 10, 5);
+  --sidebar-accent: rgb(13, 38, 26);
+  --sidebar-accent-foreground: rgb(255, 249, 229);
+  --sidebar-border: rgb(255, 249, 229);
+  --sidebar-ring: rgb(255, 166, 41);
+  --radius: 0px;
+  --shadow-x: 4px;
+  --shadow-y: 4px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 1;
+  --shadow-color: hsl(45, 100%, 80%);
+  --shadow-2xs: 4px 4px 0px 0px hsl(45 100% 80% / 0.5);
+  --shadow-xs: 4px 4px 0px 0px hsl(45 100% 80% / 0.5);
+  --shadow-sm: 4px 4px 0px 0px hsl(45 100% 80% / 1), 4px 1px 2px -1px hsl(45 100% 80% / 1);
+  --shadow: 4px 4px 0px 0px hsl(45 100% 80% / 1), 4px 1px 2px -1px hsl(45 100% 80% / 1);
+  --shadow-md: 4px 4px 0px 0px hsl(45 100% 80% / 1), 4px 2px 4px -1px hsl(45 100% 80% / 1);
+  --shadow-lg: 4px 4px 0px 0px hsl(45 100% 80% / 1), 4px 4px 6px -1px hsl(45 100% 80% / 1);
+  --shadow-xl: 4px 4px 0px 0px hsl(45 100% 80% / 1), 4px 8px 10px -1px hsl(45 100% 80% / 1);
+  --shadow-2xl: 4px 4px 0px 0px hsl(45 100% 80% / 2.5);
+}
+
+:root[data-theme="tiesen"] {
+  --background: oklch(0.9747 0 0);
+  --foreground: oklch(0 0 0);
+  --card: oklch(1 0 267.51);
+  --card-foreground: oklch(0.2103 0 267.51);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0 0 0);
+  --primary: oklch(0.5144 0.1605 267.44);
+  --primary-foreground: oklch(0.97 0.014 254.604);
+  --secondary: oklch(0.94 0 0);
+  --secondary-foreground: oklch(0.25 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.44 0 0);
+  --accent: oklch(0.9214 0.0248 257.65);
+  --accent-foreground: oklch(0.2571 0.1161 272.24);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.97 0.014 254.604);
+  --border: oklch(0.92 0 0);
+  --input: oklch(0.94 0 0);
+  --ring: oklch(0.5144 0.1605 267.44);
+  --chart-1: oklch(0.9214 0.0248 257.65);
+  --chart-2: oklch(0.7597 0.0804 267.01);
+  --chart-3: oklch(0.6083 0.1247 272.72);
+  --chart-4: oklch(0.5144 0.1605 267.44);
+  --chart-5: oklch(0.2571 0.1161 272.24);
+  --sidebar: oklch(1 0 267.51);
+  --sidebar-foreground: oklch(0 0 0);
+  --sidebar-primary: oklch(0.5144 0.1605 267.44);
+  --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
+  --sidebar-accent: oklch(0.9214 0.0248 257.65);
+  --sidebar-accent-foreground: oklch(0.2571 0.1161 272.24);
+  --sidebar-border: oklch(0.92 0 0);
+  --sidebar-ring: oklch(0.5144 0.1605 267.44);
+  --radius: 0.5rem;
+  --shadow-x: 0.25px;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.15;
+  --shadow-color: oklch(0.2571 0.1161 272.24);
+  --shadow-2xs: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.07);
+  --shadow-xs: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.07);
+  --shadow-sm:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 1px 2px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 1px 2px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-md:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 2px 4px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-lg:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 4px 6px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-xl:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 8px 10px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-2xl: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.38);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="tiesen"] {
+  --background: oklch(0 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.2103 0 267.51);
+  --card-foreground: oklch(0.9461 0 0);
+  --popover: oklch(0.2103 0 267.51);
+  --popover-foreground: oklch(1 0 0);
+  --primary: oklch(0.5144 0.1605 267.44);
+  --primary-foreground: oklch(0.97 0.014 254.604);
+  --secondary: oklch(0.25 0 0);
+  --secondary-foreground: oklch(0.94 0 0);
+  --muted: oklch(0.23 0 0);
+  --muted-foreground: oklch(0.72 0 0);
+  --accent: oklch(0.32 0 0);
+  --accent-foreground: oklch(0.9214 0.0248 257.65);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.97 0.014 254.604);
+  --border: oklch(0.26 0 0);
+  --input: oklch(0.32 0 0);
+  --ring: oklch(0.5144 0.1605 267.44);
+  --chart-1: oklch(0.9214 0.0248 257.65);
+  --chart-2: oklch(0.7597 0.0804 267.01);
+  --chart-3: oklch(0.6083 0.1247 272.72);
+  --chart-4: oklch(0.5144 0.1605 267.44);
+  --chart-5: oklch(0.2571 0.1161 272.24);
+  --sidebar: oklch(0.2103 0 267.51);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-primary: oklch(0.5144 0.1605 267.44);
+  --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
+  --sidebar-accent: oklch(0.32 0 0);
+  --sidebar-accent-foreground: oklch(0.9214 0.0248 257.65);
+  --sidebar-border: oklch(0.26 0 0);
+  --sidebar-ring: oklch(0.5144 0.1605 267.44);
+  --radius: 0.5rem;
+  --shadow-x: 0.25px;
+  --shadow-y: 1px;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.15;
+  --shadow-color: oklch(0.2571 0.1161 272.24);
+  --shadow-2xs: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.07);
+  --shadow-xs: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.07);
+  --shadow-sm:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 1px 2px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 1px 2px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-md:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 2px 4px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-lg:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 4px 6px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-xl:
+    0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.15),
+    0.25px 8px 10px -1px hsl(236.5829 64.225% 21.4383% / 0.15);
+  --shadow-2xl: 0.25px 1px 3px 0px hsl(236.5829 64.225% 21.4383% / 0.38);
+}
+
+:root[data-theme="vescrow"] {
+  --background: rgb(240, 244, 252);
+  --foreground: rgb(10, 5, 13);
+  --card: rgb(250, 251, 255);
+  --card-foreground: rgb(10, 5, 13);
+  --popover: rgb(255, 255, 255);
+  --popover-foreground: rgb(10, 5, 13);
+  --primary: rgb(3, 3, 94);
+  --primary-foreground: rgb(255, 255, 255);
+  --secondary: rgb(226, 235, 253);
+  --secondary-foreground: rgb(2, 72, 212);
+  --muted: rgb(240, 238, 242);
+  --muted-foreground: rgb(99, 93, 105);
+  --accent: rgb(229, 232, 255);
+  --accent-foreground: rgb(2, 72, 212);
+  --destructive: rgb(225, 29, 72);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(230, 225, 233);
+  --input: rgb(230, 225, 233);
+  --ring: rgb(61, 126, 255);
+  --chart-1: rgb(2, 72, 212);
+  --chart-2: rgb(139, 92, 246);
+  --chart-3: rgb(217, 70, 239);
+  --chart-4: rgb(244, 63, 94);
+  --chart-5: rgb(249, 115, 22);
+  --sidebar: rgb(226, 235, 253);
+  --sidebar-foreground: rgb(2, 23, 59);
+  --sidebar-primary: rgb(253, 252, 254);
+  --sidebar-primary-foreground: rgb(17, 23, 44);
+  --sidebar-accent: rgb(26, 29, 66);
+  --sidebar-accent-foreground: rgb(255, 255, 255);
+  --sidebar-border: rgb(27, 26, 66);
+  --sidebar-ring: rgb(35, 41, 134);
+  --radius: 1.25rem;
+  --shadow-x: 0px;
+  --shadow-y: 4px;
+  --shadow-blur: 10px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.1;
+  --shadow-color: 0, 0, 0;
+  --shadow-2xs: 0px 4px 10px 0px hsl(0, 0, 0 / 0.05);
+  --shadow-xs: 0px 4px 10px 0px hsl(0, 0, 0 / 0.05);
+  --shadow-sm: 0px 4px 10px 0px hsl(0, 0, 0 / 0.1), 0px 1px 2px -1px hsl(0, 0, 0 / 0.1);
+  --shadow: 0px 4px 10px 0px hsl(0, 0, 0 / 0.1), 0px 1px 2px -1px hsl(0, 0, 0 / 0.1);
+  --shadow-md: 0px 4px 10px 0px hsl(0, 0, 0 / 0.1), 0px 2px 4px -1px hsl(0, 0, 0 / 0.1);
+  --shadow-lg: 0px 4px 10px 0px hsl(0, 0, 0 / 0.1), 0px 4px 6px -1px hsl(0, 0, 0 / 0.1);
+  --shadow-xl: 0px 4px 10px 0px hsl(0, 0, 0 / 0.1), 0px 8px 10px -1px hsl(0, 0, 0 / 0.1);
+  --shadow-2xl: 0px 4px 10px 0px hsl(0, 0, 0 / 0.25);
+  --tracking-normal: -0.01em;
+  --spacing: 0.25rem;
+}
+
+:root.dark[data-theme="vescrow"] {
+  --background: rgb(2, 4, 9);
+  --foreground: rgb(253, 252, 254);
+  --card: rgb(6, 10, 19);
+  --card-foreground: rgb(253, 252, 254);
+  --popover: rgb(6, 9, 19);
+  --popover-foreground: rgb(253, 252, 254);
+  --primary: rgb(15, 46, 169);
+  --primary-foreground: rgb(255, 255, 255);
+  --secondary: rgb(17, 23, 44);
+  --secondary-foreground: rgb(253, 252, 254);
+  --muted: rgb(12, 16, 34);
+  --muted-foreground: rgb(153, 153, 168);
+  --accent: rgb(26, 31, 66);
+  --accent-foreground: rgb(253, 252, 254);
+  --destructive: rgb(129, 29, 51);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(27, 26, 66);
+  --input: rgb(26, 33, 66);
+  --ring: rgb(35, 38, 134);
+  --chart-1: rgb(95, 120, 247);
+  --chart-2: rgb(239, 155, 77);
+  --chart-3: rgb(244, 63, 94);
+  --chart-4: rgb(249, 115, 22);
+  --chart-5: rgb(35, 38, 134);
+  --sidebar: rgb(10, 14, 30);
+  --sidebar-foreground: rgb(129, 131, 156);
+  --sidebar-primary: rgb(253, 252, 254);
+  --sidebar-primary-foreground: rgb(10, 13, 30);
+  --sidebar-accent: rgb(17, 19, 44);
+  --sidebar-accent-foreground: rgb(253, 252, 254);
+  --sidebar-border: rgb(17, 18, 44);
+  --sidebar-ring: rgb(35, 41, 134);
+  --radius: 1.25rem;
+  --shadow-x: 0px;
+  --shadow-y: 10px;
+  --shadow-blur: 20px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.5;
+  --shadow-color: 0, 0, 0;
+  --shadow-2xs: 0px 10px 20px 0px hsl(0, 0, 0 / 0.25);
+  --shadow-xs: 0px 10px 20px 0px hsl(0, 0, 0 / 0.25);
+  --shadow-sm: 0px 10px 20px 0px hsl(0, 0, 0 / 0.5), 0px 1px 2px -1px hsl(0, 0, 0 / 0.5);
+  --shadow: 0px 10px 20px 0px hsl(0, 0, 0 / 0.5), 0px 1px 2px -1px hsl(0, 0, 0 / 0.5);
+  --shadow-md: 0px 10px 20px 0px hsl(0, 0, 0 / 0.5), 0px 2px 4px -1px hsl(0, 0, 0 / 0.5);
+  --shadow-lg: 0px 10px 20px 0px hsl(0, 0, 0 / 0.5), 0px 4px 6px -1px hsl(0, 0, 0 / 0.5);
+  --shadow-xl: 0px 10px 20px 0px hsl(0, 0, 0 / 0.5), 0px 8px 10px -1px hsl(0, 0, 0 / 0.5);
+  --shadow-2xl: 0px 10px 20px 0px hsl(0, 0, 0 / 1.25);
+}
+
+
+/* ===== 花色主题的 DS 令牌自适应(前端重构 R1) =====
+   默认主题(default)用上面的手调值;其余预置/自定义主题统一从语义变量派生,
+   并去掉所有白色内衬阴影(在深色/花色底上会发灰),换成前景色描边+柔和投影。
+   注意选择器特异度:必须高于 .dark 的 ds 块,且暗色派生块在亮色派生块之后。 */
+:root[data-theme]:not([data-theme="default"]) {
+  --ds-surface-100: var(--card);
+  --ds-surface-200: color-mix(in srgb, var(--card) 55%, var(--background));
+  --ds-surface-300: color-mix(in srgb, var(--card) 25%, var(--background));
+  --ds-surface-400: var(--background);
+  --ds-surface-input: var(--card);
+  --ds-on-surface: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --ds-on-surface-active: color-mix(in srgb, var(--foreground) 9%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --ds-pill-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+  --ds-icon: color-mix(in srgb, var(--foreground) 58%, var(--background));
+  --ds-popover: var(--popover);
+  --ds-menu-bg: var(--popover);
+  --ds-text-primary: var(--foreground);
+  --ds-text-secondary: color-mix(in srgb, var(--foreground) 64%, transparent);
+  --ds-text-tertiary: color-mix(in srgb, var(--foreground) 48%, transparent);
+  --ds-elevation-100:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 9%, transparent),
+    0.5px 0.5px 1px rgba(0, 0, 0, 0.06);
+  --ds-elevation-200:
+    0 0 0 0.5px color-mix(in srgb, var(--primary) 14%, transparent),
+    0px 5px 3px rgba(0, 0, 0, 0.02), 0px 2px 2px rgba(0, 0, 0, 0.03),
+    0px 1px 1px rgba(0, 0, 0, 0.04);
+  --ds-elevation-300:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 10%, transparent),
+    0px 3px 6px rgba(0, 0, 0, 0.05), 0px 11px 11px rgba(0, 0, 0, 0.04),
+    0px 24px 15px rgba(0, 0, 0, 0.02);
+  --ds-chat-composer-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 12%, transparent),
+    0 0 4px -1px rgba(0, 0, 0, 0.05), 0 0 14px -5px rgba(0, 0, 0, 0.07),
+    0 0 28px -10px rgba(0, 0, 0, 0.07);
+  --ds-chat-composer-shadow-focus:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 18%, transparent),
+    0 0 6px -2px rgba(0, 0, 0, 0.07), 0 0 18px -6px rgba(0, 0, 0, 0.09),
+    0 0 34px -12px rgba(0, 0, 0, 0.1);
+  --ds-input-shadow: 0 0 0 0.5px color-mix(in srgb, var(--foreground) 12%, transparent);
+  --ds-input-shadow-inset: none;
+  --ds-input-shadow-hover: 0 0 0 0.5px color-mix(in srgb, var(--primary) 30%, transparent);
+  --ds-input-shadow-focus:
+    0 0 1px 0.5px color-mix(in srgb, var(--primary) 45%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--primary) 10%, transparent);
+  --ds-menu-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent),
+    2px 1px 5px 0 rgba(0, 0, 0, 0.06), 8px 6px 10px 0 rgba(0, 0, 0, 0.05),
+    18px 13px 13px 0 rgba(0, 0, 0, 0.03);
+  --ds-menu-shadow-inset: none;
+}
+
+:root.dark[data-theme]:not([data-theme="default"]) {
+  --ds-surface-100: color-mix(in srgb, var(--background) 92%, black);
+  --ds-surface-200: var(--background);
+  --ds-surface-300: var(--card);
+  --ds-surface-400: color-mix(in srgb, var(--card) 88%, white);
+  --ds-surface-input: var(--card);
+  --ds-on-surface: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --ds-on-surface-active: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --ds-pill-bg: color-mix(in srgb, var(--primary) 10%, transparent);
+  --ds-icon: color-mix(in srgb, var(--foreground) 55%, var(--background));
+  --ds-menu-bg: var(--popover);
+  --ds-elevation-100: 0 0 0 0.5px color-mix(in srgb, var(--foreground) 10%, transparent);
+  --ds-elevation-200:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent),
+    0 0 9px -4px rgba(0, 0, 0, 0.4), 0 0 32px -8px rgba(0, 0, 0, 0.16);
+  --ds-elevation-300:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent),
+    0 2px 12px -6px rgba(0, 0, 0, 0.44), 0 5px 36px -12px rgba(0, 0, 0, 0.2);
+  --ds-chat-composer-shadow:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 10%, transparent),
+    0 0 20px -10px rgba(0, 0, 0, 0.08);
+  --ds-chat-composer-shadow-focus:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 16%, transparent),
+    0 0 24px -12px rgba(0, 0, 0, 0.1);
+  --ds-input-shadow: 0 0 0 0.5px color-mix(in srgb, var(--foreground) 10%, transparent);
+  --ds-input-shadow-inset: none;
+  --ds-input-shadow-hover: 0 0 0 0.5px color-mix(in srgb, var(--foreground) 18%, transparent);
+  --ds-input-shadow-focus:
+    0 0 1px 0.5px color-mix(in srgb, var(--primary) 56%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--primary) 10%, transparent);
+  --ds-menu-shadow:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--foreground) 14%, transparent),
+    0 0 9px -4px rgba(0, 0, 0, 0.5), 0 0 32px -8px rgba(0, 0, 0, 0.2);
+  --ds-menu-shadow-inset: none;
+}
+
+/* ===== 侧栏表面令牌作用域(花色主题侧栏适配) =====
+   花色主题的 --sidebar 可与内容面(--card/--background)完全不同族(如深绿侧栏+
+   近白内容面),而上面两个派生块把 --ds-* 全部从内容面颜色派生——侧栏内部的
+   模块卡、选中行药丸、日期标题、悬停晕染因此在换色侧栏上整体错位(亮卡浮在
+   深侧栏、黑字压深底、晕染方向与侧栏文字相反)。治本:侧栏表面容器统一挂
+   data-sidebar-surface(ui/sidebar.tsx 三形态 + 设置页/图像页 aside),作用域内
+   消费的令牌全部改为从侧栏自己的 --sidebar* 系派生——亮暗一套公式通吃(沉暗
+   还是提亮由 sidebar-foreground 的深浅自动决定,无需分块)。默认主题不进本
+   作用域,手调值零改动;弹层/对话框经 Portal 渲染在 body 下,不在作用域内,
+   继续用内容面派生。注意 --sidebar-module-card-bg 必须在此重指:它在 :root
+   声明时已把 var(--ds-surface-400) 替换成内容面色,后代重定义 --ds-surface-400
+   追不上它(custom property 在声明元素处完成代入再继承)。 */
+:root[data-theme]:not([data-theme="default"]) [data-sidebar-surface] {
+  --background: var(--sidebar);
+  --foreground: var(--sidebar-foreground);
+  --secondary-foreground: var(--sidebar-foreground);
+  --muted-foreground: color-mix(in srgb, var(--sidebar-foreground) 64%, transparent);
+  --primary: var(--sidebar-primary);
+  --primary-foreground: var(--sidebar-primary-foreground);
+  --border: var(--sidebar-border);
+  --divider: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+  --input: var(--sidebar-accent);
+  --accent: var(--sidebar-accent);
+  --accent-foreground: var(--sidebar-accent-foreground);
+  --ring: var(--sidebar-ring);
+  /* 选中行/导航药丸:向侧栏文字色沉一档(亮底变深、暗底变浅,永远与文字拉开对比) */
+  --ds-surface-100: color-mix(in srgb, var(--sidebar) 84%, var(--sidebar-foreground));
+  --ds-surface-200: color-mix(in srgb, var(--sidebar) 84%, var(--sidebar-foreground));
+  /* 模块卡(新建/搜索/多选):半档,比药丸更贴侧栏底 */
+  --ds-surface-400: color-mix(in srgb, var(--sidebar) 92%, var(--sidebar-foreground));
+  --sidebar-module-card-bg: var(--ds-surface-400);
+  --ds-on-surface: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
+  --ds-on-surface-active: color-mix(in srgb, var(--sidebar-foreground) 11%, transparent);
+  --ds-text-primary: var(--sidebar-foreground);
+  --ds-text-secondary: color-mix(in srgb, var(--sidebar-foreground) 64%, transparent);
+  --ds-text-tertiary: color-mix(in srgb, var(--sidebar-foreground) 48%, transparent);
+  --ds-icon: color-mix(in srgb, var(--sidebar-foreground) 55%, transparent);
+  --avatar-fallback-bg: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+  /* 药丸与侧栏卡共用的浮起描边:侧栏前景发丝环,替代内容面前景(深侧栏上不可见) */
+  --ds-elevation-100:
+    0 0 0 0.5px color-mix(in srgb, var(--sidebar-foreground) 14%, transparent),
+    0.5px 0.5px 1px rgba(0, 0, 0, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-divider: var(--divider);
+  --color-ai-icon-bg: var(--ai-icon-bg);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* 语义警示/成功(域13-5):单点颜色 + 派生浅底,组件用 text-warning / bg-warning/10 等。
+     明暗主题各自的 --ds-warning/--ds-success 在 :root/.dark 里定义,此处仅做映射。 */
+  --color-warning: var(--ds-warning);
+  --color-success: var(--ds-success);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  /* 语义字号阶梯(域13-4):收编散落的任意值字号。新增三档,命名不撞 Tailwind 预设
+     (text-xs/sm/base 已被全仓 700+ 处用于默认 12/14/16px,覆写会造成视觉回归)。
+     micro=10px(角标/序号), mini=11px(辅助说明/时间戳), compact=13px(紧凑正文)。
+     12px 用 Tailwind 预设 text-xs;0.7rem(11.2px)孤例就近并入 mini。
+     刻意不带 --line-height:被收编的 text-[Nrem] 只设字号、行高继承父级,补 companion 会
+     改变行盒高度(compact 带 1.25rem 即把 h-7 标签的行盒顶满),不再是等值替换。
+     ⚠ 此处每新增一档,必须同步登记进 lib/utils.ts 的 cn(),否则 tailwind-merge 会把它
+     误判成文字颜色而整类删除(见该处注释);app/tests/cn-theme-scale.test.ts 锁死这一点。 */
+  --text-micro: 0.625rem;
+  --text-mini: 0.6875rem;
+  --text-compact: 0.8125rem;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+  --shadow-float: var(--shadow-float);
+  --shadow-card: var(--shadow-card);
+  --shadow-elevated: var(--shadow-elevated);
+  --shadow-strong: var(--shadow-strong);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-floating: var(--surface-floating);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* 设置模态的顶带替身(titlebar-overlay.tsx):本体遮罩(z-50)压住真实顶带让其
+     毛玻璃,替身在更高层(z-[90])复刻品牌行 + [-口×] 保持清晰。模态打开时 Radix
+     给 body 挂 pointer-events:none(连同后代继承)——替身壳自身 pointer-events:none
+     (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见命中;
+     拖拽区是 div(非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,
+     借替身壳豁免遮罩即可。
+     替身拖拽区壳必须背景透明(默认即透明):它若被填上底色,会透出遮罩的
+     模糊/压暗、在 Logo/品牌名外围裹出一圈暗影——拖拽区壳只负责命中与坐标,
+     不负责承载任何底色。 */
+  [data-titlebar-overlay] [data-tauri-drag-region] {
+    visibility: visible;
+  }
+  /* 替身内的按钮/链接/角色按钮:窗控钮 [-口×] 与品牌行的可点形态在替身里恢复命中。 */
+  [data-titlebar-overlay] :is(button, a, [role="button"]) {
+    visibility: visible;
+  }
+  /* 消「暗影环」:设置模态打开时,把真实顶带的 chrome(品牌行 + [-口×])隐去,
+     让本体遮罩的 backdrop-filter 只采样顶带那片均匀背景(糊了看不出);清晰版由
+     z-[90] 替身供给。若留着真实 chrome,它的像素会被糊成一团鬼影,替身清晰版
+     盖上去后鬼影向外晕开,在 Logo/品牌名外围形成一圈暗影。
+     用 visibility:hidden(而非 display:none)——顶带容器保留布局、不触发回流;
+     替身自身不受影响(见下条豁免)。chrome 标在组件根(sidebar-brand/window-controls),
+     替身复用同一组共享组件,其副本会命中下条替身作用域豁免,保持可见。 */
+  body:has([data-settings-overlay]) [data-titlebar-chrome] {
+    visibility: hidden;
+  }
+  /* 替身副本豁免:替身里的品牌行/窗控条也带 data-titlebar-chrome(同组件),须保持可见。 */
+  body:has([data-settings-overlay]) [data-titlebar-overlay] [data-titlebar-chrome] {
+    visibility: visible;
+  }
+  /* 界面字号缩放:改 <html> 根字号,所有 rem 单位(字号/间距/图标/圆角…)等比同步变化,
+     比例守恒 → 不可能撑破任何布局。变量 --rikkahub-ui-scale 由 root.tsx 从 displaySetting
+     写入,null/未设置时 fallback 为 1,默认根字号 16px 与浏览器默认一致,视觉零差异。
+     不变式(2.0.0 内测修复):UI 文本字号一律 rem(Tailwind 预设或 text-[N.NNrem]),
+     禁用 text-[Npx]/font-size:Npx,否则不随本缩放。px 字号仅允许两类合法场景:
+     exported-image.tsx(导出图与界面缩放无关,需确定性)、iframe srcdoc 内联样式
+     (code-block/workbench-host,独立文档不受主文档根字号影响)。 */
+  :root {
+    font-size: calc(16px * var(--rikkahub-ui-scale, 1));
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--rikkahub-ui-font, var(--font-sans));
+  }
+}
+
+/* Global scrollbar style, matching ScrollArea (radix) appearance */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition:
+      background-color 0.2s ease,
+      width 0.2s ease;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+[data-theme="claude"] [data-message-bubble] {
+  font-family: var(--font-serif);
+}
+
+[data-message-bubble] {
+  font-family: var(--rikkahub-chat-font, inherit);
+}
+
+[data-message-bubble] .markdown {
+  font-family: var(--rikkahub-chat-font, inherit);
+}
+
+/* 气泡内长词折行(2.0.0 内测:user 消息含超长无空格串时向右冲出气泡)。
+   overflow-wrap 可继承,覆盖气泡内全部 part;anywhere 参与 min-content 计算,
+   flex/max-w 上下文也能正确收缩。pre(nowrap 滚动)与 truncate(nowrap)不受影响。 */
+[data-message-bubble] {
+  overflow-wrap: anywhere;
+}
+
+.message-markdown {
+  font-family: var(--rikkahub-chat-font, inherit);
+}
+
+/* 详情抽屉(components/detail-drawer.tsx)正文跟随对话字体,与消息区观感一致;
+   其内代码块/JSON 块仍走等宽(pre/code 的 mono 规则优先级更高),不受影响。 */
+[data-detail-drawer] {
+  font-family: var(--rikkahub-chat-font, inherit);
+}
+
+.message-markdown p {
+  margin-block: 0.45rem;
+}
+
+.message-markdown p:first-child {
+  margin-top: 0;
+}
+
+.message-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown .inline-code,
+.message-markdown code:not(pre code),
+[data-message-role] .message-markdown code:not(pre code) {
+  border-radius: 0.375rem;
+  background: var(--muted) !important;
+  color: var(--primary) !important;
+  padding: 0.1rem 0.32rem !important;
+  /* 唯一等宽令牌(全应用单源,见 :root --rikkahub-code-font);连字关闭随 .inline-code
+     组件类走(markdown.css 单源,所有渲染上下文覆盖),不再在此锚定祖先。 */
+  font-family: var(--rikkahub-code-font) !important;
+  /* 行内代码字号单源:与 markdown.css .inline-code 的 0.92em 对齐(旧值 0.95em 两处打架) */
+  font-size: 0.92em !important;
+}
+
+/* 代码块内容使用默认代码字体;块 UI 文字(标题/按钮/标签)继承对话字体,不在这里强制等宽。 */
+.message-markdown pre,
+.message-markdown pre code,
+.message-markdown .code-block-content,
+.message-markdown .code-block-content pre,
+.message-markdown .code-block-content pre code,
+[data-message-role] .message-markdown pre,
+[data-message-role] .message-markdown pre code,
+[data-message-role] .message-markdown .code-block-content,
+[data-message-role] .message-markdown .code-block-content pre,
+[data-message-role] .message-markdown .code-block-content pre code {
+  font-family: var(--rikkahub-code-font) !important;
+}
+
+/* 语言标签跟随对话字体,与块 UI 文字观感一致。 */
+.message-markdown .code-block-language,
+[data-message-role] .message-markdown .code-block-language {
+  font-family: var(--rikkahub-chat-font, var(--font-sans)) !important;
+}
+
+[data-message-role],
+[data-message-role] .markdown,
+[data-message-role] button,
+[data-message-role] textarea,
+[data-message-role] input {
+  font-family: var(--rikkahub-chat-font, inherit);
+}
+
+/* 思考区行内代码:仅字号/行高/字重跟随思考小字排版,字体归唯一等宽令牌——
+   与正文行内代码同源(此前强制继承对话字体,思考文本里的代码样式突兀且
+   与正文行为不一致;等宽是行内代码的行业惯例,思考区不是例外)。 */
+.reasoning-markdown .inline-code,
+.reasoning-markdown code:not(pre code) {
+  font-size: inherit !important;
+  line-height: 1.03125rem !important;
+  font-weight: 500;
+}
+
+/* Keep the utility class for compatibility with existing usage. */
+.styled-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.styled-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.styled-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+.styled-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+}
+
+@keyframes rikkahub-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rikkahub-fade-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rikkahub-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes rikkahub-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes rikkahub-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes rikkahub-progress-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.rikkahub-step-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.rikkahub-step-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 22%, transparent),
+    transparent
+  );
+  transform: translateX(-120%);
+  animation: rikkahub-progress-shimmer 1.45s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Utility animation classes for components */
+.rikkahub-animate-fade-in-up {
+  animation: rikkahub-fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rikkahub-animate-fade-in-down {
+  animation: rikkahub-fade-in-down 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rikkahub-animate-scale-in {
+  animation: rikkahub-scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rikkahub-animate-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.rikkahub-animate-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--muted-foreground) 12%, transparent),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: rikkahub-shimmer 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 主题切换走 CSS 变量瞬间切换。曾用 `html.theme-transition *` 给所有元素加 0.3s 过渡
+   来"平滑"切换,但长会话下 DOM 有数万节点,每个都做 transition 会让 style recalc
+   风暴,切主题时整个应用卡死。专业应用(IDE / 设计工具)切主题本就是瞬间的,干脆。 */
+
+
+@layer components {
+/* ===== DS 组件样式类(前端重构 R1,自参考项目原样移植) =====
+   这些类是视觉还原的通用基座:菜单/弹层容器、工具条按钮、胶囊、语音发送钮等。
+   组件侧(shadcn/Radix)通过挂这些类获得 DS 的材质与动效。 */
+
+/* 菜单容器:所有下拉/右键/弹出面板共用。三层结构由 ::before(垫板)与
+   ::after(白内衬)完成,与参考项目的三 div 结构等效。 */
+.ds-menu {
+  position: relative;
+  border-radius: 18px;
+  padding: 6px;
+  background-color: var(--ds-menu-bg);
+  box-shadow: var(--ds-menu-shadow);
+}
+.ds-menu::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--ds-menu-shadow-inset);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 菜单项:32px 高、12px 圆角、0.8125rem(=13px)字号;active 用品牌色+500 字重。
+   字号/行高用 rem 以跟随界面缩放(uiFontSize),容器尺寸保持 px(固定 chrome)。 */
+.ds-menu-item {
+  display: flex;
+  min-height: 32px;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 0.8125rem;
+  line-height: 1rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--ds-text-primary);
+  cursor: pointer;
+  transition: background-color var(--ds-motion-swift);
+}
+.ds-menu-item:hover,
+.ds-menu-item[data-highlighted] {
+  background-color: var(--ds-on-surface);
+}
+.ds-menu-item > svg {
+  color: var(--ds-icon);
+  flex-shrink: 0;
+}
+.ds-menu-item[data-active="true"] {
+  color: var(--ds-brand-primary);
+  font-weight: 500;
+}
+.ds-menu-item[data-active="true"] > svg {
+  color: currentColor;
+}
+.ds-menu-item[data-disabled] {
+  color: var(--ds-text-tertiary);
+  cursor: not-allowed;
+  background: none;
+}
+.ds-menu-item-danger,
+.ds-menu-item-danger > svg {
+  color: #e54d42 !important;
+}
+.ds-menu-item-danger:hover {
+  background: color-mix(in srgb, var(--ds-danger) 6%, transparent) !important;
+}
+.ds-menu-divider {
+  margin: 4px 0;
+  height: 1px;
+  background-color: var(--ds-on-surface);
+}
+
+/* 工具条图标钮:输入卡底行的常驻底色钮(参考项目 .toolbar-btn) */
+.toolbar-btn {
+  background-color: var(--ds-on-surface) !important;
+}
+.toolbar-btn:hover {
+  background-color: var(--ds-on-surface-active) !important;
+}
+
+/* 品牌色胶囊(权限模式/技能 pill) */
+.skill-pill:not(.skill-pill-solid):hover {
+  background-color: color-mix(in srgb, var(--ds-brand-primary) 5%, transparent) !important;
+}
+
+/* 按钮/图标继承文字色(覆盖 lucide 默认) */
+.ds-btn svg,
+.ds-icon-inherit svg {
+  color: inherit;
+}
+
+/* 输入卡外壳:层叠环形阴影 + focus 抬升(参考项目 .chat-input-box) */
+.chat-input-box {
+  box-shadow: var(--ds-chat-composer-shadow);
+  transition: box-shadow var(--ds-motion-soft);
+}
+.chat-input-box:focus-within {
+  box-shadow: var(--ds-chat-composer-shadow-focus);
+}
+
+/* 语音/发送动作钮:32px 圆钮,发送态品牌色填充,录音态展开(参考项目 .cpd-action-btn) */
+.cpd-action-btn {
+  transition:
+    background-color var(--ds-duration-slow) var(--ds-ease-soft),
+    color var(--ds-duration-slow) var(--ds-ease-soft),
+    width var(--ds-duration-slow) var(--ds-ease-soft),
+    padding var(--ds-duration-slow) var(--ds-ease-soft);
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cpd-action-btn--idle,
+.cpd-action-btn--send {
+  width: 32px;
+  padding: 0 !important;
+  justify-content: center;
+}
+.cpd-action-btn--send {
+  background-color: var(--ds-brand-primary) !important;
+  color: var(--ds-brand-primary-text) !important;
+}
+.cpd-action-btn--recording {
+  background-color: var(--destructive) !important;
+  color: #fff !important;
+  width: 72px;
+  padding-left: 11px !important;
+  padding-right: 11px !important;
+  gap: 5px;
+  justify-content: center;
+}
+@keyframes cpd-icon-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+.cpd-icon-enter {
+  display: flex;
+  animation: cpd-icon-in var(--ds-motion-soft) both;
+}
+/* 录音态跳动声纹条(参考项目 .cpd-voice-bars 原样移植) */
+.cpd-voice-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+.cpd-voice-bars > span {
+  width: 1.5px;
+  border-radius: 1px;
+  background-color: #fff;
+  animation: cpd-bar-bounce 0.8s ease-in-out infinite;
+}
+.cpd-voice-bars > span:nth-child(1) { height: 8px; animation-delay: 0s; }
+.cpd-voice-bars > span:nth-child(2) { height: 14px; animation-delay: 0.2s; }
+.cpd-voice-bars > span:nth-child(3) { height: 8px; animation-delay: 0.4s; }
+@keyframes cpd-bar-bounce {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+/* 白内衬浮层:面板悬浮材质(参考项目 .ds-inset-overlay) */
+.ds-inset-overlay {
+  position: relative;
+}
+.ds-inset-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--ds-menu-shadow-inset);
+  pointer-events: none;
+}
+
+/* ── 语音模式(Siri 风)────────────────────────────────────────────── */
+/* 胶囊玻璃材质:在 --ds-pill-bg 之上叠真玻璃模糊,四角细高光,动态岛质感。
+   性能加固:@supports 门控——不支持 backdrop-filter 的老 GPU/浏览器退化为半透明
+   纯色底(无模糊采样,零 GPU 合成压力),视觉仍成立。 */
+.vm-pill {
+  background-color: var(--ds-pill-bg);
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.06),
+    transparent 40%
+  );
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .vm-pill {
+    background-color: color-mix(in srgb, var(--ds-pill-bg) 55%, transparent);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  }
+}
+.dark .vm-pill {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.08),
+    transparent 45%
+  );
+}
+
+/* 聆听声纹:五根细条按相位错落弹跳(复用 cpd 声纹的呼吸节奏,色随阶段)。 */
+.vm-wave-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background-color: currentColor;
+  transform-origin: center;
+  animation: vm-wave 1s ease-in-out infinite;
+}
+.vm-wave-bar:nth-child(1) { height: 6px; }
+.vm-wave-bar:nth-child(2) { height: 13px; }
+.vm-wave-bar:nth-child(3) { height: 16px; }
+.vm-wave-bar:nth-child(4) { height: 13px; }
+.vm-wave-bar:nth-child(5) { height: 6px; }
+@keyframes vm-wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+/* 朗读声环:两圈由内向外扩散消隐的柔波。 */
+.vm-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--ds-brand-primary);
+  opacity: 0;
+  animation: vm-ripple 1.6s ease-out infinite;
+}
+@keyframes vm-ripple {
+  0% { transform: scale(0.5); opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* 连接/转写呼吸点:缓慢明暗,表达"在准备/在整理"。 */
+.vm-breathe {
+  animation: vm-breathe 1.4s ease-in-out infinite;
+}
+@keyframes vm-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-wave-bar, .vm-ripple, .vm-breathe { animation: none; }
+}
+
+}
+
+/* ── 设置列表拖拽排序(drag-reorder.ts)────────────────────────────── */
+/* 关键「跟手」坑——根因是**级联层,不是特异性**:行根本身带 Tailwind 的 `transition`
+   工具类(transition-property 含 transform,默认 ~150ms 缓动),而 Tailwind v4 把工具类
+   全放进顶层 `@layer utilities`。本组规则**必须也在顶层**(不能落在 `@layer components`
+   里——那会嵌套成 components>utilities,嵌套层仍排在顶层 utilities 之后、照样输)。
+   与 `transition` 同层后比特异性:双类(.rk-drag-row.rk-drag-row)2-0 压过单类 1-0,
+   transform 才真正移出 transition——否则 JS 写的每帧 translateY 都被缓动,行在指针后面追
+   (实测实锤:lag 随拖动累积到 160px、松手后再补 ~300ms;live trace 见 drag-reorder 记忆)。 */
+@layer utilities {
+  /* 被拖行:随指针逐帧直写 `translate`(独立合成层属性,无过渡纠缠,跟手),视觉上
+     不浮起、只**轻微变淡 + 提前景**——这是成熟列表排序(dnd-kit useSortable:isDragging
+     → opacity 0.8、zIndex 提前)的观感:被拖行「溶」在指针下,换位全靠兄弟行滑开表达,
+     自身不跳。浮起投影反而会放大「瞬移感」,故弃用。transition 只留 opacity/背景,
+     transform/translate 绝不进 transition(跟手红线,见下方层序注释)。 */
+  .rk-drag-row.rk-drag-row {
+    position: relative;
+    z-index: 10;
+    pointer-events: none; /* 挤动判定按兄弟行的位置算,被拖行自身不再吃指针 */
+    opacity: 0.8;
+    transition-property: opacity, background-color;
+    transition-duration: var(--ds-duration-fast);
+    transition-timing-function: var(--ds-ease-swift);
+  }
+  /* 挤动行(拖拽中的兄弟行):拖动全程 DOM 顺序不动,行只做纯 transform 投影位移
+     (drag-reorder.ts 的 projectShifts 写内联 translateY)。slow+soft 缓动让「让位」
+     渐变成熟——跨界只有一次增量,位移连续;用 --ds-duration-slow(350ms)而非 base,
+     滑开更从容,弱化「瞬间交换」的脆感。 */
+  .rk-drag-shift {
+    transition: transform var(--ds-duration-slow) var(--ds-ease-soft), background-color var(--ds-motion-swift);
+  }
+  /* prefers-reduced-motion:换位判定与提交照常(信息仍在),位移瞬时(动效退场)。
+     同层双类对齐上面主规则的特异性,确保这里的 transition:none 能压过它。 */
+  @media (prefers-reduced-motion: reduce) {
+    .rk-drag-row.rk-drag-row,
+    .rk-drag-shift {
+      transition: none;
+    }
+  }
+}
+/* 拖拽期间全局 grabbing 光标(把手 cursor-grab 在 pointer capture 下不跟随指针移动)。 */
+body.rk-dragging-cursor,
+body.rk-dragging-cursor * {
+  cursor: grabbing !important;
+}
+
+/* 设置搜索选中后的定位高亮(settings-search.tsx):行底一抹 on-surface-active 淡出。
+   外扩用 box-shadow 而非 padding,不改行的布局。 */
+[data-settings-flash] {
+  border-radius: var(--ds-radius-md);
+  animation: settings-flash 1.4s var(--ds-ease-swift);
+}
+@keyframes settings-flash {
+  0%, 35% {
+    background-color: var(--ds-on-surface-active);
+    box-shadow: 0 0 0 6px var(--ds-on-surface-active);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-settings-flash] { animation: none; }
+}

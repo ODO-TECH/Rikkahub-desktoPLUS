@@ -1,0 +1,33 @@
+# 行尾与二进制判定。为什么要有这个文件：cmd.exe 按控制台 OEM 代码页解码 .cmd 字节，
+# 且只认 CRLF 换行（LF-only 或多行 ^(续行) 会让批处理解析错位），而 .editorconfig 的
+# 全局 LF 规则一旦配合 git 的 core.autocrlf=true 就会在 checkout 时把 .cmd 变成 LF。
+# 显式钉死：文本一律 LF 入库，批处理一律 CRLF，二进制不做任何换行转换。
+
+* text=auto eol=lf
+
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# 补丁必须逐字节保真：换行被改过 git apply 就废了
+*.patch -text
+*.diff  -text
+
+*.ico  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.eot  binary
+*.pdf  binary
+*.db   binary
+*.exe  binary
+*.dll  binary
+*.zip  binary
+*.gz   binary
+*.wasm binary

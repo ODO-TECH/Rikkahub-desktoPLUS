@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // 类型硬化收官(2026-07-24):noImplicitAny(5.4c) → strictNullChecks → strict 全开。
+    // strict 蕴含 strictFunctionTypes/strictPropertyInitialization/useUnknownInCatchVariables 等,
+    // 开启当日全仓零错误(前两档已消化绝大部分),此后不允许回退。
+    "strict": true,
+    // 0-1(2026-07-25):server.ts 曾积累 272 个死 import(历史大文件搬迁残留),typecheck
+    // 不报导致新人无法从 import 判断真实依赖。大扫除清零后开启,此后不允许回退。
+    "noUnusedLocals": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    // vendored pi 包间引用走包名(exports 指向未构建的 dist/),运行时 Bun 吃 pi 自带
+    // tsconfig paths,类型检查侧在此镜像同一映射直达源码(与 pi/tsconfig.json 保持一致)。
+    "paths": {
+      "@earendil-works/pi-ai": ["../pi/packages/ai/src/index.ts"],
+      "@earendil-works/pi-ai/oauth": ["../pi/packages/ai/src/oauth.ts"],
+      "@earendil-works/pi-ai/*": ["../pi/packages/ai/src/*.ts", "../pi/packages/ai/src/providers/*.ts"],
+      "@earendil-works/pi-agent-core": ["../pi/packages/agent/src/index.ts"],
+      "@earendil-works/pi-agent-core/*": ["../pi/packages/agent/src/*"],
+      "@earendil-works/pi-coding-agent": ["../pi/packages/coding-agent/src/index.ts"],
+      "@earendil-works/pi-coding-agent/*": ["../pi/packages/coding-agent/src/*"],
+      "@earendil-works/pi-tui": ["../pi/packages/tui/src/index.ts"],
+      "@earendil-works/pi-tui/*": ["../pi/packages/tui/src/*"]
+    },
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    // vendored pi 源码使用 .ts 后缀显式导入(其工程规范);我们 noEmit,此开关无发射风险。
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["server.ts", "scripts/**/*", "**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

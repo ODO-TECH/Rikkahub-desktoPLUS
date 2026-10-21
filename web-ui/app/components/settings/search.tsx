@@ -1,0 +1,879 @@
+// components/settings/search.tsx — 网络 › 搜索引擎(各类搜索服务的配置/测试/排序)
+
+import * as React from "react";
+import { useTranslation } from "react-i18next";
+import { CheckCircle2, Database, Link2, Loader2, Plus, X, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import { AIIcon } from "~/components/ui/ai-icon";
+import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Textarea } from "~/components/ui/textarea";
+import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
+import { AutosaveStatusRow } from "~/components/settings/autosave-status";
+import { cn } from "~/lib/utils";
+import { copyItemName } from "~/lib/copy-name";
+import { createId } from "~/lib/id";
+import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
+import { refreshSettingsStore } from "~/lib/settings-sync";
+import api from "~/services/api";
+import { confirmDialog } from "~/stores/confirm-store";
+import type { SearchServiceOption, Settings } from "~/types";
+// 端点注册表(前后端单源):请求地址框的显隐/placeholder/落点字段/解析预览全部来自同一份拓扑。
+import {
+  customUrlFieldOf,
+  hasCustomServiceEndpoint,
+  hasServiceEndpoint,
+  resolveServiceEndpoint,
+  serviceEndpointBase,
+} from "@server/search/service-endpoints";
+import { resolveSearchDepth, searchDepthSpecOf } from "@server/search/service-depth";
+import { searchSelectionAfterDelete } from "@server/foundation/search-selection";
+import {
+  clone,
+  copyRowAction,
+  deleteRowAction,
+  moveItem,
+  numberText,
+  PasswordInput,
+  SettingsAdvancedSection,
+  SettingsDetailFooter,
+  SettingsDetailHeader,
+  SettingsField,
+  SettingsListAddButton,
+  SettingsListRow,
+  SettingsSplit,
+  SettingsStack,
+  textValue,
+} from "~/components/settings/shared";
+
+// Canonical labels for search services. Used in both the settings dropdown and as the
+// AIIcon lookup key so the logo follows the type, not the user-entered display name.
+// Order mirrors APP SearchServiceOptions.TYPES(the "add provider" picker order).
+const SEARCH_SERVICE_TYPE_LABELS: Record<string, string> = {
+  bing_local: "Bing",
+  rikkahub: "RikkaHub",
+  zhipu: "智谱",
+  doubao: "豆包",
+  tavily: "Tavily",
+  exa: "Exa",
+  searxng: "SearXNG",
+  linkup: "LinkUp",
+  brave: "Brave",
+  metaso: "秘塔",
+  ollama: "Ollama",
+  perplexity: "Perplexity",
+  firecrawl: "Firecrawl",
+  jina: "Jina",
+  bocha: "博查",
+  grok: "Grok",
+  tinyfish: "Tinyfish",
+  serper: "Serper",
+  custom_js: "Custom JS",
+};
+
+// 类型下拉的可创建清单(顺序同 SEARCH_SERVICE_TYPE_LABELS / APP TYPES)。
+// 单源供 SelectContent 渲染与 backup 的 android-contract-sync.test.ts 机械化提取共用。
+const SEARCH_SERVICE_CREATABLE_TYPES = [
+  "bing_local",
+  "rikkahub",
+  "zhipu",
+  "doubao",
+  "tavily",
+  "exa",
+  "searxng",
+  "linkup",
+  "brave",
+  "metaso",
+  "ollama",
+  "perplexity",
+  "firecrawl",
+  "jina",
+  "bocha",
+  "grok",
+  "tinyfish",
+  "serper",
+  "custom_js",
+] as const;
+
+function searchServiceLabelForType(type: string | null | undefined): string {
+  const key = String(type ?? "")
+    .trim()
+    .toLowerCase();
+  if (!key) return "Search";
+  return SEARCH_SERVICE_TYPE_LABELS[key] ?? key;
+}
+
+// 分隔符与后端 splitSearchApiKeys / APP KeyRoulette 一字一致(/[\s,]+/)。前端把字符串拆成多框编辑,
+// 写回时再 join 成单字符串——数据结构不变,备份/APP 兼容零感知。
+const SEARCH_KEY_SPLIT = /[\s,]+/;
+
+/** 与后端 maskSearchKey 一字一致:服务端测试结果里的 key 是脱敏文本,
+ *  前端需用同样算法脱敏后才能与本地输入框的原文 key 对上(issue11 修复图标从不匹配)。 */
+function maskSearchKey(key: string): string {
+  const k = key.trim();
+  if (k.length === 0) return "";
+  if (k.length <= 4) return `${k[0]}***`;
+  if (k.length <= 8) return `${k.slice(0, 2)}***${k.slice(-2)}`;
+  return `${k.slice(0, 3)}***${k.slice(-3)}`;
+}
+
+/** 搜索服务多 Key 编辑器:每框一个 key,框尾「×」删除,底部「+」追加。
+ *  测试结果按 key 精确匹配后内联显示绿勾/红叉(汇总区另有保留)。
+ *
+ *  数据流:父组件存字符串(后端 splitSearchApiKeys 契约,APP 兼容),但字符串往返
+ *  (split/join)无法稳定表示"空框"——filter(Boolean) 会吃掉空串,点「+」追加的空框
+ *  在 value 往返后消失(曾导致+号无反应)。故本地用 state 维护框数组,onChange 只回写
+ *  非空 key 序列;外部 value 变化(切换服务/父重置)经 useEffect 比对非空序列后才同步,
+ *  防覆盖编辑中的空框、也防 commit→onChange→value 往返触发循环。 */
+function SearchApiKeyList({
+  value,
+  onChange,
+  testEntries,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  testEntries: Array<{ key: string; status: "ok" | "fail"; failCode?: string; detail?: string }>;
+}) {
+  const { t } = useTranslation();
+  const [keys, setKeys] = React.useState<string[]>(() => {
+    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    return parts.length > 0 ? parts : [""];
+  });
+
+  // 外部 value 变化时同步。只在"非空 key 序列"不一致时才 setKeys——既覆盖切换服务/
+  // 父重置,又避免覆盖编辑中的空框/中间状态,还阻断 commit→onChange→value 往返循环。
+  React.useEffect(() => {
+    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    const external = parts.length > 0 ? parts : [""];
+    const localNonEmpty = keys.filter((k) => k.trim()).map((k) => k.trim());
+    if (localNonEmpty.join("\n") !== external.join("\n")) setKeys(external);
+    // 故意不依赖 keys:commit 时本地已 setKeys,不需要 value 回来再同步
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  // 本地立即更新(保留空框);onChange 只回写非空 key(换行 join——换行属于 \s,
+  // 与后端 /[\s,]+/ 兼容,key 不含换行,比逗号/空格更不易和 key 本身冲突)。
+  const commit = (next: string[]) => {
+    setKeys(next);
+    onChange(next.filter((k) => k.trim()).join("\n"));
+  };
+  const update = (index: number, val: string) => {
+    const next = [...keys];
+    next[index] = val;
+    commit(next);
+  };
+  const add = () => commit([...keys, ""]);
+  const remove = (index: number) => {
+    if (keys.length <= 1) {
+      commit([""]); // 唯一框:删 = 清空,仍保留一个可编辑框
+      return;
+    }
+    commit(keys.filter((_, i) => i !== index));
+  };
+  // 失焦时收掉尾部连续空框(点 + 又没填)。中间空框不动——用户可能还要填。
+  const trimTrailingEmpty = () => {
+    let next = [...keys];
+    while (next.length > 1 && next[next.length - 1].trim() === "") next.pop();
+    if (next.length !== keys.length) commit(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {keys.map((key, index) => {
+        // 改了 key 后脱敏文本变化,旧测试结果自动对不上、图标消失——符合预期。
+        const entry = key ? testEntries.find((e) => e.key === maskSearchKey(key)) : undefined;
+        return (
+          <div key={index} className="flex items-center gap-2">
+            <div className="flex-1">
+              <PasswordInput value={key} onChange={(v) => update(index, v)} onBlur={trimTrailingEmpty} />
+            </div>
+            {entry ? (
+              entry.status === "ok" ? (
+                <CheckCircle2
+                  className="size-4 shrink-0 text-success"
+                  aria-label={t("settings:search.key_ok")}
+                />
+              ) : (
+                // issue11:title 放在 span 上(SVG 元素的 title 属性不触发浏览器 tooltip),
+                // 悬停可见底层错误原文。
+                <span className="flex shrink-0" title={entry.detail || undefined}>
+                  <XCircle
+                    className="size-4 shrink-0 text-destructive"
+                    aria-label={t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
+                  />
+                </span>
+              )
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => remove(index)}
+              aria-label={t("settings:search.key_remove")}
+              title={t("settings:search.key_remove")}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        );
+      })}
+      {/* +号独立放底部:所有 key 框只有 input+叉号,等宽;末框不再被+号挤窄。 */}
+      <Button type="button" variant="tertiary" size="compact" onClick={add} className="w-full justify-center">
+        <Plus className="size-4" />
+        {t("settings:search.key_add")}
+      </Button>
+    </div>
+  );
+}
+
+const DEFAULT_CUSTOM_JS_SEARCH_SCRIPT = `async function search(query, resultSize) {
+  const encoded = encodeURIComponent(query);
+  const res = await fetch("https://example.com/search?q=" + encoded + "&limit=" + resultSize);
+  const data = await res.json();
+  return {
+    items: data.results.map(function(r) {
+      return { title: r.title, url: r.url, text: r.snippet };
+    })
+  };
+}`;
+
+const DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT = `async function scrape(urls) {
+  return {
+    urls: await Promise.all(urls.map(async function(url) {
+      const res = await fetch(url);
+      const body = await res.text();
+      return { url: url, content: body };
+    }))
+  };
+}`;
+
+function createSearchService(): Record<string, unknown> {
+  return {
+    id: createId(),
+    type: "tavily",
+    name: "Tavily",
+    apiKey: "",
+    depth: "advanced",
+  };
+}
+
+function toSearchService(value: Record<string, unknown>): SearchServiceOption {
+  return { ...value, id: String(value.id ?? createId()) } as SearchServiceOption;
+}
+
+export function SearchSection({
+  settings,
+}: {
+  settings: Settings;
+  onSettings: (settings: Settings) => void;
+}) {
+  const [selectedId, setSelectedId] = React.useState(
+    String(
+      settings.searchServices[settings.searchServiceSelected]?.id ??
+        settings.searchServices[0]?.id ??
+        "",
+    ),
+  );
+  const selected = (settings.searchServices.find((item) => String(item.id) === selectedId) ??
+    settings.searchServices[0]) as Record<string, unknown> | undefined;
+  const [draft, setDraft] = React.useState<Record<string, unknown>>(
+    selected ? clone(selected) : createSearchService(),
+  );
+  const [testing, setTesting] = React.useState(false);
+  const [testResult, setTestResult] = React.useState("");
+  const [keyTestEntries, setKeyTestEntries] = React.useState<
+    Array<{ key: string; status: "ok" | "fail"; failCode?: string; detail?: string }>
+  >([]);
+  const { t } = useTranslation();
+  const fieldId = React.useId();
+  // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+
+  // R8-2:防抖自动保存统一走共享三件套 hook(保存窗口内键击不丢,语义见 hook 文件头)。
+  const autosave = useAutosaveDraft(
+    async () => {
+      const result = await api.post<{ service: Record<string, unknown> }>(
+        "settings/search/service/detail",
+        draft,
+      );
+      const savedService = toSearchService(result.service);
+      patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
+    },
+    { onSaveError: (error) => toast.error((error as Error).message || t("settings:search.autosave_failed")) },
+  );
+
+  // searchServicesRef: avoid re-running this effect after every autosave → onSettings
+  // round-trip (would overwrite mid-flight keystrokes). See McpServerEditor for rationale.
+  const searchServicesRef = React.useRef(settings.searchServices);
+  searchServicesRef.current = settings.searchServices;
+  React.useEffect(() => {
+    const next = (searchServicesRef.current.find((item) => String(item.id) === selectedId) ??
+      searchServicesRef.current[0]) as Record<string, unknown> | undefined;
+    if (next) setDraft(clone(next));
+    autosave.reset();
+    setTestResult("");
+  }, [selectedId]);
+
+  const patchDraft = (patch: Record<string, unknown>) => {
+    autosave.markDirty();
+    setDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const moveSearchService = async (from: number, to: number) => {
+    const searchServices = moveItem(settings.searchServices, from, to);
+    const selectedId = settings.searchServices[settings.searchServiceSelected]?.id;
+    const searchServiceSelected = Math.max(
+      0,
+      searchServices.findIndex((item) => item.id === selectedId),
+    );
+    patchSettingsLocal({ searchServices, searchServiceSelected });
+    await api.post("settings/search/reorder", {
+      ids: searchServices.map((item) => item.id),
+      selectedId,
+    });
+  };
+  // 测试前的"确保服务端拿到当前草稿"。原手动 save 与自动保存是两份重复的 POST+合并逻辑,
+  // 现统一为 hook 的 persist 体;原顺带改写全局 searchServiceSelected 的行为是自动保存
+  // 之前的遗留(测试一个服务不应劫持全局选中),一并去除。
+  const save = () => autosave.saveNow({ force: true });
+  const addService = () => {
+    const service = createSearchService();
+    void api
+      .post<{ service: Record<string, unknown> }>("settings/search/service/detail", service)
+      .then((result) => {
+        const savedService = toSearchService(result.service);
+        // 新建只追加并打开编辑,不改对话正在用的搜索服务(与后端一致)。
+        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
+        setDraft(savedService as unknown as Record<string, unknown>);
+        setSelectedId(String(savedService.id));
+        setTestResult("");
+        toast.success(t("settings:search.added"));
+      })
+      .catch((error: Error) => toast.error(error.message || t("settings:search.add_failed")));
+  };
+  const test = async () => {
+    setTesting(true);
+    setTestResult(t("settings:search.testing_start"));
+    setKeyTestEntries([]);
+    try {
+      await save();
+      const result = await api.post<{
+        status: "ok" | "fail";
+        endpoint: string;
+        preview: string;
+        keys?: Array<{ key: string; status: "ok" | "fail"; failCode?: string; detail?: string }>;
+      }>("settings/search/service/test", draft);
+      const keys = Array.isArray(result.keys) ? result.keys : [];
+      const okCount = keys.filter((k) => k.status === "ok").length;
+      if (result.status === "ok") {
+        if (keys.length > 1 && okCount < keys.length) {
+          setTestResult(
+            t("settings:search.test_partial", {
+              endpoint: result.endpoint,
+              ok: okCount,
+              total: keys.length,
+              failed: keys.length - okCount,
+              preview: result.preview,
+            }),
+          );
+        } else if (keys.length > 1) {
+          setTestResult(
+            t("settings:search.test_all_ok", {
+              endpoint: result.endpoint,
+              count: keys.length,
+              preview: result.preview,
+            }),
+          );
+        } else {
+          setTestResult(
+            t("settings:search.test_success", { endpoint: result.endpoint, preview: result.preview }),
+          );
+        }
+        toast.success(t("settings:search.test_ok"));
+        // Refresh settings so the "已通过测试" badge updates (server marks testPassed on success).
+        await refreshSettingsStore();
+      } else {
+        // 多 key 全部失败:展示汇总 + 每个 key 的失败明细;单 key 失败:直接给出友好原因
+        // (如"密钥无效或已过期"),比原来的 "401: {body}" 更易懂。
+        // issue11:友好原因之外附上服务端记录的底层错误原文(超时/证书/DNS/5xx 等),
+        // 否则统一显示"网络异常或服务暂不可用",用户无从排查。
+        const singleFailReason =
+          keys.length === 1
+            ? t(`settings:search.key_fail_${keys[0]?.failCode ?? "other"}`)
+            : null;
+        const singleFailDetail = keys.length === 1 ? keys[0]?.detail : undefined;
+        setTestResult(
+          keys.length > 1
+            ? t("settings:search.test_all_failed", { count: keys.length })
+            : [singleFailReason ?? t("settings:search.test_failed"), singleFailDetail].filter(Boolean).join("\n\n"),
+        );
+        toast.error(singleFailReason ?? t("settings:search.test_failed"));
+      }
+      setKeyTestEntries(keys);
+    } catch (error) {
+      // 无 key 服务(searxng/custom_js)失败、网络异常等仍以非 2xx 抛出,走这里。
+      const message = error instanceof Error ? error.message : t("settings:search.test_failed");
+      setTestResult(message);
+      setKeyTestEntries([]);
+      toast.error(message);
+    } finally {
+      setTesting(false);
+    }
+  };
+  // 复制搜索服务:克隆配置(新 id、「原名 (N)」);testPassed 不随行——同 key 同端点
+  // 的副本照理也能过测,但测试结论是新条目自己的事,让用户自己点一次测试。
+  const copyServiceById = async (targetId: string) => {
+    const target = settings.searchServices.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    const { testPassed: _p, testPassedAt: _t, ...rest } = target as Record<string, unknown>;
+    const next = {
+      ...clone(rest),
+      id: createId(),
+      name: copyItemName(
+        textValue(target.name) || searchServiceLabelForType(textValue(target.type)),
+        new Set(settings.searchServices.map((item) => textValue(item.name) || searchServiceLabelForType(textValue(item.type)))),
+      ),
+    } as Record<string, unknown>;
+    void api
+      .post<{ service: Record<string, unknown> }>("settings/search/service/detail", next)
+      .then((result) => {
+        // 新建只追加并打开编辑,不改对话正在用的搜索服务(与 addService 一致)。
+        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, toSearchService(result.service)) }));
+        setDraft(toSearchService(result.service) as unknown as Record<string, unknown>);
+        setSelectedId(String(result.service.id));
+        setTestResult("");
+        toast.success(t("settings:search.copied", { name: textValue(next.name) }));
+      })
+      .catch((error: Error) => toast.error(error.message || t("settings:search.copy_failed")));
+  };
+
+  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
+  const removeById = async (targetId: string) => {
+    const target = settings.searchServices.find((item) => String(item.id) === targetId);
+    if (!target) return;
+    if (
+      !(await confirmDialog({
+        title: t("settings:search.delete_confirm", {
+          name: textValue(target.name) || textValue(target.type),
+        }),
+        danger: true,
+      }))
+    )
+      return;
+    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序)。
+    const removingActive = String(draft.id) === targetId;
+    if (removingActive) await autosave.discard();
+    await api.delete(`settings/search/service/${encodeURIComponent(targetId)}`);
+    let searchServices: Settings["searchServices"] = [];
+    patchSettingsLocal((current) => {
+      searchServices = current.searchServices.filter((item) => String(item.id) !== targetId);
+      return {
+        searchServices,
+        searchServiceSelected: searchSelectionAfterDelete(
+          current.searchServices,
+          current.searchServiceSelected,
+          targetId,
+        ),
+      };
+    });
+    if (removingActive) {
+      setSelectedId(String(searchServices[0]?.id ?? ""));
+      // 删到空:重对齐 effect 无条目可载,草稿若停留在已删实体上,再编辑一笔就会经
+      // 自动保存复活它。复位为挂载空列表时同款的空白新草稿(复审 F2)。
+      if (!searchServices.length) setDraft(createSearchService());
+    }
+    toast.success(t("settings:search.deleted"));
+  };
+
+  // B6-1:测试结果紧跟基础字段(测试钮在页头),不被展开的高级区推到页尾。
+  const testPanel =
+    testResult || keyTestEntries.length > 1 ? (
+      <div className="mt-4 space-y-3">
+        {testResult ? (
+          <pre className="max-h-56 overflow-auto rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3 text-xs whitespace-pre-wrap">
+            {testResult}
+          </pre>
+        ) : null}
+        {keyTestEntries.length > 1 ? (
+          <div className="space-y-1.5 rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
+            <div className="text-xs font-medium text-[var(--ds-text-secondary)]">
+              {t("settings:search.key_status_title")}
+            </div>
+            {keyTestEntries.map((entry, index) => (
+              <div key={index} className="space-y-0.5">
+                <div className="flex items-center gap-2 text-xs">
+                  {entry.status === "ok" ? (
+                    <CheckCircle2 className="size-3.5 shrink-0 text-[var(--ds-success)]" />
+                  ) : (
+                    <XCircle className="size-3.5 shrink-0 text-[var(--ds-danger)]" />
+                  )}
+                  <code className="font-mono">{entry.key}</code>
+                  <span
+                    className={cn(
+                      "text-[var(--ds-text-secondary)]",
+                      entry.status === "fail" && "text-[var(--ds-danger)]",
+                    )}
+                  >
+                    {entry.status === "ok"
+                      ? t("settings:search.key_ok")
+                      : t(`settings:search.key_fail_${entry.failCode ?? "other"}`)}
+                  </span>
+                </div>
+                {/* issue11:失败时附底层错误原文,便于区分超时/证书/DNS/5xx */}
+                {entry.status === "fail" && entry.detail ? (
+                  <div className="pl-5.5 font-mono text-mini break-all text-[var(--ds-text-secondary)]">
+                    {entry.detail}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+  const resultCountField = (
+    <SettingsField label={t("settings:search.result_count")} htmlFor={`${fieldId}-result-count`}>
+      <Input
+        id={`${fieldId}-result-count`}
+        className="w-24"
+        inputMode="numeric"
+        value={numberText(draft.resultSize ?? settings.searchCommonOptions.resultSize)}
+        onChange={(event) => patchDraft({ resultSize: Number(event.target.value) || 10 })}
+      />
+    </SettingsField>
+  );
+
+  return (
+    <>
+      <SettingsSplit
+        scroll
+        list={
+          <div className="space-y-1">
+          <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />
+          {settings.searchServices.map((service, index) => (
+            <SettingsListRow
+              key={String(service.id ?? index)}
+              id={String(service.id ?? index)}
+              index={index}
+              active={String(service.id) === String(draft.id)}
+              onSelect={() => setSelectedId(String(service.id ?? ""))}
+              onMove={moveSearchService}
+              actions={[
+                copyRowAction(() => copyServiceById(String(service.id ?? ""))),
+                deleteRowAction(() => removeById(String(service.id ?? ""))),
+              ]}
+            >
+              <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
+                <AIIcon
+                  name={searchServiceLabelForType(textValue(service.type))}
+                  size={30}
+                  className="justify-self-start"
+                />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 truncate font-medium">
+                    {(() => {
+                      const type = String(service.type ?? "").toLowerCase();
+                      const isPreset = type === "bing_local" || type === "rikkahub";
+                      const passed =
+                        isPreset || (service as Record<string, unknown>).testPassed === true;
+                      return (
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "size-2 shrink-0 rounded-full",
+                            passed ? "bg-success" : "bg-muted-foreground/40",
+                          )}
+                          title={
+                            passed
+                              ? isPreset
+                                ? t("settings:search.preset_ok")
+                                : t("settings:search.passed")
+                              : t("settings:search.not_passed")
+                          }
+                        />
+                      );
+                    })()}
+                    <span className="truncate">
+                      {textValue(service.name) ||
+                        searchServiceLabelForType(textValue(service.type))}
+                    </span>
+                    {hasCustomServiceEndpoint(service as Record<string, unknown>) ? (
+                      // 中转标识:该行配置了自定义请求地址(换根 ≠ 官方地址)。一屏扫过即可
+                      // 辨认哪些服务在走中转——多服务配置了中转的用户排障时是刚需可读性。
+                      <span title={t("settings:search.relay_badge")}>
+                        <Link2 aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {/* 缺 type 时绝不能回退成整条 JSON——里面有明文 apiKey。 */}
+                    {textValue(service.type) || t("settings:search.field.custom")}
+                  </span>
+                </span>
+              </span>
+            </SettingsListRow>
+          ))}
+          </div>
+        }
+      >
+        <div className="@container">
+        <SettingsStack>
+          <SettingsDetailHeader
+            leading={<AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />}
+            title={textValue(draft.name)}
+            titlePlaceholder={searchServiceLabelForType(textValue(draft.type)) || t("settings:search.service_default")}
+            titleLabel={t("settings:search.name")}
+            onTitleCommit={(name) => patchDraft({ name })}
+            description={textValue(draft.type) || t("settings:search.field.custom")}
+            action={
+              <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
+                {testing ? <Loader2 className="animate-spin" /> : <Database />}
+                {t("settings:search.test")}
+              </Button>
+            }
+          />
+          <section>
+          <div className="grid gap-4 @xl:grid-cols-2">
+            <SettingsField label={t("settings:search.type")} htmlFor={`${fieldId}-type`} className="@xl:col-span-2">
+              <Select
+                value={textValue(draft.type) || "tavily"}
+                onValueChange={(type) => {
+                  // Re-sync `name` whenever it was still the previous type's default label —
+                  // that way the row icon and detail-pane logo follow the chosen type. Manual
+                  // names (anything not matching the canonical label) are preserved.
+                  const previousType = textValue(draft.type);
+                  const previousLabel = searchServiceLabelForType(previousType);
+                  const currentName = textValue(draft.name);
+                  const isDefaultName =
+                    !currentName || currentName === previousLabel || currentName === previousType;
+                  patchDraft({
+                    type,
+                    name: isDefaultName ? searchServiceLabelForType(type) : currentName,
+                    ...(type === "custom_js" && !textValue(draft.searchScript)
+                      ? {
+                          searchScript: DEFAULT_CUSTOM_JS_SEARCH_SCRIPT,
+                          scrapeScript: DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT,
+                        }
+                      : {}),
+                  });
+                  // 切到 searxng 时请求地址是必填项且藏在折叠区里——自动展开,别让用户对着
+                  // 收起的「高级设置」找不到该填哪儿。
+                  if (type === "searxng") setAdvancedOpen(true);
+                }}
+              >
+                <SelectTrigger id={`${fieldId}-type`} className="w-60 max-w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SEARCH_SERVICE_CREATABLE_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      <span className="flex items-center gap-2">
+                        <AIIcon
+                          name={searchServiceLabelForType(type)}
+                          size={16}
+                          className="bg-transparent"
+                        />
+                        {searchServiceLabelForType(type)}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsField>
+            {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
+              <SettingsField label="API Key" hint={t("settings:search.api_key_hint")} className="@xl:col-span-2">
+                <SearchApiKeyList
+                  value={textValue(draft.apiKey)}
+                  onChange={(apiKey) => patchDraft({ apiKey })}
+                  testEntries={keyTestEntries}
+                />
+              </SettingsField>
+            ) : null}
+            {textValue(draft.type) === "doubao" ? (
+              // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
+              // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
+              <SettingsField label={t("settings:search.field.mode")} htmlFor={`${fieldId}-mode`}>
+                <Select
+                  value={textValue(draft.mode) || "custom"}
+                  onValueChange={(mode) => patchDraft({ mode })}
+                >
+                  <SelectTrigger id={`${fieldId}-mode`} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="global">{t("settings:search.field.global")}</SelectItem>
+                    <SelectItem value="custom">{t("settings:search.field.custom")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </SettingsField>
+            ) : null}
+            {textValue(draft.type) === "searxng" ? (
+              <>
+                <SettingsField label={t("settings:search.field.engines")} htmlFor={`${fieldId}-engines`}>
+                  <Input
+                    id={`${fieldId}-engines`}
+                    value={textValue(draft.engines)}
+                    onChange={(event) => patchDraft({ engines: event.target.value })}
+                    placeholder="google,bing"
+                  />
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.language")} htmlFor={`${fieldId}-language`}>
+                  <Input
+                    id={`${fieldId}-language`}
+                    value={textValue(draft.language)}
+                    onChange={(event) => patchDraft({ language: event.target.value })}
+                    placeholder="zh-CN"
+                  />
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.username")} htmlFor={`${fieldId}-username`}>
+                  <Input
+                    id={`${fieldId}-username`}
+                    value={textValue(draft.username)}
+                    onChange={(event) => patchDraft({ username: event.target.value })}
+                  />
+                </SettingsField>
+                <SettingsField label={t("settings:search.field.password")} htmlFor={`${fieldId}-password`}>
+                  <PasswordInput
+                    id={`${fieldId}-password`}
+                    value={textValue(draft.password)}
+                    onChange={(password) => patchDraft({ password })}
+                  />
+                </SettingsField>
+              </>
+            ) : null}
+            {textValue(draft.type) === "custom_js" ? (
+              <>
+                <SettingsField
+                  label={t("settings:search.field.search_script")}
+                  htmlFor={`${fieldId}-search-script`}
+                  className="@xl:col-span-2"
+                >
+                  <Textarea
+                    id={`${fieldId}-search-script`}
+                    value={textValue(draft.searchScript)}
+                    onChange={(event) => patchDraft({ searchScript: event.target.value })}
+                    className="min-h-56 font-mono text-xs"
+                    placeholder={
+                      "async function search(query, resultSize) {\n  const res = await fetch('https://example.com/search?q=' + encodeURIComponent(query));\n  const data = await res.json();\n  return { items: data.results.map((r) => ({ title: r.title, url: r.url, text: r.snippet })) };\n}"
+                    }
+                  />
+                </SettingsField>
+                <SettingsField
+                  label={t("settings:search.field.scrape_script")}
+                  htmlFor={`${fieldId}-scrape-script`}
+                  className="@xl:col-span-2"
+                >
+                  <Textarea
+                    id={`${fieldId}-scrape-script`}
+                    value={textValue(draft.scrapeScript)}
+                    onChange={(event) => patchDraft({ scrapeScript: event.target.value })}
+                    className="min-h-40 font-mono text-xs"
+                    placeholder={
+                      "async function scrape(urls) {\n  return { urls: await Promise.all(urls.map(async (url) => {\n    const res = await fetch(url);\n    return { url, content: await res.text() };\n  })) };\n}"
+                    }
+                  />
+                </SettingsField>
+              </>
+            ) : null}
+            {textValue(draft.type) === "custom_js" ? (
+              // Custom JS 用户只可能是高级用户,结果数量不折叠直示(该类型也没有请求地址框)。
+              // 不给深度:脚本入参只有 (query, resultSize),深度传不进去。
+              resultCountField
+            ) : null}
+          </div>
+          {testPanel}
+          {textValue(draft.type) !== "custom_js" ? (
+            <SettingsAdvancedSection
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              attention={
+                // 折叠藏配置的两类风险都要亮点:配了中转(用户自己的定制)+ searxng 必填地址还空着。
+                hasCustomServiceEndpoint(draft) ||
+                (textValue(draft.type) === "searxng" && !textValue(draft[customUrlFieldOf("searxng")]).trim())
+              }
+              className="mt-4"
+            >
+              <div className="grid gap-4 pt-2 @xl:grid-cols-2">
+                {(() => {
+                  // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
+                  // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
+                  // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
+                  const type = textValue(draft.type);
+                  if (!hasServiceEndpoint(type)) return null;
+                  const field = customUrlFieldOf(type);
+                  const raw = textValue(draft[field]).trim();
+                  const official = serviceEndpointBase(type);
+                  const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
+                  const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
+                  return (
+                    <SettingsField
+                      label={
+                        type === "searxng"
+                          ? `${t("settings:search.request_url")} — ${t("settings:search.request_url_required")}`
+                          : t("settings:search.request_url")
+                      }
+                      htmlFor={`${fieldId}-request-url`}
+                      className="@xl:col-span-2"
+                    >
+                      <Input
+                        id={`${fieldId}-request-url`}
+                        value={raw}
+                        onChange={(event) => patchDraft({ [field]: event.target.value })}
+                        placeholder={official || "https://search.example.com"}
+                      />
+                      <span
+                        className={cn(
+                          "block break-all text-xs",
+                          badScheme ? "text-destructive" : "text-muted-foreground",
+                        )}
+                      >
+                        {badScheme
+                          ? t("settings:search.request_url_bad_scheme")
+                          : preview
+                            ? t("settings:search.request_url_preview", { endpoint: preview })
+                            : official
+                              ? t("settings:search.request_url_hint", { official })
+                              : t("settings:search.request_url_hint_selfhost")}
+                      </span>
+                    </SettingsField>
+                  );
+                })()}
+                {(() => {
+                  // 深度只对登记了的服务显示,选项与显示值都按后端实际发送的口径解析(所见即所发)。
+                  const depthSpec = searchDepthSpecOf(textValue(draft.type));
+                  if (!depthSpec) return null;
+                  return (
+                    <SettingsField label={t("settings:search.depth")} htmlFor={`${fieldId}-depth`}>
+                      <Select
+                        value={resolveSearchDepth(draft) ?? depthSpec.fallback}
+                        onValueChange={(depth) => patchDraft({ depth })}
+                      >
+                        <SelectTrigger id={`${fieldId}-depth`} className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {depthSpec.values.map((value) => (
+                            <SelectItem key={value} value={value}>
+                              {t(`settings:search.field.depth_${value}`)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </SettingsField>
+                  );
+                })()}
+                {resultCountField}
+              </div>
+            </SettingsAdvancedSection>
+          ) : null}
+          </section>
+          <SettingsDetailFooter
+            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
+          />
+        </SettingsStack>
+        </div>
+      </SettingsSplit>
+    </>
+  );
+}

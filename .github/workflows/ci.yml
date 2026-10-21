@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pc-server-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
+      # pi/ 是 gitignore 的本地浅克隆(vendored 源码),不进仓库。pc-server 直接
+      # import 其 TS 源码,缺它 tsc 报 57 个找不到模块。按 docs/BUILD.md「还原 pi
+      # vendor」重建:浅克隆上游基线 + 应用 pi-patches/*.patch。
+      # 装 pi 自己的依赖(proper-lockfile/typebox/openai 等,bun build 会把它们
+      # 一并打包;缺了 bun build 报 Could not resolve)。pi 的 bun.lock 是
+      # lockfileVersion 1,Bun 1.4.0 会迁移它,故不能用 --frozen-lockfile。
+      # packages/ai/src/providers/data/ 是构建期生成物、git 不跟踪。模型数据走
+      # pi-model-data/ 快照(host 仓库 tracked,与下方 pin 的基线严格配对)——不跑
+      # generate-models:它先删全部 *.models.ts 分片再按 models.dev 当天状态重建,
+      # 第三方数据漂移(2026-09-21 kimi-for-coding 被摘除)会让分片删后无人重建,
+      # server.ts 全图解析直接崩(当日 CI 19 红 + Linux 发版构建失败,全是它)。
+      - name: Restore pi vendor
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
+          cd pi
+          git checkout d981de1229ef899957bbe968bc8dcda02a21f477
+          git reset --hard
+          git apply ../pi-patches/*.patch
+          bun install
+          mkdir -p packages/ai/src/providers/data
+          cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+
+      - name: Install pc-server dependencies
+        working-directory: pc-server
+        run: bun install --frozen-lockfile
+
+      - name: Type check pc-server
+        working-directory: pc-server
+        run: bun run typecheck
+
+      - name: Run pc-server unit tests
+        working-directory: pc-server
+        run: |
+          # embedded-bash.ts 顶层 import ../../assets/bash-bundle.tar.gz(Windows-only
+          # 构建产物,gitignored)。Linux CI 无法生成,但 bun test 需要解析该 import。
+          # 创建 dummy 文件让解析成功;embedded-bash.test.ts 在非 Windows 平台会跳过。
+          mkdir -p assets
+          [ -f assets/bash-bundle.tar.gz ] || echo "dummy" > assets/bash-bundle.tar.gz
+          bun test
+
+      - name: Run request-chain smoke
+        working-directory: pc-server
+        run: bun run smoke:request-chain
+
+      - name: Run backup roundtrip smoke
+        working-directory: pc-server
+        run: bun run smoke:backup-roundtrip
+
+      - name: Check version consistency
+        working-directory: pc-server
+        run: bun run scripts/check-version-sync.ts
+
+  web-ui-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
+      # web-ui 测试经 @server 别名 import pc-server 模块(speech-catalog 契约锁拉
+      # media/tts → model-providers → message-builder → files/index,后者顶层
+      # import ../node_modules/mupdf/.../mupdf-wasm.wasm——文件路径解析不走 node
+      # module resolution,pc-server 的 node_modules 必须真实存在)。pi/ 同理:
+      # oauth/load.ts 等模块经 @server 链可达。两段都是 2026-10-05 v5 发版 CI 红
+      # 的实证链路,与 pc-server-checks 的 Restore pi vendor 同配方。
+      - name: Restore pi vendor
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/earendil-works/pi.git pi
+          cd pi
+          git checkout d981de1229ef899957bbe968bc8dcda02a21f477
+          git reset --hard
+          git apply ../pi-patches/*.patch
+          bun install
+          mkdir -p packages/ai/src/providers/data
+          cp ../pi-model-data/*.json ../pi-model-data/.manifest.json packages/ai/src/providers/data/
+
+      - name: Install pc-server dependencies
+        working-directory: pc-server
+        run: bun install --frozen-lockfile
+
+      - name: Install web-ui dependencies
+        working-directory: web-ui
+        run: bun install --frozen-lockfile
+
+      - name: Type check web-ui
+        working-directory: web-ui
+        run: bun run typecheck
+
+      - name: Run web-ui unit tests
+        working-directory: web-ui
+        run: bun run test:unit
+
+      - name: Build web-ui
+        working-directory: web-ui
+        run: bun run build

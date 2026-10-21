@@ -1,0 +1,29 @@
+{
+  "name": "rikkahub-pc-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server.ts --dev",
+    "start": "bun run server.ts",
+    "test": "bun test",
+    "smoke:request-chain": "bun run scripts/request-chain-smoke.ts",
+    "smoke:backup-roundtrip": "bun run scripts/backup-roundtrip-smoke.ts",
+    "smoke:embedded-bash": "bun run scripts/embedded-bash-smoke.ts",
+    "smoke:proxy-behavior": "bun run scripts/proxy-behavior-smoke.ts",
+    "typecheck": "bun run scripts/typecheck.ts",
+    "version:bump": "bun run scripts/bump-version.ts",
+    "build:bash-bundle": "bun run scripts/build-bash-bundle.ts",
+    "compile": "bun install && bun run scripts/ensure-build-dirs.ts && bun run scripts/build-bash-bundle.ts && bun build --compile --target=bun-windows-x64 server.ts --outfile ../dist/rikkahub-pc.exe && bun run scripts/sync-dist-assets.ts && bun -e \"await Bun.write('../web-ui/src-tauri/binaries/rikkahub-server-x86_64-pc-windows-msvc.exe', Bun.file('../dist/rikkahub-pc.exe'))\"",
+    "compile:linux": "bun install && bun run scripts/ensure-build-dirs.ts && bun build --compile --target=bun-linux-x64 server.ts --outfile ../dist/rikkahub-pc"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/ssh2": "^1.15.6",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "diff": "8.0.4",
+    "mupdf": "^1.27.0",
+    "ssh2": "^1.17.0"
+  }
+}
