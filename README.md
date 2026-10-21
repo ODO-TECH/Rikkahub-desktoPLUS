@@ -343,6 +343,7 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
 | `functions/` | 上游的 Cloudflare Pages 统计端点源码 |
 | `Dockerfile`、`docker-compose.yml` | 容器镜像与飞牛 OS / Linux NAS 部署编排；运行时 `debian:bookworm-slim` |
 | `docs/` | 构建、发布、容器部署与排查文档 |
+| `LICENSE`、`LICENSE-AGPL-3.0.txt` | 分段双许可的条款声明，与其中引用的 AGPL v3 协议全文 |
 | `.github/` | CI、Linux 产物与 Docker 发布工作流 |
 
 ## 数据目录与备份
@@ -428,10 +429,10 @@ pc-data/
 
 本分支沿用上游的分段双许可（Segmented Dual Licensing），**不改变条款**：
 
-- 个人、教育、研究与非商业用途，或用户数不超过 50 的组织：**GNU AGPL v3**。
+- 个人、教育、研究与非商业用途，或用户数不超过 50 的组织：**GNU AGPL v3**（全文见 [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt)，逐字取自 [gnu.org](https://www.gnu.org/licenses/agpl-3.0.txt)）。
 - 商业用途或超过 50 人：需按 [LICENSE](LICENSE) 中的联系方式取得商业授权。
 
-`LICENSE` 内的商业授权联系方式属于上游维护者，本分支作者不提供商业授权或相关承诺。衍生分发需遵守 AGPL v3，包括公开修改后的源码。
+`LICENSE` 是条款声明（不改动上游原文），`LICENSE-AGPL-3.0.txt` 是它所引用的协议全文，两者互为补充，不构成额外的许可授予。`LICENSE` 内的商业授权联系方式属于上游维护者，本分支作者不提供商业授权或相关承诺。衍生分发需遵守 AGPL v3，包括公开修改后的源码。
 
 ## 致谢
 
@@ -458,6 +459,6 @@ Included in this branch:
 
 Platforms: Windows 10/11 x64 is the primary target. Linux binaries and the multi-arch container image are built by the included workflows; the container path is verified in container mode but not on physical Linux hardware. **macOS is not supported** — no Mac hardware is available to build, sign or verify it.
 
-Maintenance is low-frequency but long-term, with no roadmap or SLA. Every change is type-checked, unit-tested and smoke-tested on a portable build before it lands. Source only: no binaries, installers or update channel are published here. Licensed under the same segmented dual licensing as upstream (AGPLv3 for non-commercial, personal, educational or research use, or organizations with at most 50 users; see [LICENSE](LICENSE) — the commercial contact details belong to the upstream maintainer).
+Maintenance is low-frequency but long-term, with no roadmap or SLA. Every change is type-checked, unit-tested and smoke-tested on a portable build before it lands. Source only: no binaries, installers or update channel are published here. Licensed under the same segmented dual licensing as upstream (AGPLv3 for non-commercial, personal, educational or research use, or organizations with at most 50 users; the terms are stated in [LICENSE](LICENSE) and its referenced full text is [LICENSE-AGPL-3.0.txt](LICENSE-AGPL-3.0.txt) — the commercial contact details belong to the upstream maintainer).
 
 Compiled builds send an anonymous startup counter (device UUID, date, version, OS and daily counters — no message content, IP, model names, file names or queries); set `RIKKAHUB_ANALYTICS=0` to disable it.
