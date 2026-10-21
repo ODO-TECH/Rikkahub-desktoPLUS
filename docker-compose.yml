@@ -1,0 +1,65 @@
+# RikkaHub Desktop PLUS —— Docker Compose（飞牛 OS / 通用 Linux NAS）
+#
+# 用法（在仓库根目录，与 Dockerfile 同级）：
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose down
+#
+# 端口说明：TCP 端口上限是 65535，所以需求里的 114514 不是合法端口，镜像契约取
+# 有效前缀 11451。宿主机端口可用 RIKKAHUB_HTTP_PORT 覆盖，容器内始终是 11451。
+#
+# 首次启动后打开 http://<NAS 地址>:11451 ，在 设置 → 数据管理 → Web 服务 里设置访问密码。
+# 数据全部落在 ./pc-data，备份/迁移直接打包这个目录即可。
+
+services:
+  rikkahub-plus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 构建阶段需要从 GitHub 克隆 pi 引擎；NAS 出网受限时在这里给出代理：
+      # args:
+      #   HTTPS_PROXY: "http://192.168.1.2:7890"
+      #   HTTP_PROXY: "http://192.168.1.2:7890"
+    image: rikkahub-desktop-plus:2.0.0-preview-v5
+    container_name: rikkahub-plus
+    restart: unless-stopped
+
+    ports:
+      - "${RIKKAHUB_HTTP_PORT:-11451}:11451"
+
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      # 访问密码。留空 = 不鉴权；NAS 在局域网里也建议设置，否则同网段任何人都能读会话与 API Key。
+      RIKKAHUB_PASSWORD: "${RIKKAHUB_PASSWORD:-}"
+      # 镜像默认不上报匿名统计；显式设 1 可恢复（会发往**上游**的统计端点）。
+      # RIKKAHUB_ANALYTICS: "1"
+      # 出站代理（容器内 proxy 模式固定为 env，只认这几个变量）：
+      # HTTPS_PROXY: "http://192.168.1.2:7890"
+      # HTTP_PROXY: "http://192.168.1.2:7890"
+      # NO_PROXY: "localhost,127.0.0.1"
+
+    volumes:
+      # 唯一持久化目录：设置、SQLite 会话库、附件、技能、字体、工作区、记忆快照。
+      - ./pc-data:/app/pc-data
+      # 需要让 agent 读写 NAS 上的真实目录时，把宿主目录挂进来，再在应用里添加
+      # “文件夹型工作区”指向 /workspace/<名字>：
+      # - /vol1/1000/documents:/workspace/documents
+
+    # 让 PID 1 有 init 进程回收 MCP stdio 子进程，避免长期运行留下僵尸进程。
+    init: true
+    stop_grace_period: 20s
+
+    # 镜像自带 HEALTHCHECK（curl http://127.0.0.1:${PORT}/api/health），compose 直接继承。
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 想让 ./pc-data 里的文件归属飞牛普通用户（而不是 root）时：
+    #   1. sudo chown -R 1000:1000 ./pc-data
+    #   2. 取消下面 user: 的注释（先确认飞牛用户的 uid/gid 确实是 1000）：
+    # user: "1000:1000"
+    # 切到普通用户后还要在 environment 段加一行 HOME: "/tmp"，
+    # 否则 agent 的 ~ 展开会落到不可写的 /root。

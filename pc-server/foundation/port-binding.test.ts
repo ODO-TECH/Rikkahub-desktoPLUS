@@ -25,10 +25,13 @@ import {
 const GROUP = ["127.0.0.1", "::1"] as const;
 
 describe("默认端口常量", () => {
-  test("容器=镜像契约 8080,桌面=冷门默认;默认端口落在选号安全区间", () => {
-    expect(CONTAINER_PORT).toBe(8080);
+  test("容器=镜像契约 11451,桌面=冷门默认;两者都必须是合法端口", () => {
+    expect(CONTAINER_PORT).toBe(11451);
     expect(defaultPreferredPort(true)).toBe(CONTAINER_PORT);
     expect(defaultPreferredPort(false)).toBe(DESKTOP_DEFAULT_PORT);
+    // 端口号是 16 位:> 65535 的数(docker -p 与内核都拒绝)绝不能出现在这里
+    expect(CONTAINER_PORT).toBeGreaterThan(0);
+    expect(CONTAINER_PORT).toBeLessThanOrEqual(65535);
     // 选号标准的机器可检部分;IANA 段位/常见默认端口核验是人工记录,见常量注释
     expect(DESKTOP_DEFAULT_PORT).toBeGreaterThan(10080); // Chromium kRestrictedPorts 最大值
     expect(DESKTOP_DEFAULT_PORT).toBeLessThan(32768); // Linux 临时端口段下界

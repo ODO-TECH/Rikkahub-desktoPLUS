@@ -1,23 +1,4 @@
-#  — Stage 0: System tools for runtime (unzip, zip) —
-# Use the same Debian version as distroless/base-debian12 (bookworm)
-#
-# 运行时依赖登记(distroless 极简,这些二进制/库不在基础镜像里,须显式 bund 或接受降级):
-#   - zip/unzip:备份导出 pc-server/backup/zip.ts:146 在非 Windows 平台 spawn `zip` CLI ——
-#     缺它导出即崩。本 Stage bund 进镜像(见下)。
-#   - fc-list(fontconfig):系统字体枚举 pc-server/assets/fonts.ts:176 —— 未 bund,缺失时
-#     静默回退内置兜底清单,PDF 导出可选字体变少,不致命。
-FROM debian:bookworm-slim AS tools
-RUN apt-get update && apt-get install -y --no-install-recommends unzip zip && \
-    rm -rf /var/lib/apt/lists/*
-
-# Bundle binaries and every shared library they depend on into /tools
-RUN mkdir -p /tools/bin && \
-    cp /usr/bin/unzip /usr/bin/zip /tools/bin/ && \
-    ldd /usr/bin/unzip /usr/bin/zip 2>/dev/null | \
-    awk '/=> \// {print $3}' | sort -u | \
-    while read -r lib; do \
-      install -D "$lib" "/tools$lib"; \
-    done
+# syntax=docker/dockerfile:1
 
 #  — Stage 1: Build —
 # --platform=$BUILDPLATFORM ensures Bun runs natively (no QEMU emulation).
@@ -99,22 +80,60 @@ RUN set -eux; \
     bun build --compile --target="$BUN_TARGET" server.ts --outfile rikkahub-pc
 
 #  — Stage 2: Runtime —
-FROM gcr.io/distroless/base-debian12
+# 为什么不再是 distroless(Docker 侧 Linux 适配的核心):
+#   - agent 的 bash 工具在 Unix 上按 /bin/bash → PATH 上的 bash → sh 解析
+#     (workspace/tools/shell.ts),全缺就整项停用;distroless 没有任何 shell。
+#   - 备份导出与非 Windows 的 ZIP 导入必须 spawn `zip` / `unzip`(backup/zip.ts、
+#     api/handlers/data.ts 的 unzip 分支)。旧写法把它们连同 ldd 依赖放到 /tools,
+#     却既不设 PATH 也不设 LD_LIBRARY_PATH —— 效果等于没装。
+#   - fc-list 是 assets/fonts.ts 在 Linux 上枚举系统字体的入口;缺失只会静默回退到
+#     Windows 字体兜底清单(容器里根本不存在),PDF 导出可选项因此不对。
+# bookworm-slim 与构建阶段同为 Debian 12,glibc 与编译目标一致。
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils grep sed gawk findutils procps \
+      zip unzip curl ca-certificates tzdata fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-COPY --from=tools /tools/ /
 COPY --from=builder /build/pc-server/rikkahub-pc ./
 COPY --from=builder /build/build/client/ ./web-ui/build/client/
 # 8-5:品牌图标与内置字体随镜像分发(Tauri 形态经 bundle resources 携带,Docker 需显式拷)
 COPY icons/ ./icons/
 COPY fonts/ ./fonts/
 
+# 把内置字体注册给 fontconfig:只加目录配置、不复制文件,字体仍留在 /app/fonts,
+# 镜像不重复占空间。此后 fc-list 能看到 HarmonyOS Sans / Noto Serif SC 等内置字体。
+RUN printf '%s\n' \
+      '<?xml version="1.0"?>' \
+      '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' \
+      '<fontconfig><dir>/app/fonts</dir></fontconfig>' \
+      > /etc/fonts/conf.d/99-rikkahub.conf \
+    && fc-cache -f >/dev/null
+
 VOLUME ["/app/pc-data"]
-# 容器内端口钉在 8080(镜像契约:EXPOSE/用户的 -p 8080:8080 映射/README nginx 示例)。
+# 容器内端口钉在 11451(镜像契约:EXPOSE / compose 的 11451:11451 映射 / 文档反代示例)。
+# 需求里的 114514 超出 TCP 端口上限 65535,内核与 docker -p 都会拒绝,故取有效前缀 11451。
 # Podman 放的是 /run/.containerenv 而非 /.dockerenv,服务端容器检测在 Podman 下不成立,
 # 会把这类实例误判成桌面形态换用冷门默认端口——ENV PORT 与检测构成双保险。优先级:
-# --port > -e PORT > 本值,用户显式覆盖仍然生效。
-ENV PORT=8080
-EXPOSE 8080
+# --port > -e PORT > 本值,用户显式覆盖仍然生效(改端口时 HEALTHCHECK 会跟着 PORT 走)。
+#
+# RIKKAHUB_ANALYTICS=0:镜像是本分支的编译产物,默认会向**上游**统计端点上报匿名
+# 启动计数;分支不维护那个看板,也不该把本地部署记到上游账上。需要时显式设 1。
+# RIKKAHUB_CONTAINER=1:除 /.dockerenv 外的容器检测兜底(Podman 放 /run/.containerenv),
+# 保证监听 0.0.0.0、端口不受界面设置影响、原地更新与 origin 接力保持关闭。
+# 不覆盖 HOME:默认 root 用 /root;若用 compose 的 user: 切到普通用户,记得同时把
+# HOME 指到可写目录(例如 /tmp),否则 agent 的 ~ 展开会落到不可写的 /root。
+ENV PORT=11451 \
+    RIKKAHUB_ANALYTICS=0 \
+    RIKKAHUB_CONTAINER=1
+
+EXPOSE 11451
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
 
 ENTRYPOINT ["./rikkahub-pc", "--no-open"]

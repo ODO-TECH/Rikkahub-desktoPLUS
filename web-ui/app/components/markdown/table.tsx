@@ -1,7 +1,7 @@
 // markdown/table.tsx — 表格覆盖组件(issue #58 治本)
 //
 // Streamdown 内置表格的复制走 navigator.clipboard.write(text/plain + text/html 富表格),
-// 非安全上下文(Docker 裸 IP http://<host>:8080)该 API 是 undefined,复制按钮点了没反应、
+// 非安全上下文(Docker 裸 IP http://<host>:11451)该 API 是 undefined,复制按钮点了没反应、
 // success 态永久卡住;其 toolbar 绝对定位在表格无 <pre> 包裹时漂移(「按钮文字错位」)。
 // 这里整体覆盖 components.table(内置 toolbar 随之一并不渲染),复制改走 copyTextToClipboard
 // (自动回退 execCommand),粘贴形态取纯文本 TSV——Excel/Sheets/聊天框直接成表,且在非安全

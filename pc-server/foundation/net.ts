@@ -493,7 +493,7 @@ export function proxyStatusPayload(cfg: ProxyConfig) {
     containerMode: RUNNING_IN_CONTAINER,
     // 实际运行端口（顺延后可能与 preferredPort 不同），前端口 Card 显示
     runningPort: actualServingPort ?? null,
-    // 平台默认端口(容器 8080/桌面冷门默认):设置页端口说明与输入框占位符都用它,
+    // 平台默认端口(容器 11451/桌面冷门默认):设置页端口说明与输入框占位符都用它,
     // 前端不出现写死的端口号——换默认端口只改 port-binding.ts 一处。
     defaultPort: defaultPreferredPort(RUNNING_IN_CONTAINER),
     // 品牌默认 UA,前端 UA 输入框占位符/重置目标(设置留空即此值)。

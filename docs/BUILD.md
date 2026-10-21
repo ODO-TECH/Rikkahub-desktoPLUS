@@ -6,7 +6,7 @@ WebView2 shell, Linux binaries and the Docker image — plus the two Windows
 platform defects that dominated cold-start latency, and what to change before
 publishing your own release feed.
 
-本文假定你在 Windows 上开发。所有命令在项目根目录（`rikkahub-desktop-community/`）执行。
+本文假定你在 Windows 上开发。所有命令在仓库根目录（与 `README.md` 同级）执行。
 
 ## 0. 工具链
 
@@ -147,11 +147,17 @@ Linux 上按需安装的系统包：`espeak-ng`（系统 TTS）、`xclip`/`wl-cl
 `unzip` + `zip`（备份恢复、ZIP 导入 Skill —— 缺 `zip` 导出会直接崩）。缺失项在启动日志里
 会以警告列出，服务照常起。
 
-Docker：`docker build -t rikkahub-pc .` → `docker run -d -p 8080:8080 -v ./pc-data:/app/pc-data rikkahub-pc`。
-镜像基于 `distroless/base-debian12`，已内置 `zip`/`unzip`；容器内剪贴板与 TTS 不可用。
-容器端口钉在 8080（`ENV PORT` + 服务端检测双保险）。放反向代理时注意两件事：
-必须透传原始 `Host`（否则 Origin/Host 一致性校验会让所有 POST/DELETE 404/403），
-流式响应已带 `X-Accel-Buffering: no`。
+Docker 推荐用仓库根目录的 compose：`docker compose up -d --build`。等价的手工命令是
+`docker build -t rikkahub-desktop-plus .` →
+`docker run -d -p 11451:11451 -v ./pc-data:/app/pc-data rikkahub-desktop-plus`。
+镜像基于 `debian:bookworm-slim`（不再是 distroless）：自带 `bash`、coreutils、`zip`/`unzip`
+与 fontconfig，agent 的 bash 工具、备份导出与系统字体枚举都能用；默认关闭匿名统计
+（`RIKKAHUB_ANALYTICS=0`），剪贴板与 TTS 不可用。
+容器端口钉在 11451（`ENV PORT` + 服务端检测双保险）。114514 超出 TCP 端口上限，
+不可用；改号须同步 `foundation/port-binding.ts`、`Dockerfile`、`docker-compose.yml` 与文档。
+放反向代理时注意两件事：必须透传原始 `Host`（否则 Origin/Host 一致性校验会让所有
+POST/DELETE 404/403），流式响应已带 `X-Accel-Buffering: no`。
+目录树、环境变量与备份细节见 [DOCKER.md](DOCKER.md)。
 
 **SSRF 注记**：`scrape_web` 工具会在容器内直接抓取模型给出的任意 URL。若网络环境在意，
 请隔离容器网络或限制出站。

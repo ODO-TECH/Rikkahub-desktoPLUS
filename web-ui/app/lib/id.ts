@@ -1,6 +1,6 @@
 // lib/id.ts — 唯一 ID 生成(secure-context 治本,issue #55/#56)
 //
-// crypto.randomUUID 只在安全上下文(HTTPS / localhost)可用。Docker 经裸 IP(http://<VPS>:8080)
+// crypto.randomUUID 只在安全上下文(HTTPS / localhost)可用。Docker 经裸 IP(http://<VPS>:11451)
 // 访问时为非安全上下文,randomUUID 是 undefined —— 此前 20 处裸调全部抛 TypeError,设置页
 // 「添加助手/供应商/搜索/MCP」一点就崩。统一走本函数:randomUUID 可用则用,否则 getRandomValues
 // (insecure context 仍可用)手拼 RFC4122 v4,再兜底 Math.random(碰撞概率可接受,仅作前端临时 id)。

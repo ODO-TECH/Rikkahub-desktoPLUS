@@ -32,12 +32,16 @@ export function uiOrigin(port: number): string {
   return `http://${UI_HOST}:${port}`;
 }
 
-/** 容器固定端口:镜像契约(EXPOSE 8080、用户的 docker -p 8080:8080 映射、README nginx
- *  示例都锚定它)。Dockerfile 同值设 ENV PORT=8080 双保险——Podman 放的是
- *  /run/.containerenv 而非 /.dockerenv,容器检测在 Podman 下不成立,只靠检测会让
- *  Podman 用户被换到桌面默认端口、-p 8080:8080 映射失效。用户仍可 -e PORT=... 覆盖
- *  (env 优先级高于本默认、低于 --port)。 */
-export const CONTAINER_PORT = 8080;
+/** 容器固定端口:镜像契约(EXPOSE 11451、compose 的 11451:11451 映射、文档反代示例都
+ *  锚定它)。Dockerfile 同值设 ENV PORT=11451 双保险——Podman 放的是 /run/.containerenv
+ *  而非 /.dockerenv,容器检测在 Podman 下不成立,只靠检测会让 Podman 用户被换到桌面默认
+ *  端口、端口映射失效。用户仍可 -e PORT=... 覆盖(env 优先级高于本默认、低于 --port)。
+ *
+ *  为什么不是需求里写的 114514:TCP/UDP 端口号是 16 位无符号数,合法范围 1–65535,
+ *  114514 会被内核与 docker -p 直接拒绝。取同一串数字的有效前缀 11451(仍 > 10080,
+ *  避开 Chromium 受限端口;IANA 未分配;不在常见服务默认端口段)。改号时须同步
+ *  Dockerfile(ENV PORT / EXPOSE / HEALTHCHECK)、docker-compose.yml、README 与 docs。 */
+export const CONTAINER_PORT = 11451;
 
 /** 桌面默认端口(issue #62:8080 是 Web 生态最热的端口,Windows 套接字共存语义下任何
  *  默认监听它的程序都可能接走 localhost 流量;回环整组占有已治本,换冷门端口再把

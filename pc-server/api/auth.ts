@@ -149,6 +149,9 @@ export async function handleAuthTokenRequest(request: Request): Promise<Response
 export function isWebAuthAuthorized(request: Request, url: URL): boolean {
   if (!webAuthEnabled()) return true;
   if (url.pathname === "/api/auth/token") return true;
+  // 健康检查只回 {ok, version}，不含任何用户数据；容器 HEALTHCHECK 与外部监控带不了
+  // token，放行它才能在配置密码后仍然探测存活（否则容器永远 unhealthy）。
+  if (url.pathname === "/api/health") return true;
   // 专题9 MCP OAuth:授权回调来自外部浏览器重定向,带不了应用 token。安全面:该路径只
   // 消费一次性 state(服务端内存校验)+授权码,不暴露任何用户数据。
   if (url.pathname === "/api/mcp/oauth/callback") return true;
