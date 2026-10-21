@@ -18,7 +18,7 @@
 
 **RikkaHub Desktop PLUS** 是 [RikkaHub Desktop](https://github.com/yuh-G/rikkahub-desktop) 的社区增强分支，由 [@ODO-TECH](https://github.com/ODO-TECH) 维护。在保留上游全部能力的前提下，本分支集中改进四个方面：Windows 原生桌面体验、本地数据的结构化存储与备份粒度、本地与远程工具链（stdio MCP、SSH），以及面向 Linux NAS 的容器化部署。
 
-Windows 便携版安装包在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub-desktoPLUS/releases) 提供，与仓库源码同版本；除此之外没有自动构建通道，应用内的更新检查仍指向上游仓库。项目名中的 PLUS 只代表本分支的增量，不属于上游品牌；数据目录、环境变量前缀与技术标识符保持不变，可与上游版本共用同一份 `pc-data/`。
+Windows 便携版在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub-desktoPLUS/releases) 提供；除此之外没有自动构建通道。应用内的更新检查查的是**本仓库**的 Release（`updates/index.ts` 的 `UPDATE_REPO`），不会再去比对上游。发布物是 portable zip，Windows 上不支持就地覆盖安装，检测到新版本时会引导到 Release 页手动下载替换。项目名中的 PLUS 只代表本分支的增量，不属于上游品牌；数据目录、环境变量前缀与技术标识符保持不变，可与上游版本共用同一份 `pc-data/`。
 
 ## 目录
 
@@ -48,9 +48,11 @@ Windows 便携版安装包在本仓库的 [Releases](https://github.com/ODO-TECH
 | 2 | [RikkaHub Desktop](https://github.com/yuh-G/rikkahub-desktop)（Tauri + Bun） | 本分支的直接上游 |
 | 3 | 本仓库（RikkaHub Desktop PLUS） | 基于上游源码的社区增强分支，由 ODO-TECH 维护 |
 
-本分支与上游没有隶属关系，也不代表上游发布任何内容。版本号基线为 `2.0.0-preview-v5`，与上游同版本号；功能取舍以本分支的维护方向为准，不保证与上游逐项一致。
+本分支与上游没有隶属关系，也不代表上游发布任何内容。版本号自成一个体系（当前 `0.0.2`），不再与上游对齐：更新检查查的是本仓库 Release，两边的 tag 混用只会让 `compareSemver` 判错。功能取舍以本分支的维护方向为准，不保证与上游逐项一致。
 
-本分支的 Windows 安装包只在本仓库 Releases 提供；上游 Releases 的包不含本分支的任何改动，不能用来验证本分支的行为。
+本分支的 Windows 发布物只在本仓库 Releases 提供；上游 Releases 的包不含本分支的任何改动，不能用来验证本分支的行为。
+
+发布纪律：Release 的 tag 必须与 `pc-server/updates/index.ts` 的 `APP_VERSION` 逐字相同（用 `bun run version:bump <x.y.z>` 改版本号，它同时改四处）。`compareSemver` 按段比较，`APP_VERSION` 高于 tag 时更新检查永远判定「已是最新」，用户就再也收不到提示；tag 高于 `APP_VERSION` 时又会把本该已装上的版本重复推一遍。
 
 ## 相对上游的变更
 
@@ -252,12 +254,12 @@ docker compose logs -f
 不用 compose 时：
 
 ```bash
-docker build -t rikkahub-desktop-plus:2.0.0-preview-v5 .
+docker build -t rikkahub-desktop-plus:0.0.2 .
 docker run -d --name rikkahub-plus --restart unless-stopped \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:2.0.0-preview-v5
+  rikkahub-desktop-plus:0.0.2
 ```
 
 ### 容器内目录
@@ -404,7 +406,7 @@ pc-data/
 - 无账号体系，数据默认全部保存在本机 `pc-data/`；API 密钥保存在本地设置中。
 - 不采集对话内容、模型名、文件名或查询词。
 - **编译版（单文件 exe）默认发送匿名启动统计**：设备 UUID、日期、版本、操作系统，以及当日计数（消息数、活跃分钟、供应商失败数、搜索 / TTS / MCP / 图像生成次数）。启动时与每 10 分钟各发送一次，发往上游域名。设置 `RIKKAHUB_ANALYTICS=0` 可完全关闭；源码运行（`bun run server.ts`）默认不上报。
-- 编译版启动时会向上游 GitHub Releases 静默检查一次更新，仅在存在新版本时弹出提示；可跳过指定版本，网络错误静默处理。
+- 编译版启动时会向**本仓库**的 GitHub Releases 静默检查一次更新，仅在存在新版本时弹出提示；可跳过指定版本，网络错误静默处理。
 - 提交 Issue 前请先脱敏：日志正文、截图与配置中可能包含 API 密钥、WebDAV / S3 凭据或 SSH 主机信息。
 
 ## 维护状态
