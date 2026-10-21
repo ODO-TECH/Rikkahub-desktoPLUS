@@ -147,7 +147,8 @@ cd web-ui && bun install && bun run dev
 ```
 
 构建安装包、便携版、原生壳、Linux 二进制与 Docker 镜像的完整步骤，以及「发布前必须改的
-两处」，都在 **[docs/BUILD.md](docs/BUILD.md)**。
+两处」，都在 **[docs/BUILD.md](docs/BUILD.md)**。要把这个目录推上 GitHub（包括提交身份
+怎么设才不暴露个人邮箱），看 **[docs/PUBLISH.md](docs/PUBLISH.md)**。
 
 ```bash
 # Docker（端口固定在 8080，数据挂出来）
@@ -168,7 +169,7 @@ pi-patches/       给上游 pi 推理库的受控补丁（本仓库跟踪）
 pi-model-data/    模型目录快照，与 pi 基线严格配对（本仓库跟踪）
 fonts/ icons/     内置字体与供应商/品牌图标
 functions/        上游 Cloudflare Pages 遥测端点（桌面端不联网上报，源码保留）
-docs/             构建与排查文档、logo
+docs/             构建（BUILD.md）、发布（PUBLISH.md）与排查文档、logo
 .github/          CI（typecheck + 单元测试 + 冒烟）、Linux 产物、Docker 发布
 ```
 
