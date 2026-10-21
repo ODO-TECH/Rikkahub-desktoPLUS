@@ -108,7 +108,7 @@
 
 - 接口：设备增删改、排序、连接测试、单次命令执行（`ssh/device`、`ssh/reorder`、`ssh/test`、`ssh/exec`）。
 - 支持密码与私钥（可带 passphrase）两种认证方式；基于 `ssh2`。
-- 凭据保存在本地设置 `settings.sshDevices`（`state.json`），不随 Android 备份导出，也不写入日志。
+- 凭据保存在本地设置 `settings.sshDevices`（`state.json`），不随 Android 备份导出。
 - 当前不提供交互式 shell、SFTP 与端口转发。
 
 ### 6. Kelivo 同步与数据互传
@@ -303,7 +303,7 @@ pc-data/
 - 无账号体系，数据默认全部保存在本机 `pc-data/`；API 密钥保存在本地设置中。
 - 不采集对话内容、模型名、文件名或查询词。
 - **编译版（单文件 exe）默认发送匿名启动统计**：设备 UUID、日期、版本、操作系统，以及当日计数（消息数、活跃分钟、供应商失败数、搜索 / TTS / MCP / 图像生成次数）。启动时与每 10 分钟各发送一次，发往上游域名。设置 `RIKKAHUB_ANALYTICS=0` 可完全关闭；源码运行（`bun run server.ts`）默认不上报。
-- 编译版会向上游 GitHub Releases 检查更新，可在设置中关闭。
+- 编译版启动时会向上游 GitHub Releases 静默检查一次更新，仅在存在新版本时弹出提示；可跳过指定版本，网络错误静默处理。
 - 提交 Issue 前请先脱敏：日志正文、截图与配置中可能包含 API 密钥、WebDAV / S3 凭据或 SSH 主机信息。
 
 ## 维护状态
