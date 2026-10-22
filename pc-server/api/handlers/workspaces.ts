@@ -4,7 +4,7 @@
 import type { Workspace } from "../../foundation/types";
 import type { WorkspaceDto } from "../../foundation/types/dto";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, trustWorkspace, updateWorkspace, workspaceStatus } from "../../workspace";
-import { deleteWorkspaceEntry, listWorkspaceDir, previewWorkspaceFile, readWorkspaceAgentsFile, renameWorkspaceEntry, revealWorkspaceEntry, writeWorkspaceAgentsFile } from "../../workspace/files";
+import { deleteWorkspaceEntry, listWorkspaceDir, previewWorkspaceFile, readWorkspaceAgentsFile, readWorkspaceFileForEdit, renameWorkspaceEntry, revealWorkspaceEntry, WorkspaceFileConflictError, writeWorkspaceAgentsFile, writeWorkspaceTextFile } from "../../workspace/files";
 import { mountedWorkspaceToolNames, refreshShellAvailability, shellAvailability } from "../../workspace/runtime";
 import { error, json, readJson } from "../request";
 
@@ -76,7 +76,27 @@ export async function handleWorkspaceRoutes(request: Request, _url: URL, path: s
         return json({ entries: listWorkspaceDir(workspace, relPath) });
       }
       if (sub === "files/content" && request.method === "GET") {
+        // mode=edit(0.0.3 侧边栏):2MB 内整读 + etag/EOL/BOM,供编辑器保存时比对。
+        if (_url.searchParams.get("mode") === "edit") {
+          return json(await readWorkspaceFileForEdit(workspace, relPath));
+        }
         return json({ preview: await previewWorkspaceFile(workspace, relPath) });
+      }
+      if (sub === "files/content" && request.method === "PUT") {
+        const body = await readJson<{ content?: string; baseEtag?: string | null; eol?: string | null }>(request);
+        if (typeof body.content !== "string") return error("content is required", 400);
+        try {
+          return json(writeWorkspaceTextFile(workspace, relPath, {
+            content: body.content,
+            baseEtag: typeof body.baseEtag === "string" ? body.baseEtag : null,
+            eol: body.eol === "\r\n" ? "\r\n" : body.eol === "\n" ? "\n" : null,
+          }));
+        } catch (err) {
+          if (err instanceof WorkspaceFileConflictError) {
+            return json({ error: "conflict", code: 409, etag: err.etag, modifiedAt: err.modifiedAt }, { status: 409 });
+          }
+          throw err;
+        }
       }
       if (sub === "files/rename" && request.method === "POST") {
         const body = await readJson<{ path?: string; newName?: string }>(request);

@@ -115,6 +115,7 @@ import {
   ListChecks,
   Loader2,
   MessageSquare,
+  PanelRight,
   Pencil,
   X,
 } from "lucide-react";
@@ -245,6 +246,57 @@ function CollapsedSidebarTrigger() {
   const { isMobile, state } = useSidebar();
   if (!isMobile && state !== "collapsed") return null;
   return <SidebarTrigger className="pointer-events-auto relative z-50 mb-1" />;
+}
+
+// 右侧工作台(文件侧边栏)的常驻开关:与左侧 CollapsedSidebarTrigger 同款幽灵图标,
+// 面板开着就关、关着就按焦点会话/工作区打开。首页没有会话/工作区也照常打开——
+// 面板里给出说明,不做“点了没反应”的禁用态。窄屏由抽屉自己的关闭入口负责,不渲染。
+function WorkbenchToggle({
+  conversationId,
+  workspaceId,
+  workspaceName,
+}: {
+  conversationId?: string | null;
+  workspaceId?: string;
+  workspaceName?: string;
+}) {
+  const { t } = useTranslation();
+  const { panel, openPanel, closePanel } = useWorkbench();
+  const isOpen = Boolean(panel);
+  const label = isOpen
+    ? t("workbench.toggle_close", "关闭文件侧边栏")
+    : t("workbench.toggle_open", "打开文件侧边栏");
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="pointer-events-auto relative z-50 mb-1 size-7"
+      title={label}
+      aria-label={label}
+      aria-pressed={isOpen}
+      onClick={() => {
+        if (isOpen) {
+          closePanel();
+          return;
+        }
+        // 没有会话也没有工作区时也打开面板(空态里告诉用户怎么产生文件),
+        // 与左侧栏折叠钮一致:任何时候点了都有反馈。
+        openPanel({
+          type: "conversation-files",
+          title: workspaceName ?? t("workbench.files.title", "文件面板"),
+          payload: conversationId
+            ? { conversationId }
+            : workspaceId
+              ? { workspaceId }
+              : {},
+        });
+      }}
+    >
+      <PanelRight className="size-4" strokeWidth={1.75} />
+    </Button>
+  );
 }
 
 function createHomeDraftId() {
@@ -810,9 +862,12 @@ const ConversationTimeline = React.memo(
     const fallbackModel = React.useMemo(() => {
       if (!settings) return null;
       const fallbackId = assistant?.chatModelId ?? settings.chatModelId;
+      // 嵌入/重排只走 /embeddings、/rerank，兜底挑到它们会让会话显示与上下文长度全部失真。
+      const chatCapable = (model: ProviderModel | undefined) =>
+        !!model && model.type !== "EMBEDDING" && model.type !== "RERANK" ? model : undefined;
       return (
-        modelById.get(fallbackId) ??
-        settings.providers.flatMap((provider) => provider.models)[0] ??
+        chatCapable(modelById.get(fallbackId)) ??
+        settings.providers.flatMap((provider) => provider.models).find((model) => !!chatCapable(model)) ??
         null
       );
     }, [assistant?.chatModelId, modelById, settings]);
@@ -2631,11 +2686,106 @@ function ConversationsPageInner() {
   }, []);
 
   const hasWorkbenchPanel = Boolean(panel);
+  // 关闭动画期间保留卡片内容:左栏收起是整卡滑出,右栏若立刻卸载内容、只剩空白在收缩,
+  // 观感就不是镜像了。panel 为空的这 220ms 继续渲染上一次的面板,过渡结束再卸。
+  const [retainedPanel, setRetainedPanel] = React.useState(panel);
+  React.useEffect(() => {
+    if (panel) {
+      setRetainedPanel(panel);
+      return;
+    }
+    const timer = window.setTimeout(() => setRetainedPanel(null), 220);
+    return () => window.clearTimeout(timer);
+  }, [panel]);
+  const displayedPanel = panel ?? retainedPanel;
+  // 顶行工作台开关的上下文:有会话时面板只带 conversationId(内部按焦点会话解析工作区);
+  // 工作区容器的空态没有会话,退化为只读工作区树(与输入框里的文件按钮同语义)。
+  const workbenchWorkspaceId =
+    activeContainer === CHAT_CONTAINER
+      ? (activeConversation?.workspaceId ?? detailWorkspaceId ?? undefined)
+      : activeContainer;
+  const workbenchWorkspace = workbenchWorkspaceId
+    ? workspaces.find((item) => item.id === workbenchWorkspaceId)
+    : undefined;
+  const workbenchPanelContext = {
+    conversationId: activeId,
+    workspaceId: activeId ? undefined : workbenchWorkspaceId,
+    workspaceName: workbenchWorkspace?.name,
+  };
   const workbenchPanelRef = React.useRef<PanelImperativeHandle | null>(null);
+  // 工作台面板根节点:开合时给 flex-grow 挂 200ms 线性过渡,复刻左栏宽度动画。
+  const workbenchPanelElementRef = React.useRef<HTMLDivElement | null>(null);
+  // 卡面节点:开合期间把宽度钉死,由面板 overflow 裁切 —— 左栏卡片是"定宽滑出、视口
+  // 裁切",右栏若让卡面跟着 flex-grow 一起缩,中间帧文字会重新折行(空态文案竖排)。
+  const workbenchCardRef = React.useRef<HTMLDivElement | null>(null);
   // 用户上次调整的工作台宽度(占组宽百分比),关闭再打开时恢复。
   const workbenchWidthRef = React.useRef(WORKBENCH_DEFAULT_WIDTH_PCT);
+  // 程序化开合(200ms 过渡)期间 onResize 会按帧报中间尺寸:关闭后半程穿过 minSize
+  // 时若不屏蔽,20.6% 这类残宽会覆盖用户的宽度记忆,下次重开只剩一条缝。
+  const workbenchAnimatingRef = React.useRef(false);
+  // 右侧工作台:与分组面板平级的一整块浮起卡片(左栏镜像)——上下留画布边距、
+  // 18px 圆角、sidebar 底色 + elevation 阴影。宽度仍可拖,开合由 flex-grow 过渡。
+  const workbenchPane = (
+    <>
+      <ResizableHandle
+        withHandle={false}
+        className={cn(
+          // 分隔条就是右栏的"gap":与面板同起同落(200ms),不能等 220ms 保留期结束后
+          // 再缩 8px —— 那会在卡片已经滑完之后又拖出一段二次位移,左栏没有这种尾动作。
+          "w-2 bg-transparent transition-[width] duration-200 ease-linear hover:bg-border/60",
+          !panel && "w-0 pointer-events-none",
+        )}
+      />
+      <ResizablePanel
+        id="workbench-panel"
+        defaultSize="0%"
+        minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
+        maxSize="60%"
+        collapsible
+        collapsedSize="0%"
+        panelRef={workbenchPanelRef}
+        elementRef={workbenchPanelElementRef}
+        onResize={(size) => {
+          // 只记有效宽度:关闭态/收起吸附产生的 0、以及程序化过渡的中间帧都不算偏好。
+          if (!workbenchAnimatingRef.current && size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
+            workbenchWidthRef.current = size.asPercentage;
+          }
+        }}
+        className="flex min-h-0 flex-col"
+      >
+        {displayedPanel ? (
+          <div
+            ref={workbenchCardRef}
+            className={cn(
+              // 卡面与左栏同源(bg-sidebar + elevation-100);右栏卡贴着分栏根节点,
+              // overflow:hidden 会把 elevation 向外的投影裁掉三面,只剩卡内一道几乎看不见的
+              // 白高光——这正是"右栏没有边缘阴影、看着比左栏平"的原因。外投影拿不回来,
+              // 就用 1px 实边补上轮廓(实测 rgba 0.06 在 1x 下与左栏 220~235 的边线同量级),
+              // elevation 的高光仍留在边内侧,读起来仍是同一张浮起的纸。
+              "flex h-full min-h-0 flex-col overflow-hidden rounded-[18px] border border-black/[0.06] bg-sidebar shadow-[var(--ds-elevation-100)]",
+              !panel && "pointer-events-none",
+            )}
+          >
+            {/* 卡面着色统一由外层负责;Host 自身透明才能让 elevation 的白色高光透出来,
+                与左栏卡面同一观感(抽屉里仍用 Host 自己的 bg-sidebar)。 */}
+            <WorkbenchHost
+              panel={displayedPanel}
+              onClose={closePanel}
+              activeConversationId={activeId}
+              className="bg-transparent"
+            />
+          </div>
+        ) : null}
+      </ResizablePanel>
+    </>
+  );
   // 一级分栏的组面板组:新组成立即与它组等宽(用户抱怨"拆完两栏不对称")。
   const outerGroupRef = React.useRef<GroupImperativeHandle | null>(null);
+  // 右栏开合时 v4 优先从"最近的一组"抽空间:两栏 50/50 会变成 46/18(最后一组被压到
+  // minSize),关掉后也回不到 50/50。开合前记住组间比例,按比例整组让位/回位,
+  // 右栏才像左栏一样整体平移,而不是单方面压扁最后一组。
+  const groupRatiosRef = React.useRef<number[] | null>(null);
+  const workbenchWasOpenRef = React.useRef(false);
 
   // 工作台开合的根治方案(用户反馈:关闭后空间不回收/拖到边缘后重开只剩一条缝):
   // react-resizable-panels v4 的三个坑一起踩过——
@@ -2652,12 +2802,119 @@ function ConversationsPageInner() {
     const workbenchPanel = workbenchPanelRef.current;
     if (!workbenchPanel) return;
 
-    if (panel) {
-      workbenchPanel.resize(`${workbenchWidthRef.current}%`);
-    } else {
-      workbenchPanel.resize("0%");
+    // 左栏是 200ms 线性滑出(CSS transition);右栏由 flex-grow 驱动,补同款过渡。
+    // 过渡只挂在程序化开合这一瞬——常驻会拖慢用户拖分隔条的跟手感。
+    const element = workbenchPanelElementRef.current;
+    const card = workbenchCardRef.current;
+    const opening = Boolean(panel);
+    workbenchAnimatingRef.current = true;
+    if (element) {
+      element.style.transition = "flex-grow 200ms linear";
     }
-  }, [panel, isMobile]);
+    // 与左栏同一套观感:卡片宽度全程不变,只被裁切。展开时钉到终态像素宽,收起时钉到
+    // 当前宽(此刻面板还没开始缩,量到的就是展开宽);过渡结束再交还自适应。
+    if (card && element) {
+      let pinnedWidth = 0;
+      if (opening) {
+        // 库内百分比的分母 = 组内各面板 offsetWidth 之和(不含分隔条)。这一刻工作台
+        // 面板为 0、分隔条正从 w-0 过渡到 w-2,先把还没长出来的宽度扣掉,卡片终宽
+        // 才不会比面板略宽一截(差值在过渡结束时交还自适应会带来一次微小重排)。
+        const groupElement = element.parentElement;
+        if (groupElement) {
+          let available = 0;
+          for (const child of Array.from(groupElement.children)) {
+            if (child instanceof HTMLElement && child.hasAttribute("data-panel")) {
+              available += child.offsetWidth;
+            }
+          }
+          const separator = element.previousElementSibling;
+          const separatorNow =
+            separator instanceof HTMLElement ? separator.getBoundingClientRect().width : 0;
+          // 分隔条 w-2 = 0.5rem,rem 随「界面字号缩放」变(见 app.css 的 :root font-size),
+          // 所以按根字号折算终宽,而不是硬编码 8px。
+          const separatorTarget =
+            (parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16) * 0.5;
+          available = Math.max(0, available - Math.max(0, separatorTarget - separatorNow));
+          pinnedWidth = (available * workbenchWidthRef.current) / 100;
+        }
+      } else {
+        pinnedWidth = element.getBoundingClientRect().width;
+      }
+      if (pinnedWidth > 0) {
+        card.style.width = `${pinnedWidth}px`;
+      }
+    }
+    const target = panel ? `${workbenchWidthRef.current}%` : "0%";
+    const wasOpen = workbenchWasOpenRef.current;
+    workbenchWasOpenRef.current = opening;
+    const group = outerGroupRef.current;
+    const groupIds = groups.length > 1 ? groups.map((_, gi) => `group-panel-${gi}`) : [];
+    const readGroupRatios = () => {
+      if (!group || groupIds.length === 0) return null;
+      try {
+        const layout = group.getLayout();
+        const sizes = groupIds.map((id) => layout[id]);
+        if (sizes.some((size) => !Number.isFinite(size))) return null;
+        const total = sizes.reduce((sum, size) => sum + size, 0);
+        return total > 0 ? sizes.map((size) => size / total) : null;
+      } catch {
+        return null;
+      }
+    };
+    // 只在新开面板时采样组间比例;多栏拆分(groups.length 变化)后面板会重注册,
+    // 旧比例长度对不上时按等宽兜底,让"拆完等宽"的既有语义继续成立。
+    if (opening && !wasOpen) {
+      const ratios = readGroupRatios();
+      if (ratios) groupRatiosRef.current = ratios;
+    }
+    // 兜底:窄屏↔宽屏切换、一级分栏拆合时,面板会搬到新 PanelGroup 重新注册,组的 layout
+    // 要到首测之后才建立,resize 会抛 "Layout not found for Panel"(不接就进错误边界,
+    // 或被对称布局按 0 宽定型)。逐帧重试到 layout 就绪,最多约 10 帧。
+    const applyResize = () => {
+      try {
+        workbenchPanel.resize(target);
+        // resize 后按记忆比例整组重铺:关合时组间保持原比例;展开时各组等比例让位,
+        // 不让 v4 把最后一组单独压到 minSize。单栏布局没有 outerGroupRef,自动跳过。
+        // 面板本来就关着且不是"刚关完"时(如初次挂载/面板关闭状态下拆栏),不要碰用户布局。
+        if (group && groupIds.length > 0 && (opening || wasOpen)) {
+          const ratios =
+            groupRatiosRef.current?.length === groupIds.length
+              ? groupRatiosRef.current
+              : groupIds.map(() => 1 / groupIds.length);
+          const remaining = opening ? Math.max(0, 100 - workbenchWidthRef.current) : 100;
+          group.setLayout({
+            ...Object.fromEntries(groupIds.map((id, index) => [id, ratios[index]! * remaining])),
+            "workbench-panel": opening ? workbenchWidthRef.current : 0,
+          });
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let retryFrame = 0;
+    let retries = 0;
+    const retryResize = () => {
+      if (applyResize()) return;
+      retries += 1;
+      if (retries < 10) retryFrame = window.requestAnimationFrame(retryResize);
+    };
+    if (!applyResize()) {
+      retryFrame = window.requestAnimationFrame(retryResize);
+    }
+    const timer = window.setTimeout(() => {
+      workbenchAnimatingRef.current = false;
+      if (element) element.style.transition = "";
+      // 过渡结束,卡面交还自适应宽度。此刻面板已是终态宽,两者的差只剩亚像素级测量误差。
+      if (card) card.style.width = "";
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+      if (retryFrame) window.cancelAnimationFrame(retryFrame);
+    };
+    // groups.length:拆/合一级分栏会把这个面板搬到另一个 PanelGroup 重新注册(尺寸归零),
+    // 面板开着时要按记忆宽度补回,否则内容还在、卡片却塌成一条缝。
+  }, [panel, isMobile, groups.length]);
 
   // 一级分栏对称初值(用户反馈:拖出一级分栏后两栏不是默认对称摆放):
   // v4 的动态面板仅保证 minSize 合规,新组会按比例摊薄既有宽度(如 95/5 拆成 90/5/5)。
@@ -2800,7 +3057,9 @@ function ConversationsPageInner() {
               标签栏只列本组成员 + 自己的内容列),与二级分栏"每列一条会话标签栏"同构;
               组间由画布色缝隙分隔 —— "两个组"是比"同组两列"更重的边界。 */}
           {groups.length === 1 || isMobile ? (
-            <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
+            <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1">
+              <ResizablePanel id="group-panel-0" minSize="18%" className="flex min-h-0 flex-col">
+                <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
               {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
                   z-[3] 压过白面板的 elevation-100 外环阴影:否则那道
                   0.5px 暗环会横穿焦点标签与面板的连接处,连体处凭空多出一条缝。 */}
@@ -2814,10 +3073,14 @@ function ConversationsPageInner() {
                     headerTrailing={<ContainerPlusMenu />}
                   />
                 </div>
+                {/* 面板开着时由卡片头部（与左栏折叠钮镜像的 PanelRight）关闭，
+                    和左栏“展开后收起钮移入卡内”同构，不在标签行重复一个图标。 */}
+                {!isMobile && !panel ? <WorkbenchToggle {...workbenchPanelContext} /> : null}
               </div>
               {/* 白色圆角内容面板:surface-200 底 + elevation-100,盖住撞色带主体,
                   焦点页签经连接条与面板连体;底部圆角与 wrapper 的 18px 对齐。
-                  分栏:面板内是 1..MAX_PANES 个会话列(同容器的二级窗格)+ 工作台面板的横向可调组。 */}
+                  分栏:面板内是 1..MAX_PANES 个会话列(同容器的二级窗格);工作台卡片
+                  在组外与组并列,是左栏的镜像浮卡(见 workbenchPane)。 */}
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
                 {!isMobile ? (
                   <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
@@ -2833,30 +3096,6 @@ function ConversationsPageInner() {
                         </ResizablePanel>
                       </React.Fragment>
                     ))}
-                    <ResizableHandle
-                      withHandle
-                      className={cn(!hasWorkbenchPanel && "pointer-events-none opacity-0")}
-                    />
-                    <ResizablePanel
-                      id="workbench-panel"
-                      defaultSize="0%"
-                      minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
-                      maxSize="60%"
-                      collapsible
-                      collapsedSize="0%"
-                      panelRef={workbenchPanelRef}
-                      onResize={(size) => {
-                        // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
-                        if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
-                          workbenchWidthRef.current = size.asPercentage;
-                        }
-                      }}
-                      className="flex min-h-0 flex-col"
-                    >
-                      {panel ? (
-                        <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
-                      ) : null}
-                    </ResizablePanel>
                   </ResizablePanelGroup>
                 ) : (
                   // 窄屏不分栏:只渲染焦点列(其它列的状态保留,回宽屏即恢复)。
@@ -2879,16 +3118,20 @@ function ConversationsPageInner() {
                     direction="bottom"
                   >
                     <DrawerContent className="h-[85vh] max-h-[85vh]">
-                      <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
+                      <WorkbenchHost panel={panel} onClose={closePanel} activeConversationId={activeId} />
                     </DrawerContent>
                   </Drawer>
                 ) : null}
               </div>
-            </div>
+                </div>
+              </ResizablePanel>
+              {/* 窄屏走抽屉:不渲染并排卡片,否则会在抽屉底下再挤出一张右栏。 */}
+              {!isMobile ? workbenchPane : null}
+            </ResizablePanelGroup>
           ) : (
             // L 轮分区模型分栏:每组 = 撞色带 wrapper(自己的一级标签栏,渲染本组全部
-            // 标签)+ 白面板(该组焦点容器的二级列);工作台面板与组并列可调。"新建容器"
-            // 入口只在全局焦点组的标签栏上。
+            // 标签)+ 白面板(该组焦点容器的二级列);右侧工作台也是同款浮卡,与所有组并列
+            // 可调。"新建容器"入口只在全局焦点组的标签栏上。
             <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1" groupRef={outerGroupRef}>
               {groups.map((group, groupIndex) => {
                 const focus = group.includes(activeContainer) ? activeContainer : group[0]!;
@@ -2916,6 +3159,10 @@ function ConversationsPageInner() {
                               headerTrailing={group.includes(activeContainer) ? <ContainerPlusMenu /> : null}
                             />
                           </div>
+                          {/* 同单组分支:面板开着时关闭入口在卡片头部,不在标签行重复。 */}
+                          {groupIndex === groups.length - 1 && !panel ? (
+                            <WorkbenchToggle {...workbenchPanelContext} />
+                          ) : null}
                         </div>
                         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
                           <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
@@ -2938,30 +3185,7 @@ function ConversationsPageInner() {
                   </React.Fragment>
                 );
               })}
-              <ResizableHandle
-                withHandle
-                className={cn("w-1.5 bg-transparent after:w-1.5", !hasWorkbenchPanel && "pointer-events-none opacity-0")}
-              />
-              <ResizablePanel
-                id="workbench-panel"
-                defaultSize="0%"
-                minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
-                maxSize="60%"
-                collapsible
-                collapsedSize="0%"
-                panelRef={workbenchPanelRef}
-                onResize={(size) => {
-                  // 只记有效宽度:关闭态/收起吸附产生的 0 不覆盖用户偏好。
-                  if (size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
-                    workbenchWidthRef.current = size.asPercentage;
-                  }
-                }}
-                className="flex min-h-0 flex-col"
-              >
-                {panel ? (
-                  <WorkbenchHost panel={panel} onClose={closePanel} className="border-l-0" />
-                ) : null}
-              </ResizablePanel>
+              {workbenchPane}
             </ResizablePanelGroup>
           )}
         </SidebarInset>

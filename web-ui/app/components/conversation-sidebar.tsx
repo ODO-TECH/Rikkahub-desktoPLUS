@@ -553,7 +553,7 @@ function ThemeModeToggle() {
       type="button"
       variant="ghost"
       size="icon-sm"
-      className="text-muted-foreground hover:text-foreground"
+      className="shrink-0 text-muted-foreground hover:text-foreground"
       onClick={() => setTheme(isDark ? "light" : "dark")}
       aria-label={
         isDark ? t("conversations.theme_toggle.to_light") : t("conversations.theme_toggle.to_dark")
@@ -1207,12 +1207,14 @@ export const ConversationSidebar = React.memo(
             onSave={handleThemeEditorSave}
           />
 
-          <div className="flex flex-wrap items-center gap-2">
+          {/* 底栏:四个入口图标 + 署名并排。文字用 flex-1 占剩余宽度并截断,
+              图标 shrink-0 不参与压缩——窄侧栏下不会互相挤压换行。 */}
+          <div className="flex items-center gap-2">
             {webAuthEnabled && (
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="text-muted-foreground hover:text-foreground"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
                 type="button"
                 onClick={handleWebLogout}
                 aria-label="Clear web session"
@@ -1226,7 +1228,7 @@ export const ConversationSidebar = React.memo(
               asChild
               variant="ghost"
               size="icon-sm"
-              className="text-muted-foreground hover:text-foreground"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
               type="button"
               aria-label={t("conversation_sidebar.settings", "Settings")}
               title={t("conversation_sidebar.settings", "Settings")}
@@ -1240,7 +1242,7 @@ export const ConversationSidebar = React.memo(
               asChild
               variant="ghost"
               size="icon-sm"
-              className="text-muted-foreground hover:text-foreground"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
               type="button"
               aria-label={t("conversation_sidebar.image_generation")}
               title={t("conversation_sidebar.image_generation")}
@@ -1255,7 +1257,7 @@ export const ConversationSidebar = React.memo(
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="text-muted-foreground hover:text-foreground"
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
                   type="button"
                   aria-label={t("conversation_sidebar.theme_color_label", {
                     label: currentColorLabel,
@@ -1347,10 +1349,10 @@ export const ConversationSidebar = React.memo(
               href="https://github.com/ODO-TECH/Rikkahub-desktoPLUS"
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-auto truncate whitespace-nowrap text-xs font-normal text-foreground/80 hover:text-foreground transition-colors"
+              className="min-w-0 flex-1 truncate text-right whitespace-nowrap text-xs font-normal text-foreground/80 transition-colors hover:text-foreground"
               title="RikkaHub Desktop PLUS"
             >
-              RikkaHub PLUS
+              少女工作中……
             </a>
           </div>
 

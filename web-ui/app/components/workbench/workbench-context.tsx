@@ -9,20 +9,31 @@ export interface WorkbenchPanel {
 interface WorkbenchContextValue {
   panel: WorkbenchPanel | null;
   openPanel: (panel: WorkbenchPanel) => void;
-  closePanel: () => void;
+  /** force=true 跳过面板注册的关闭守卫(守卫自身确认后才该这么调)。 */
+  closePanel: (force?: boolean) => void;
+  /** 面板注册"能否关闭"守卫(有未保存草稿时返回 false 并自行弹确认)。
+   *  传入 null 解除注册;面板卸载时自动清理。 */
+  setCloseGuard: (guard: (() => boolean) | null) => void;
 }
 
 const WorkbenchContext = React.createContext<WorkbenchContextValue | null>(null);
 
 export function useWorkbenchController(): WorkbenchContextValue {
   const [panel, setPanel] = React.useState<WorkbenchPanel | null>(null);
+  const closeGuardRef = React.useRef<(() => boolean) | null>(null);
 
   const openPanel = React.useCallback((nextPanel: WorkbenchPanel) => {
     setPanel(nextPanel);
   }, []);
 
-  const closePanel = React.useCallback(() => {
+  const closePanel = React.useCallback((force = false) => {
+    if (!force && closeGuardRef.current && !closeGuardRef.current()) return;
+    closeGuardRef.current = null;
     setPanel(null);
+  }, []);
+
+  const setCloseGuard = React.useCallback((guard: (() => boolean) | null) => {
+    closeGuardRef.current = guard;
   }, []);
 
   return React.useMemo(
@@ -30,8 +41,9 @@ export function useWorkbenchController(): WorkbenchContextValue {
       panel,
       openPanel,
       closePanel,
+      setCloseGuard,
     }),
-    [closePanel, openPanel, panel],
+    [closePanel, openPanel, panel, setCloseGuard],
   );
 }
 

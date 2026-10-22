@@ -1082,7 +1082,7 @@ function ChatInputInner({
               ) : null}
               <SearchPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
-              <WorkspaceFilesButton />
+              <WorkspaceFilesButton conversationId={conversationId} />
               <WorkspacePermissionPicker />
             </div>
             <div className="relative flex min-w-0 shrink items-center gap-1">

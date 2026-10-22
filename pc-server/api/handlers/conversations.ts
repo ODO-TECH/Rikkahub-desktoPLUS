@@ -42,6 +42,7 @@ import { abortGeneration, awaitingApproval, compressing, generating } from "../.
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
 import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
+import { listConversationFiles } from "../../conversations/conversation-files";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 列表失效事件已并入 /api/events 通道(invalidate 事件);会话详情流保持独立端点
@@ -184,6 +185,11 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
     // I-2:REST 详情保持全量(导出/分享/轮询兜底依赖完整数据),但同样附带 stamp 清单,
     // 客户端 detail 因此永远有清单可参与后续窗口化快照的前缀合并。
     if (!sub && request.method === "GET") return json(toSnapshotConversationDto(conversation, generating.has(conversation.id), Infinity));
+    // 0.0.3 侧边栏:会话涉及的文件(附件/产出/本次改动)。选中分支口径,与 UI 所见一致。
+    if (sub === "files" && request.method === "GET") {
+      const workspace = conversation.workspaceId ? getWorkspace(conversation.workspaceId) : null;
+      return json(listConversationFiles(conversation, workspace));
+    }
     // I-2(专题2):窗口化快照的向上翻页分片。before/beforeId 双参防结构漂移:
     // beforeId 必须仍是 before 位置的节点(快照后发生删除/截断则 409,客户端重开流
     // 拿新快照与清单,自愈)。返回绝对下标 [max(0, before-limit), before) 的连续节点。

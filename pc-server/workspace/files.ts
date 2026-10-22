@@ -3,13 +3,14 @@
 // 边界断言（assertInsideWorkspace：realpath+带分隔符前缀，软链/盘符兄弟目录逃逸同样被抓）。
 // 所有函数以 workspace root 为界；rel 路径来自前端，视作不可信输入。
 
-import { readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { basename, dirname, extname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { Workspace } from "../foundation/types";
 import { isWindowsReservedName, reservedNameSafeFsPath, sweepWindowsReservedNames } from "../foundation/windows-names";
 import { reportError } from "../observability/app-errors";
-import { assertInsideWorkspace, READ_HARD_LIMIT_BYTES } from "./boundary";
+import { assertInsideWorkspace, READ_HARD_LIMIT_BYTES, WRITE_HARD_LIMIT_BYTES } from "./boundary";
 import { detectSupportedImageMimeTypeFromFile } from "./tools/mime";
 
 export interface WorkspaceFileEntry {
@@ -64,6 +65,40 @@ function looksBinary(buffer: Buffer): boolean {
   return buffer.subarray(0, 8192).includes(0);
 }
 
+/** 只读前 limit 字节(不整读):512KB 上限的文本预览 / 8KB 二进制嗅探都不该把
+ *  数百 MB 日志整读进内存(0.0.3 侧边栏修复)。NT 前缀路径同样适用。 */
+function readBytesLimited(fsPath: string, limit: number): Buffer {
+  const size = statSync(fsPath).size;
+  const buffer = Buffer.alloc(Math.max(0, Math.min(limit, size)));
+  if (buffer.length === 0) return buffer;
+  const fd = openSync(fsPath, "r");
+  try {
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read <= 0) break;
+      offset += read;
+    }
+    return offset === buffer.length ? buffer : buffer.subarray(0, offset);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function sha256Short(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+}
+
+function detectEol(text: string): "\n" | "\r\n" {
+  return text.includes("\r\n") ? "\r\n" : "\n";
+}
+
+const UTF8_BOM = "\uFEFF";
+
+function stripBom(text: string): { text: string; hasBom: boolean } {
+  return text.startsWith(UTF8_BOM) ? { text: text.slice(1), hasBom: true } : { text, hasBom: false };
+}
+
 export async function previewWorkspaceFile(workspace: Workspace, relPath: string): Promise<WorkspaceFilePreview> {
   const path = resolveInside(workspace, relPath);
   // 保留名文件(问题4)走 NT 路径;stat/mime/读取全部同源,预览残留内容可辅助定位制造者。
@@ -76,10 +111,158 @@ export async function previewWorkspaceFile(workspace: Workspace, relPath: string
     return { kind: "image", dataUrl: `data:${imageMime};base64,${(await readPreviewBuffer(fsPath)).toString("base64")}`, size: stats.size };
   }
   const truncated = stats.size > READ_HARD_LIMIT_BYTES;
-  const buffer = await readPreviewBuffer(fsPath);
+  const buffer = readBytesLimited(fsPath, READ_HARD_LIMIT_BYTES);
   if (looksBinary(buffer)) return { kind: "binary", size: stats.size };
-  const slice = truncated ? buffer.subarray(0, READ_HARD_LIMIT_BYTES) : buffer;
-  return { kind: "text", text: slice.toString("utf-8"), truncated, size: stats.size };
+  const text = buffer.toString("utf-8");
+  // 截断边界可能把多字节 UTF-8 字符切成两半,替换成 U+FFFD 而不是显示乱码残片。
+  return { kind: "text", text: truncated ? text.replace(/\uFFFD+$/, "") : text, truncated, size: stats.size };
+}
+
+// ---- 侧边栏编辑(0.0.3 Feature A):编辑态读取 + etag 冲突保护的原子写 ----
+
+export interface WorkspaceFileEditInfo {
+  editable: boolean;
+  /** 内容指纹(原始字节 sha256 前 32 位);不可编辑时为 null。 */
+  etag: string | null;
+  eol: "\n" | "\r\n";
+  hasBom: boolean;
+  size: number;
+  limitBytes: number;
+  /** editable=false 的原因;可编辑时缺省。 */
+  reason?: "image" | "binary" | "too_large";
+}
+
+export interface WorkspaceFileEditableContent {
+  preview: WorkspaceFilePreview;
+  edit: WorkspaceFileEditInfo;
+}
+
+/** 文件已被外部(另一个编辑器 / AI 工具 / 用户手改)改动的冲突信号。 */
+export class WorkspaceFileConflictError extends Error {
+  constructor(
+    public readonly etag: string,
+    public readonly modifiedAt: number,
+  ) {
+    super("File was modified on disk since it was opened");
+    this.name = "WorkspaceFileConflictError";
+  }
+}
+
+function emptyEditInfo(size: number, reason: WorkspaceFileEditInfo["reason"], eol: "\n" | "\r\n" = "\n"): WorkspaceFileEditInfo {
+  return { editable: false, etag: null, eol, hasBom: false, size, limitBytes: WRITE_HARD_LIMIT_BYTES, reason };
+}
+
+/** 编辑态读取:2MB 上限内整读(二进制/图片判定在前),附带 etag/EOL/BOM 供保存时比对。 */
+export async function readWorkspaceFileForEdit(workspace: Workspace, relPath: string): Promise<WorkspaceFileEditableContent> {
+  const path = resolveInside(workspace, relPath);
+  const fsPath = reservedNameSafeFsPath(path);
+  const stats = statSync(fsPath);
+  if (!stats.isFile()) throw new Error("Not a file");
+
+  if (stats.size > WRITE_HARD_LIMIT_BYTES) {
+    return { preview: await previewWorkspaceFile(workspace, relPath), edit: emptyEditInfo(stats.size, "too_large") };
+  }
+
+  const imageMime = await detectSupportedImageMimeTypeFromFile(fsPath);
+  if (imageMime) {
+    return { preview: await previewWorkspaceFile(workspace, relPath), edit: emptyEditInfo(stats.size, "image") };
+  }
+
+  const buffer = readBytesLimited(fsPath, WRITE_HARD_LIMIT_BYTES);
+  if (looksBinary(buffer)) {
+    return { preview: { kind: "binary", size: stats.size }, edit: emptyEditInfo(stats.size, "binary") };
+  }
+
+  const decoded = stripBom(buffer.toString("utf-8"));
+  return {
+    preview: { kind: "text", text: decoded.text, truncated: false, size: stats.size },
+    edit: {
+      editable: true,
+      etag: sha256Short(buffer),
+      eol: detectEol(decoded.text),
+      hasBom: decoded.hasBom,
+      size: stats.size,
+      limitBytes: WRITE_HARD_LIMIT_BYTES,
+    },
+  };
+}
+
+export interface WorkspaceTextWriteInput {
+  content: string;
+  /** 打开文件时拿到的 etag;缺省=不校验(调用方须显式声明). */
+  baseEtag?: string | null;
+  eol?: "\n" | "\r\n" | null;
+}
+
+export interface WorkspaceTextWriteResult {
+  etag: string;
+  size: number;
+  modifiedAt: number;
+}
+
+function sleepSync(ms: number): void {
+  // 原子替换重试的退避:Windows 上杀毒/索引器短暂持有句柄是常态。
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** 保存编辑:仅允许已存在的普通文件;etag 不符抛 Conflict;UTF-8/2MB/NUL 校验;
+ *  EOL 按 caller 声明(缺省保留原文件)、BOM 原样保留;临时文件 + rename 原子替换,
+ *  失败不动原文件。 */
+export function writeWorkspaceTextFile(
+  workspace: Workspace,
+  relPath: string,
+  input: WorkspaceTextWriteInput,
+): WorkspaceTextWriteResult {
+  const path = resolveInside(workspace, relPath);
+  const name = basename(path);
+  if (process.platform === "win32" && isWindowsReservedName(name)) {
+    throw new Error(`"${name}" is a reserved Windows device name and cannot be written`);
+  }
+  const fsPath = reservedNameSafeFsPath(path);
+  const stats = statSync(fsPath);
+  if (!stats.isFile()) throw new Error("Not a file");
+  if (input.content.includes("\u0000")) throw new Error("Content contains NUL bytes (not a text file)");
+  const bytes = Buffer.byteLength(input.content, "utf-8");
+  if (bytes > WRITE_HARD_LIMIT_BYTES) {
+    throw new Error(`Content is ${(bytes / 1024 / 1024).toFixed(1)}MB, exceeds the 2MB edit limit`);
+  }
+
+  const original = readFileSync(fsPath);
+  const currentEtag = sha256Short(original);
+  if (input.baseEtag && input.baseEtag !== currentEtag) {
+    throw new WorkspaceFileConflictError(currentEtag, stats.mtimeMs);
+  }
+
+  const originalText = stripBom(original.toString("utf-8"));
+  const eol = input.eol === "\r\n" || input.eol === "\n" ? input.eol : detectEol(originalText.text);
+  const normalized = eol === "\r\n"
+    ? input.content.replace(/\r\n?/g, "\r\n")
+    : input.content.replace(/\r\n/g, "\n");
+  const finalText = originalText.hasBom ? `${UTF8_BOM}${normalized}` : normalized;
+  const finalBytes = Buffer.from(finalText, "utf-8");
+  if (finalBytes.length > WRITE_HARD_LIMIT_BYTES) throw new Error("Content exceeds the 2MB edit limit after EOL normalization");
+
+  const tempPath = join(dirname(fsPath), `.${name}.rikkahub-tmp-${process.pid}-${Date.now()}${extname(name)}`);
+  try {
+    writeFileSync(tempPath, finalBytes);
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        renameSync(tempPath, fsPath);
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        sleepSync(40 + attempt * 60);
+      }
+    }
+    if (lastError) throw lastError;
+  } finally {
+    try { rmSync(tempPath, { force: true }); } catch { /* 已被 rename 消费或不可删 */ }
+  }
+
+  const after = statSync(fsPath);
+  return { etag: sha256Short(finalBytes), size: after.size, modifiedAt: after.mtimeMs };
 }
 
 function assertValidEntryName(name: string): void {

@@ -12,6 +12,41 @@ import { extractedTextPath, isExtractableDocument } from "../../files/index";
 import { ensureExtractedTextAsync, getExtractionStatus } from "../../files/extraction";
 import { error, json, mime } from "../request";
 
+/** 文件流响应 + Range/206(0.0.3 侧边栏的视频预览:WebView 的 <video> 需要拖动/续传)。 */
+function fileResponse(request: Request, target: string, contentType: string, etag: string): Response {
+  const file = Bun.file(target);
+  const size = file.size;
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "ETag": etag,
+    "Accept-Ranges": "bytes",
+  };
+  const range = request.headers.get("range");
+  const match = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (match && (match[1] !== "" || match[2] !== "")) {
+    const rawStart = match[1] === "" ? null : Number(match[1]);
+    const rawEnd = match[2] === "" ? null : Number(match[2]);
+    let start = rawStart;
+    let end = rawEnd;
+    if (start === null) {
+      // 后缀范围:bytes=-N = 最后 N 字节
+      start = Math.max(0, size - (end ?? 0));
+      end = size - 1;
+    } else {
+      end = end === null ? size - 1 : Math.min(end, size - 1);
+    }
+    if (start >= size || start > end || !Number.isFinite(start) || !Number.isFinite(end)) {
+      return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${size}` } });
+    }
+    return new Response(file.slice(start, end + 1), {
+      status: 206,
+      headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) },
+    });
+  }
+  return new Response(file, { headers: { ...headers, "Content-Length": String(size) } });
+}
+
 export async function handleFileRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   if (path === "files/upload" && request.method === "POST") {
     const form = await request.formData();
@@ -54,13 +89,7 @@ export async function handleFileRoutes(request: Request, _url: URL, path: string
     // paths) and the user saw every image re-load on every conversation switch — even
     // ones they'd viewed seconds earlier. The ETag is a belt-and-suspenders fallback for
     // browsers that disregard `immutable`.
-    return new Response(Bun.file(entry.path), {
-      headers: {
-        "Content-Type": entry.mime,
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "ETag": `"${entry.id}"`,
-      },
-    });
+    return fileResponse(request, entry.path, entry.mime, `"${entry.id}"`);
   }
   // 专题4:提取状态/进度查询(前端附件 chip 进度圆圈轮询)。终态后前端停轮。
   const fileExtraction = path.match(/^files\/(\d+)\/extraction$/);
@@ -78,13 +107,7 @@ export async function handleFileRoutes(request: Request, _url: URL, path: string
     // Same caching rationale as the by-id endpoint above. Path-based fetches typically
     // come from Android-imported messages whose URL references survived migration —
     // those resolved paths point to immutable on-disk files.
-    return new Response(Bun.file(target), {
-      headers: {
-        "Content-Type": mime(target),
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "ETag": `"path:${fileByPath[1]}"`,
-      },
-    });
+    return fileResponse(request, target, mime(target), `"path:${fileByPath[1]}"`);
   }
   const fileDelete = path.match(/^files\/(\d+)$/);
   if (fileDelete && request.method === "DELETE") {
