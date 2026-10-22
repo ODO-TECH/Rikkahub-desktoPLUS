@@ -56,12 +56,15 @@ function ConversationFilesRenderer({
   const followsConversation = Boolean(payloadConversationId) || !payloadWorkspaceId;
   const conversationId = followsConversation ? (activeConversationId ?? undefined) : undefined;
   const workspaceId = followsConversation ? undefined : payloadWorkspaceId;
+  // payload 对象只在真正 openPanel 时换新;memo 住 open 目标,面板据此区分
+  // “又一次深链请求”与“无关重渲染”(如会话文件清单刷新)。
+  const open = React.useMemo(() => readOpenTarget(panel.payload), [panel.payload]);
   return (
     <ConversationFilesPanel
       key={conversationId ?? workspaceId ?? "empty"}
       conversationId={conversationId}
       workspaceId={workspaceId}
-      open={readOpenTarget(panel.payload)}
+      open={open}
     />
   );
 }

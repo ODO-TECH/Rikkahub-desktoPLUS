@@ -1,6 +1,10 @@
+import * as React from "react";
 import { BookOpen, File, FileText } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { resolveFileUrl } from "~/lib/files";
+
+import { useAttachmentSidebarTarget } from "./use-attachment-sidebar";
 
 interface DocumentPartProps {
   url: string;
@@ -22,6 +26,8 @@ function getDocumentIcon(mime: string) {
 }
 
 export function DocumentPart({ url, fileName, mime }: DocumentPartProps) {
+  const { t } = useTranslation("message");
+  const sidebar = useAttachmentSidebarTarget(url);
   if (!url) return null;
 
   const documentUrl = resolveFileUrl(url);
@@ -32,6 +38,14 @@ export function DocumentPart({ url, fileName, mime }: DocumentPartProps) {
       href={documentUrl}
       rel="noreferrer"
       target="_blank"
+      title={sidebar.canOpen ? t("media_part.open_in_sidebar") : undefined}
+      onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
+        // 单击 = 在侧栏打开;Ctrl/Cmd/Shift/Alt + 单击、中键、键盘 Enter 仍走浏览器新标签。
+        if (!sidebar.canOpen || event.detail === 0) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        sidebar.open();
+      }}
     >
       {getDocumentIcon(mime)}
       <span className="max-w-[320px] truncate">{fileName}</span>

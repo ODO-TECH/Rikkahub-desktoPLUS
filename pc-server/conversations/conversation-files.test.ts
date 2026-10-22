@@ -77,6 +77,10 @@ describe("本次改动", () => {
 
     const payload = listConversationFiles(conv, workspace);
     expect(payload.workspaceId).toBe("w1");
+    // 深链换算所需:会话 cwd 与工作区根都回传,前端按同一口径把工具参数里的原始路径
+    // 折算成工作区相对路径(不能用浏览器侧的当前目录猜)。
+    expect(payload.cwd).toBe(cwd);
+    expect(payload.workspaceRoot).toBe(root);
     expect(payload.changes).toHaveLength(1);
     const change = payload.changes[0]!;
     expect(change.path).toBe("sub/a.ts");
@@ -169,6 +173,8 @@ describe("附件与产出", () => {
     ]);
     const payload = listConversationFiles(conv, null);
     expect(payload.workspaceId).toBe("w1");
+    expect(payload.workspaceRoot).toBeNull();
+    expect(payload.cwd).toBe(cwd);
     expect(payload.changes).toHaveLength(1);
     expect(payload.changes[0]!.path).toBe("a.ts");
     expect(payload.changes[0]!.inWorkspace).toBe(false);

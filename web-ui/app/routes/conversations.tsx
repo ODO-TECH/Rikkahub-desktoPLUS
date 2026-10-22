@@ -71,6 +71,9 @@ import {
   useConversationSubscription,
 } from "~/stores/conversation-stream";
 import { WorkbenchHost } from "~/components/workbench/workbench-host";
+import {
+  ConversationFilesLauncherProvider,
+} from "~/components/workbench/conversation-files-launcher";
 import { ContainerPlusMenu } from "~/components/workspace/container-plus-menu";
 import { ContainerTabBar } from "~/components/workspace/container-tab-bar";
 import { SidebarBrandRow } from "~/components/sidebar-brand";
@@ -2415,11 +2418,13 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
 
 function ConversationsPageInner() {
   const { t } = useTranslation("page");
+  // 面板标题的 workbench.* 在 common 命名空间;与顶部开关(WorkbenchToggle)取同一词条。
+  const { t: tCommon } = useTranslation();
   const navigate = useNavigate();
   const { id: routeId } = useParams();
   const isHomeRoute = !routeId;
   const isMobile = useIsMobile();
-  const { panel, closePanel } = useWorkbench();
+  const { panel, openPanel, closePanel } = useWorkbench();
 
   const { settings, assistants, currentAssistantId, currentAssistant } = useCurrentAssistant();
   const { conversations, activeId, setActiveId, loading, error, hasMore, loadMore, refreshList } =
@@ -2669,6 +2674,9 @@ function ConversationsPageInner() {
         break;
       case "searchConversations":
         break;
+      case "toggleFilesPanel":
+        toggleFilesPanel();
+        break;
     }
   };
 
@@ -2678,6 +2686,7 @@ function ConversationsPageInner() {
       "prevConversation",
       "nextConversation",
       "renameConversation",
+      "toggleFilesPanel",
     ];
     const offs = actions.map((action) =>
       onHotkeyAction(action, () => hotkeyHandlerRef.current(action)),
@@ -2712,6 +2721,19 @@ function ConversationsPageInner() {
     workspaceId: activeId ? undefined : workbenchWorkspaceId,
     workspaceName: workbenchWorkspace?.name,
   };
+  // Ctrl+Shift+E 与顶部开关同一语义:面板开着(任意类型)先关,否则按焦点会话→工作区→
+  // 空态打开文件面板。函数声明提升,快捷键分派处(上方)可以安全引用。
+  function toggleFilesPanel() {
+    if (panel) {
+      closePanel();
+      return;
+    }
+    openPanel({
+      type: "conversation-files",
+      title: workbenchWorkspace?.name ?? tCommon("workbench.files.title"),
+      payload: workbenchPanelContext,
+    });
+  }
   const workbenchPanelRef = React.useRef<PanelImperativeHandle | null>(null);
   // 工作台面板根节点:开合时给 flex-grow 挂 200ms 线性过渡,复刻左栏宽度动画。
   const workbenchPanelElementRef = React.useRef<HTMLDivElement | null>(null);
@@ -2969,26 +2991,29 @@ function ConversationsPageInner() {
       routeColumnOwner === null ||
       (routeColumnOwner.container === column.container &&
         routeColumnOwner.paneIndex === column.paneIndex);
+    const paneConversationId = focused && routeOwned ? activeId : column.pane.active;
     return (
-      <ConversationPaneView
-        container={column.container}
-        paneIndex={column.paneIndex}
-        focused={focused}
-        conversationId={focused && routeOwned ? activeId : column.pane.active}
-        isHomeRoute={isHomeRoute}
-        homeDraftId={homeDraftId}
-        setHomeDraftId={setHomeDraftId}
-        setActiveId={setActiveId}
-        navigate={navigate}
-        refreshList={refreshList}
-        settings={settings}
-        conversations={conversations}
-        activeWorkspace={workspaceOf(column.container)}
-        currentAssistantId={currentAssistantId}
-        currentAssistant={currentAssistant}
-        onRenameConversation={handleUpdateConversationTitle}
-        onFocusPane={handleFocusPane}
-      />
+      <ConversationFilesLauncherProvider conversationId={paneConversationId}>
+        <ConversationPaneView
+          container={column.container}
+          paneIndex={column.paneIndex}
+          focused={focused}
+          conversationId={paneConversationId}
+          isHomeRoute={isHomeRoute}
+          homeDraftId={homeDraftId}
+          setHomeDraftId={setHomeDraftId}
+          setActiveId={setActiveId}
+          navigate={navigate}
+          refreshList={refreshList}
+          settings={settings}
+          conversations={conversations}
+          activeWorkspace={workspaceOf(column.container)}
+          currentAssistantId={currentAssistantId}
+          currentAssistant={currentAssistant}
+          onRenameConversation={handleUpdateConversationTitle}
+          onFocusPane={handleFocusPane}
+        />
+      </ConversationFilesLauncherProvider>
     );
   };
 

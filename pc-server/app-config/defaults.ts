@@ -231,6 +231,7 @@ export function defaultSettings(): Settings {
       nextConversation: { keys: ["Alt", "Down"], enabled: true },
       renameConversation: { keys: ["F2"], enabled: true },
       searchConversations: { keys: ["Ctrl", "Shift", "F"], enabled: true },
+      toggleFilesPanel: { keys: ["Ctrl", "Shift", "E"], enabled: true },
       openSettings: { keys: ["Ctrl", ","], enabled: true },
       openImageGeneration: { keys: ["Ctrl", "I"], enabled: true },
       // 滚轮缩放:binding 固定为 Ctrl+Wheel,无法录制,只有 enabled 开关。

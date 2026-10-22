@@ -307,6 +307,7 @@ export type KeybindingAction =
   | "nextConversation"
   | "renameConversation"
   | "searchConversations"
+  | "toggleFilesPanel"
   | "openSettings"
   | "openImageGeneration"
   | "zoomInOut";

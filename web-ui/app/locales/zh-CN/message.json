@@ -147,7 +147,8 @@
     "video_load_failed": "加载视频失败：{{url}}",
     "open_video_in_new_window": "在新窗口打开视频",
     "audio_load_failed": "加载音频失败：{{url}}",
-    "open_audio_in_new_window": "在新窗口打开音频"
+    "open_audio_in_new_window": "在新窗口打开音频",
+    "open_in_sidebar": "在文件侧栏打开"
   },
   "workspace_tool": {
     "read": "读取文件",
@@ -162,6 +163,7 @@
     "bytes": "{{bytes}} 字节",
     "no_output": "（无输出）",
     "open_details": "查看详情",
+    "open_in_sidebar": "在文件侧栏打开",
     "patch": "补丁（unified diff）",
     "write_preview_more": "…其余 {{count}} 行见详情",
     "diff_empty": "无变更",

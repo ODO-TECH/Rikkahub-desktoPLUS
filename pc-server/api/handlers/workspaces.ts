@@ -4,7 +4,7 @@
 import type { Workspace } from "../../foundation/types";
 import type { WorkspaceDto } from "../../foundation/types/dto";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, trustWorkspace, updateWorkspace, workspaceStatus } from "../../workspace";
-import { deleteWorkspaceEntry, listWorkspaceDir, previewWorkspaceFile, readWorkspaceAgentsFile, readWorkspaceFileForEdit, renameWorkspaceEntry, revealWorkspaceEntry, WorkspaceFileConflictError, writeWorkspaceAgentsFile, writeWorkspaceTextFile } from "../../workspace/files";
+import { deleteWorkspaceEntry, listWorkspaceDir, previewWorkspaceFile, readWorkspaceAgentsFile, readWorkspaceFileForEdit, renameWorkspaceEntry, resolveWorkspacePdf, revealWorkspaceEntry, WorkspaceFileConflictError, writeWorkspaceAgentsFile, writeWorkspaceTextFile } from "../../workspace/files";
 import { mountedWorkspaceToolNames, refreshShellAvailability, shellAvailability } from "../../workspace/runtime";
 import { error, json, readJson } from "../request";
 
@@ -81,6 +81,17 @@ export async function handleWorkspaceRoutes(request: Request, _url: URL, path: s
           return json(await readWorkspaceFileForEdit(workspace, relPath));
         }
         return json({ preview: await previewWorkspaceFile(workspace, relPath) });
+      }
+      if (sub === "files/raw" && request.method === "GET") {
+        // 仅 PDF(领域层拒绝其它类型):iframe 内嵌需要 inline 的 application/pdf。
+        const fsPath = resolveWorkspacePdf(workspace, relPath);
+        return new Response(Bun.file(fsPath), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store",
+          },
+        });
       }
       if (sub === "files/content" && request.method === "PUT") {
         const body = await readJson<{ content?: string; baseEtag?: string | null; eol?: string | null }>(request);

@@ -26,6 +26,8 @@ export type WorkspaceFilePreview =
   | { kind: "binary"; size: number };
 
 const IMAGE_PREVIEW_LIMIT_BYTES = 10 * 1024 * 1024;
+// PDF 内嵌预览:Chromium/WebView2 自带阅读器。上限避免把超大 PDF 整个读进内存。
+const PDF_PREVIEW_LIMIT_BYTES = 50 * 1024 * 1024;
 
 /** rel 路径 → 边界内绝对路径。空串=root 本身。 */
 function resolveInside(workspace: Workspace, relPath: string): string {
@@ -116,6 +118,18 @@ export async function previewWorkspaceFile(workspace: Workspace, relPath: string
   const text = buffer.toString("utf-8");
   // 截断边界可能把多字节 UTF-8 字符切成两半,替换成 U+FFFD 而不是显示乱码残片。
   return { kind: "text", text: truncated ? text.replace(/\uFFFD+$/, "") : text, truncated, size: stats.size };
+}
+
+/** PDF 原始字节,供侧边栏 iframe 内嵌预览。只允许 .pdf——工作区里的 HTML/SVG 若以
+ *  应用同源直接内联,脚本就能拿到同源权限;HTML/SVG 预览走前端 sandbox iframe srcDoc。
+ *  边界断言复用 resolveInside(软链/盘符兄弟目录逃逸同样被抓)。 */
+export function resolveWorkspacePdf(workspace: Workspace, relPath: string): string {
+  if (!/\.pdf$/i.test(relPath)) throw new Error("Only PDF files can be previewed inline");
+  const fsPath = reservedNameSafeFsPath(resolveInside(workspace, relPath));
+  const stats = statSync(fsPath);
+  if (!stats.isFile()) throw new Error("Not a file");
+  if (stats.size > PDF_PREVIEW_LIMIT_BYTES) throw new Error("PDF is too large to preview");
+  return fsPath;
 }
 
 // ---- 侧边栏编辑(0.0.3 Feature A):编辑态读取 + etag 冲突保护的原子写 ----

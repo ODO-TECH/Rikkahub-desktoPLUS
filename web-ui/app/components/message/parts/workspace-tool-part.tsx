@@ -12,12 +12,14 @@ import {
   FileText,
   Loader2,
   Maximize2,
+  PanelRightOpen,
   SquareTerminal,
   X,
 } from "lucide-react";
 
 import { DetailDrawer } from "~/components/detail-drawer";
 import { DenyReasonDialog } from "~/components/message/deny-reason-dialog";
+import { useOpenConversationFile } from "~/components/workbench/conversation-files-launcher";
 import { Button } from "~/components/ui/button";
 import { CopyButton } from "~/components/ui/copy-button";
 import { HighlightedCode } from "~/components/markdown/code-block";
@@ -309,6 +311,28 @@ function OpenDetailsButton({ view }: { view: WorkspaceActionView }) {
   );
 }
 
+/** 深链入口(卡/步骤头部共用):write/edit 有目标路径时,右侧文件面板直接打开该文件。
+ *  与详情入口同形;路径是工具参数里的原始值,交给侧栏按会话 cwd 解析(与 changes 同口径)。 */
+function OpenInSidebarButton({ path }: { path: string }) {
+  const openInSidebar = useOpenConversationFile();
+  const { t } = useTranslation("message");
+  if (!openInSidebar || !path) return null;
+  return (
+    <span
+      role="button"
+      aria-label={t("workspace_tool.open_in_sidebar")}
+      title={t("workspace_tool.open_in_sidebar")}
+      onClick={(event) => {
+        event.stopPropagation();
+        openInSidebar({ path });
+      }}
+      className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors duration-150 hover:bg-muted hover:text-foreground"
+    >
+      <PanelRightOpen className="size-3" />
+    </span>
+  );
+}
+
 /** 耗时徽章(域3-1):与思维链"思考了 xx 秒"同一枚小字徽章,tabular-nums 防数字抖动。
  *  字体跟随上下文(消息内=对话字体);数值徽章刻意不用等宽——"xx 秒"是界面文字不是代码,
  *  tabular-nums 已保证数字列对齐,等宽反而与对话正文形成第二种观感(与工具卡标题同理)。 */
@@ -407,6 +431,7 @@ export function WorkspaceActionCard({
               exit {model.exitCode}
             </span>
           ) : null}
+          {model.kind !== "bash" ? <OpenInSidebarButton path={view.path} /> : null}
           <OpenDetailsButton view={view} />
           <ChevronDown
             className={cn(
@@ -486,6 +511,7 @@ export function WorkspaceActionStep({
         extra={
           <span className="flex shrink-0 items-center gap-2">
             <ActionStatBadges view={view} />
+            {model.kind !== "bash" ? <OpenInSidebarButton path={view.path} /> : null}
             <OpenDetailsButton view={view} />
           </span>
         }

@@ -25,6 +25,7 @@ import {
   baseName,
   formatSize,
   parentPath,
+  resolveWorkspaceFilePath,
   type ConversationFileItem,
   type ConversationFilesResponse,
   type FilePreview,
@@ -33,6 +34,13 @@ import {
   type WorkspaceFileEditInfo,
   type WorkspaceFileEntry,
 } from "./conversation-files-types";
+import {
+  clearFileDraft,
+  clearFileDraftsUnder,
+  countFileDrafts,
+  loadFileDraft,
+  saveFileDraft,
+} from "./conversation-file-drafts";
 import { FileSourceList } from "./file-source-list";
 import { FileTabs } from "./file-tabs";
 import { FileViewer } from "./file-viewer";
@@ -111,7 +119,10 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   const [pendingDiscard, setPendingDiscard] = React.useState<{ key: string; action: DiscardAction } | null>(null);
   const filesRef = React.useRef<OpenFileView[]>([]);
   filesRef.current = files;
-  const didOpenRef = React.useRef(false);
+  // 深链目标按 payload 对象身份消费:openPanel 每次都会换新 payload,借此区分
+  // “用户又点了一个附件/工具卡”与“会话文件清单刷新导致的重渲染”——后者不能
+  // 把用户从正在看的文件上拽走。
+  const consumedOpenRef = React.useRef<typeof open | null>(null);
 
   // 关闭面板守卫:有未保存草稿时不直接关,先弹确认(与关闭标签同一套文案)。
   React.useEffect(() => {
@@ -129,6 +140,20 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   const effectiveWorkspaceId = workspace?.id ?? workspaceId ?? null;
   const workspaceRoot = workspace?.root ?? "";
   const activeFile = files.find((item) => item.key === activeKey) ?? null;
+  // 未保存草稿的暂存作用域:面板会随会话切换卸载,草稿靠模块级 store 渡过去。
+  // 会话优先(同一工作区里不同会话的草稿互不串),纯工作区面板用 w: 前缀。
+  const draftScope = conversationId
+    ? `c:${conversationId}`
+    : effectiveWorkspaceId
+      ? `w:${effectiveWorkspaceId}`
+      : null;
+
+  // 切换会话再回来:标签已随卸载消失,但脏草稿还在暂存里;提示用户重新打开即可续编。
+  React.useEffect(() => {
+    if (!draftScope) return;
+    const count = countFileDrafts(draftScope);
+    if (count > 0) toast.info(t("workbench.files.drafts_kept", { count }));
+  }, [draftScope, t]);
 
   const updateFile = React.useCallback((key: string, patch: Partial<OpenFileView> | ((view: OpenFileView) => Partial<OpenFileView>)) => {
     setFiles((prev) => prev.map((view) => (view.key === key ? { ...view, ...(typeof patch === "function" ? patch(view) : patch) } : view)));
@@ -239,19 +264,65 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
     [effectiveWorkspaceId, t, updateFile],
   );
 
+  /** 进入编辑。若该文件有跨会话暂存的草稿,恢复它;磁盘在草稿之后又变过则亮冲突横幅
+   *  (savedText/etag 取最新磁盘值,保存走覆盖或重新加载,不会静默吞掉别人的修改)。 */
+  const startEdit = React.useCallback(
+    async (view: OpenFileView) => {
+      if (!effectiveWorkspaceId || !view.path) return;
+      try {
+        const res = await api.get<WorkspaceEditableContent>(
+          `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}&mode=edit`,
+        );
+        if (!res.edit.editable) {
+          if (draftScope) clearFileDraft(draftScope, view.path);
+          updateFile(view.key, { edit: res.edit, loading: false });
+          toast.info(editBlockedText(res.edit, t));
+          return;
+        }
+        const diskText = res.preview.kind === "text" ? res.preview.text : "";
+        const stored = draftScope ? loadFileDraft(draftScope, view.path) : null;
+        const restoring = stored !== null && stored.text !== diskText;
+        updateFile(view.key, {
+          preview: res.preview,
+          loading: false,
+          edit: res.edit,
+          draft: restoring ? stored.text : diskText,
+          savedText: diskText,
+          conflict: Boolean(restoring && stored.etag !== null && stored.etag !== res.edit.etag),
+          error: null,
+        });
+        if (draftScope) {
+          if (restoring) {
+            saveFileDraft(draftScope, view.path, { text: stored.text, savedText: diskText, etag: res.edit.etag });
+          } else {
+            clearFileDraft(draftScope, view.path);
+          }
+        }
+      } catch (err) {
+        updateFile(view.key, { loading: false, error: extractErrorMessage(err, t("workbench.files.failed")) });
+      }
+    },
+    [draftScope, effectiveWorkspaceId, t, updateFile],
+  );
+
   const openWorkspaceFile = React.useCallback(
     (relPath: string) => {
       const key = `ws:${relPath}`;
+      const existing = filesRef.current.find((item) => item.key === key);
       setFiles((prev) => (prev.some((item) => item.key === key) ? prev : [...prev, emptyView(key, baseName(relPath), relPath, "workspace")]));
       setActiveKey(key);
       setExpanded((prev) => new Set([...prev, ...ancestorDirs(relPath)]));
       for (const dir of ancestorDirs(relPath)) {
         if (tree[dir] === undefined) void loadDir(dir);
       }
-      const existing = filesRef.current.find((item) => item.key === key);
-      void fetchPreview(existing ?? emptyView(key, baseName(relPath), relPath, "workspace"));
+      // 已经开着的标签不重新读盘:否则从附件/工具卡再次深链同一文件时,正在编辑的
+      // 草稿会被一次 preview 刷新冲掉。刷新走工具栏的重新加载。
+      if (existing) return;
+      const view = emptyView(key, baseName(relPath), relPath, "workspace");
+      if (draftScope && loadFileDraft(draftScope, relPath)) void startEdit(view);
+      else void fetchPreview(view);
     },
-    [fetchPreview, loadDir, tree],
+    [draftScope, fetchPreview, loadDir, startEdit, tree],
   );
 
   const openMedia = React.useCallback((item: ConversationFileItem) => {
@@ -271,52 +342,35 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
     setSource(item.kind === "attachment" ? "attachments" : "outputs");
   }, []);
 
-  // 外部入口(从改动列表/消息跳转)只消费一次。
+  // 外部入口(从消息 chip / 工具卡 / 改动列表跳转):每个 open 目标消费一次。
+  // 面板已开着时再次深链会换新 payload → 新 open 身份 → 这里重新消费,
+  // 不会因为首次打开后的 didOpen 标记而失效。
   React.useEffect(() => {
-    if (didOpenRef.current) return;
-    if (open?.path && workspace) {
-      didOpenRef.current = true;
+    if (!open) return;
+    if (consumedOpenRef.current === open) return;
+    if (open.path) {
+      // 路径换算依赖清单里的 cwd/workspaceRoot(工具路径以会话 cwd 为基准),
+      // 首次还没拿到清单时先等,避免把 "src/a.ts" 当成工作区根相对路径。
+      if (!workspace || !conversationFiles) return;
+      consumedOpenRef.current = open;
+      const resolved = resolveWorkspaceFilePath(open.path, conversationFiles.cwd, conversationFiles.workspaceRoot);
+      if (resolved === null) {
+        toast.error(t("workbench.files.outside_workspace"));
+        return;
+      }
       setSource("files");
-      openWorkspaceFile(open.path);
+      openWorkspaceFile(resolved);
       return;
     }
-    if (open?.fileId !== undefined && conversationFiles) {
+    if (open.fileId !== undefined && conversationFiles) {
+      consumedOpenRef.current = open;
       const target = conversationFiles.files.find((item) => item.fileId === open.fileId);
-      if (target) {
-        didOpenRef.current = true;
-        openMedia(target);
-      }
+      if (target) openMedia(target);
+      else toast.info(t("workbench.files.deep_link_missing"));
     }
-  }, [conversationFiles, open, openMedia, openWorkspaceFile, workspace]);
+  }, [conversationFiles, open, openMedia, openWorkspaceFile, t, workspace]);
 
   // ── 编辑/保存 ────────────────────────────────────────────────
-  const startEdit = React.useCallback(
-    async (view: OpenFileView) => {
-      if (!effectiveWorkspaceId || !view.path) return;
-      try {
-        const res = await api.get<WorkspaceEditableContent>(
-          `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}&mode=edit`,
-        );
-        if (!res.edit.editable) {
-          updateFile(view.key, { edit: res.edit });
-          toast.info(editBlockedText(res.edit, t));
-          return;
-        }
-        updateFile(view.key, {
-          preview: res.preview,
-          edit: res.edit,
-          draft: res.preview.kind === "text" ? res.preview.text : "",
-          savedText: res.preview.kind === "text" ? res.preview.text : "",
-          conflict: false,
-          error: null,
-        });
-      } catch (err) {
-        updateFile(view.key, { error: extractErrorMessage(err, t("workbench.files.failed")) });
-      }
-    },
-    [effectiveWorkspaceId, t, updateFile],
-  );
-
   const saveFile = React.useCallback(
     async (key: string, options?: { force?: boolean }) => {
       const view = filesRef.current.find((item) => item.key === key);
@@ -344,6 +398,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
           saving: false,
           conflict: false,
         });
+        if (draftScope && view.path) clearFileDraft(draftScope, view.path);
         toast.success(t("workbench.files.saved"));
         reloadParentOf(view.path);
       } catch (err) {
@@ -355,8 +410,19 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         toast.error(extractErrorMessage(err, t("workbench.files.failed")));
       }
     },
-    [effectiveWorkspaceId, reloadParentOf, t, updateFile],
+    [draftScope, effectiveWorkspaceId, reloadParentOf, t, updateFile],
   );
+
+  /** 编辑区输入:同步组件 state 与跨会话暂存。回到原文等于放弃改动,直接清暂存。 */
+  const changeDraft = (view: OpenFileView, text: string) => {
+    updateFile(view.key, { draft: text });
+    if (!draftScope || !view.path) return;
+    if (text === view.savedText) {
+      clearFileDraft(draftScope, view.path);
+      return;
+    }
+    saveFileDraft(draftScope, view.path, { text, savedText: view.savedText, etag: view.edit?.etag ?? null });
+  };
 
   const isDirty = (view: OpenFileView) => view.draft !== null && view.draft !== view.savedText;
 
@@ -373,6 +439,8 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   const applyDiscard = async (key: string, action: DiscardAction) => {
     const view = filesRef.current.find((item) => item.key === key);
     if (!view) return;
+    // 明确放弃/关闭/重载:该文件的暂存草稿一并清掉,避免下次打开又"复活"旧改动。
+    if (draftScope && view.path) clearFileDraft(draftScope, view.path);
     if (action === "close-panel") {
       // 守卫已确认放弃草稿:force 关闭,避免再次触发守卫。
       workbench?.closePanel(true);
@@ -425,6 +493,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         .map((view) => view.key),
     );
     if (removed.size === 0) return;
+    if (draftScope) clearFileDraftsUnder(draftScope, relPath);
     setFiles((prev) => prev.filter((view) => !removed.has(view.key)));
     setActiveKey((current) => (current !== null && removed.has(current) ? null : current));
   };
@@ -600,7 +669,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
             workspaceId={effectiveWorkspaceId}
             onStartEdit={() => void startEdit(activeFile)}
             onCancelEdit={() => requestDiscard(activeFile.key, "cancel-edit")}
-            onDraftChange={(text) => updateFile(activeFile.key, { draft: text })}
+            onDraftChange={(text) => changeDraft(activeFile, text)}
             onSave={() => void saveFile(activeFile.key)}
             onReload={() => reloadFile(activeFile.key)}
             onOverwrite={() => void saveFile(activeFile.key, { force: true })}

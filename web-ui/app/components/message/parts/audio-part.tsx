@@ -1,8 +1,9 @@
 import * as React from "react";
-import { AudioLines, VolumeX } from "lucide-react";
+import { AudioLines, PanelRightOpen, VolumeX } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { resolveFileUrl } from "~/lib/files";
+import { useAttachmentSidebarTarget } from "./use-attachment-sidebar";
 
 interface AudioPartProps {
   url: string;
@@ -10,6 +11,7 @@ interface AudioPartProps {
 
 export function AudioPart({ url }: AudioPartProps) {
   const { t } = useTranslation("message");
+  const sidebar = useAttachmentSidebarTarget(url);
   const [error, setError] = React.useState(false);
 
   if (!url) return null;
@@ -34,15 +36,27 @@ export function AudioPart({ url }: AudioPartProps) {
         preload="metadata"
         src={audioUrl}
       />
-      <a
-        className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
-        href={audioUrl}
-        rel="noreferrer"
-        target="_blank"
-      >
-        <AudioLines className="h-3.5 w-3.5" />
-        {t("media_part.open_audio_in_new_window")}
-      </a>
+      <div className="flex items-center gap-3">
+        <a
+          className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
+          href={audioUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <AudioLines className="h-3.5 w-3.5" />
+          {t("media_part.open_audio_in_new_window")}
+        </a>
+        {sidebar.canOpen ? (
+          <button
+            type="button"
+            onClick={() => sidebar.open()}
+            className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
+          >
+            <PanelRightOpen className="h-3.5 w-3.5" />
+            {t("media_part.open_in_sidebar")}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

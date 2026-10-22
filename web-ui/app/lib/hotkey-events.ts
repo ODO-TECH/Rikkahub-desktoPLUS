@@ -12,7 +12,12 @@ import type { KeybindingAction } from "~/types/settings";
 /** 走事件总线的 action(需要组件上下文响应)。 */
 export type HotkeyBusAction = Extract<
   KeybindingAction,
-  "newConversation" | "prevConversation" | "nextConversation" | "renameConversation" | "searchConversations"
+  | "newConversation"
+  | "prevConversation"
+  | "nextConversation"
+  | "renameConversation"
+  | "searchConversations"
+  | "toggleFilesPanel"
 >;
 
 const HOTKEY_EVENT_PREFIX = "rikkahub:hotkey:";

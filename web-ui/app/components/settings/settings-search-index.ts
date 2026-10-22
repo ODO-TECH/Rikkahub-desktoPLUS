@@ -241,6 +241,7 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("personalization/shortcuts", "hotkeys.actions.nextConversation"),
   row("personalization/shortcuts", "hotkeys.actions.renameConversation"),
   row("personalization/shortcuts", "hotkeys.actions.searchConversations"),
+  row("personalization/shortcuts", "hotkeys.actions.toggleFilesPanel"),
   row("personalization/shortcuts", "hotkeys.actions.openSettings"),
   row("personalization/shortcuts", "hotkeys.actions.openImageGeneration"),
   row("personalization/shortcuts", "hotkeys.actions.zoomInOut"),

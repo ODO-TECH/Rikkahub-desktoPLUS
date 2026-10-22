@@ -70,6 +70,9 @@ export interface ConversationFilesResponse {
   files: ConversationFileItem[];
   changes: ConversationChangeItem[];
   workspaceId: string | null;
+  /** 工具路径的解析基准(会话 workspaceCwd)。 */
+  cwd: string;
+  workspaceRoot: string | null;
 }
 
 /** 查看器里打开的一个文件(工作区文件或会话媒体共用一个标签模型)。 */
@@ -128,4 +131,71 @@ export function ancestorDirs(path: string): string[] {
 
 export function isImageName(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(name);
+}
+
+/** 工作区 PDF 原文地址(后端仅对 .pdf 放行 inline)。调用方负责补 web-auth query。 */
+export function workspaceRawFileUrl(workspaceId: string, path: string): string {
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}`;
+}
+
+/** 工作区相对路径的子集判断/换算(深链用)。服务端 conversation-files 的
+ *  resolveToolPath 用真实路径做边界校验;这里只做展示层的字面量换算,
+ *  真正越界仍由后续 workspace 文件接口拒绝。 */
+
+function normalizeSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+/** 字面量归一化:折叠 `.`/`..` 与重复斜杠,统一盘符大写、保留大小写。 */
+export function normalizeAbsolutePath(value: string): string {
+  const normalized = normalizeSlashes(value).trim();
+  const drive = normalized.match(/^([A-Za-z]):/);
+  const rest = drive ? normalized.slice(2) : normalized;
+  const parts: string[] = [];
+  for (const part of rest.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  const joined = parts.join("/");
+  if (drive) return `${drive[1].toUpperCase()}:${joined ? `/${joined}` : "/"}`;
+  return `/${joined}`;
+}
+
+/**
+ * 把工具卡里的原始 path(相对 cwd 或绝对)换算成工作区根相对 posix 路径。
+ * 与后端 resolveToolPath 同口径:相对路径以 cwd 为基准,合法时返回相对路径;
+ * 无工作区、绝对路径落点越界或换算失败返回 null。
+ */
+export function resolveWorkspaceFilePath(
+  rawPath: string,
+  cwd: string | null | undefined,
+  workspaceRoot: string | null | undefined,
+): string | null {
+  const raw = rawPath.trim();
+  if (!raw || !workspaceRoot) return null;
+  const root = normalizeAbsolutePath(workspaceRoot).replace(/\/$/, "");
+  const isAbsoluteRaw = /^(?:[A-Za-z]:[\\/]|[\\/])/.test(raw);
+  const rawCwd = cwd && cwd.trim() ? cwd.trim() : workspaceRoot;
+  // workspaceCwd 契约上是绝对路径,但容错导入数据允许相对值(后端按工作区根解析)。
+  const base = /^(?:[A-Za-z]:[\\/]|[\\/])/.test(rawCwd)
+    ? rawCwd
+    : `${normalizeSlashes(workspaceRoot).replace(/\/$/, "")}/${normalizeSlashes(rawCwd)}`;
+  const absolute = normalizeAbsolutePath(
+    isAbsoluteRaw ? raw : `${normalizeSlashes(base).replace(/\/$/, "")}/${normalizeSlashes(raw)}`,
+  );
+  const lowerRoot = root.toLowerCase();
+  const lowerAbsolute = absolute.toLowerCase();
+  if (lowerAbsolute === lowerRoot) return "";
+  if (!lowerAbsolute.startsWith(`${lowerRoot}/`)) return null;
+  return absolute.slice(root.length + 1);
+}
+
+/** 从 /api/files/<id>/content 形式的 URL 提取库内文件 id;不是该形式返回 null。 */
+export function fileIdFromUrl(url: string): number | null {
+  const match = url.match(/\/api\/files\/(\d+)\/content/);
+  return match ? Number(match[1]) : null;
 }

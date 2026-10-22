@@ -1292,6 +1292,7 @@
       "nextConversation": "Next conversation",
       "renameConversation": "Rename current conversation",
       "searchConversations": "Search conversations",
+      "toggleFilesPanel": "Toggle file sidebar",
       "openSettings": "Open settings",
       "openImageGeneration": "Image generation",
       "zoomInOut": "Zoom in / out"

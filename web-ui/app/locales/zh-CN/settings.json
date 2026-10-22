@@ -1292,6 +1292,7 @@
       "nextConversation": "下一个会话",
       "renameConversation": "重命名当前会话",
       "searchConversations": "搜索对话",
+      "toggleFilesPanel": "打开 / 关闭文件侧栏",
       "openSettings": "打开设置",
       "openImageGeneration": "图像生成",
       "zoomInOut": "放大 / 缩小界面"

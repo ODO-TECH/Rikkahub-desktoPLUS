@@ -1,11 +1,14 @@
 import * as React from "react";
-import { CheckCircle2, Download, ImageOff, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { CheckCircle2, Download, ImageOff, LoaderCircle, PanelRightOpen, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "~/components/ui/dialog";
 import { resolveFileUrl } from "~/lib/files";
 import { fileExtensionFromMime } from "~/lib/image-download";
+
+import { useAttachmentSidebarTarget } from "./use-attachment-sidebar";
 
 interface ImagePartProps {
   url: string;
@@ -57,6 +60,8 @@ async function downloadImage(url: string) {
 }
 
 export function ImagePart({ url, metadata }: ImagePartProps) {
+  const { t } = useTranslation("message");
+  const sidebar = useAttachmentSidebarTarget(url);
   const [error, setError] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
@@ -109,12 +114,38 @@ export function ImagePart({ url, metadata }: ImagePartProps) {
             onError={() => setError(true)}
           />
         ) : null}
+        {sidebar.canOpen ? (
+          <button
+            type="button"
+            onClick={() => sidebar.open()}
+            aria-label={t("media_part.open_in_sidebar")}
+            title={t("media_part.open_in_sidebar")}
+            className="absolute right-2 top-2 z-10 flex size-7 items-center justify-center rounded-md border border-border/60 bg-background/85 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground"
+          >
+            <PanelRightOpen className="size-3.5" />
+          </button>
+        ) : null}
         <OcrStatus metadata={metadata} />
       </div>
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-h-[92vh] max-w-[92vw] border-0 bg-background/95 p-0 shadow-2xl">
           <DialogTitle className="sr-only">图片预览</DialogTitle>
           <div className="flex items-center justify-end gap-2 border-b px-3 py-2">
+            {sidebar.canOpen ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("media_part.open_in_sidebar")}
+                title={t("media_part.open_in_sidebar")}
+                onClick={() => {
+                  setPreviewOpen(false);
+                  sidebar.open();
+                }}
+              >
+                <PanelRightOpen className="size-4" />
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="ghost"

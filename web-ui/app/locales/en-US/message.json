@@ -147,7 +147,8 @@
     "video_load_failed": "Failed to load video: {{url}}",
     "open_video_in_new_window": "Open video in new window",
     "audio_load_failed": "Failed to load audio: {{url}}",
-    "open_audio_in_new_window": "Open audio in new window"
+    "open_audio_in_new_window": "Open audio in new window",
+    "open_in_sidebar": "Open in file sidebar"
   },
   "workspace_tool": {
     "read": "Read file",
@@ -162,6 +163,7 @@
     "bytes": "{{bytes}} bytes",
     "no_output": "(no output)",
     "open_details": "View details",
+    "open_in_sidebar": "Open in file sidebar",
     "patch": "Patch (unified diff)",
     "write_preview_more": "…{{count}} more lines in details",
     "diff_empty": "No changes",

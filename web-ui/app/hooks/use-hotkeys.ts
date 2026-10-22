@@ -37,6 +37,7 @@ const BUS_ACTIONS = new Set<KeybindingAction>([
   "nextConversation",
   "renameConversation",
   "searchConversations",
+  "toggleFilesPanel",
 ]);
 
 export function useHotkeys(): void {

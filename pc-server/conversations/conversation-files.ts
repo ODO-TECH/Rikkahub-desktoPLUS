@@ -61,6 +61,11 @@ export interface ConversationFilesPayload {
   files: ConversationFileItem[];
   changes: ConversationChangeItem[];
   workspaceId: string | null;
+  /** 工具路径的解析基准(会话 workspaceCwd,缺省工作区根)。深链把工具卡里的
+   *  原始 path 换算成工作区相对路径时用,和 changes.path 同一口径。 */
+  cwd: string;
+  /** 工作区根绝对路径;无工作区为 null。 */
+  workspaceRoot: string | null;
 }
 
 const FILE_URL_PATTERN = /\/api\/files\/(\d+)\/content/;
@@ -253,5 +258,7 @@ export function listConversationFiles(conversation: Conversation, workspace: Wor
     files: uniqueFiles,
     changes: [...changesByPath.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)),
     workspaceId: conversation.workspaceId ?? null,
+    cwd,
+    workspaceRoot: workspace?.root ?? null,
   };
 }
