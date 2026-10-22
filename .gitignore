@@ -3,6 +3,11 @@
 /pc-data/
 /dist/pc-data/
 /pc-server/pc-data/
+# 实机演示用的一次性档案（配 scripts/mock-nonchat-provider.ts 起独立实例，
+# 不碰上面的真实 pc-data）。里面只有 mock key，同样不入库。
+/demo-profiles/
+# 侧边栏「工作区」页签的演示工作区（本地托管目录），同样是一次性验收数据。
+/.dev-demo-ws/
 
 # 构建产物 —— 由 bun run build / compile / tauri build / desktop-shell\build.cmd 重新生成。
 /dist/
