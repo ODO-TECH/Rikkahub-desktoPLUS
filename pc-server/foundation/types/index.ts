@@ -9,11 +9,20 @@ export * from "./dto";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue | undefined };
 
+export type ModelType = "CHAT" | "IMAGE" | "EMBEDDING" | "RERANK";
+
+/** 不参与对话编码的「工具型」模型：出线路各自独立（/embeddings、/rerank），
+ *  永远不会被 chatModelId 选中，也不进移动端 settings.json（RERANK 见 backup/export.ts）。
+ *  运行期判定是纯函数，放 model-providers/embeddings.ts（本文件只放类型）。 */
+export type NonChatModelType = "EMBEDDING" | "RERANK";
+
 export interface Model {
   id: string;
   modelId: string;
   displayName: string;
-  type: "CHAT" | "IMAGE" | "EMBEDDING";
+  // RERANK 是 PC 独有档位：移动端 ModelType(kotlinx 枚举)只有 CHAT/IMAGE/EMBEDDING，
+  // 导出到安卓的 settings.json 由 backup/export.ts 整条剔除这类模型，pc-backup.json 原样保留。
+  type: ModelType;
   inputModalities: string[];
   outputModalities: string[];
   abilities: string[];

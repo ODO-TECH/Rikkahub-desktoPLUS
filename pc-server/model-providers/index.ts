@@ -619,8 +619,46 @@ export function providerTestModel(providerItem: Provider, selectedModel: string,
   );
 }
 
+/** 连通性检测的档位。前三个跑 chat/completions 系；后两个是工具型模型的独立线路。 */
+export type ProviderTestMode = "non_stream" | "stream" | "tools" | "embeddings" | "rerank";
+
+export const CHAT_TEST_MODES: ProviderTestMode[] = ["non_stream", "stream", "tools"];
+
+/** 所选模型的类型（大写、缺省 CHAT）。检测分流与前端展示共用这一份判定。 */
+export function providerTestModelType(
+  providerItem: Provider,
+  selectedModel: string,
+  fetchedModels: Model[] = [],
+): string {
+  return String(providerTestModel(providerItem, selectedModel, fetchedModels).type ?? "CHAT").toUpperCase();
+}
+
+/** 按模型类型决定跑哪些检测档位：嵌入/重排模型打 chat/completions 一定被上游 400，
+ *  测试会假红——它们各打自己那条线路（/embeddings、/rerank）一次极小真实请求。
+ *  IMAGE 不在此列：由前端走 dedicated 生图测试（settings/provider/test/image）。 */
+export function providerTestModesForType(type: unknown): ProviderTestMode[] {
+  const upper = String(type ?? "").toUpperCase();
+  if (upper === "EMBEDDING") return ["embeddings"];
+  if (upper === "RERANK") return ["rerank"];
+  return [...CHAT_TEST_MODES];
+}
+
+/** 档位 → 该档位属于哪类模型（前端据此决定显示三模式网格还是单条结果）。 */
+export function isNonChatTestMode(mode: string): boolean {
+  return mode === "embeddings" || mode === "rerank";
+}
+
 export function providerTestCorePassed(checks: Array<{ mode: string; ok: boolean }>) {
   const nonStream = checks.find((item) => item.mode === "non_stream");
   const stream = checks.find((item) => item.mode === "stream");
-  return nonStream?.ok === true || stream?.ok === true;
+  // 工具型供应商（只卖嵌入/重排）永远没有 chat 线路，它的 embeddings/rerank 探测
+  // 通过就是「这个供应商可用」的充分证据——不给盖章的话整页永远显示未验证。
+  const embeddings = checks.find((item) => item.mode === "embeddings");
+  const rerank = checks.find((item) => item.mode === "rerank");
+  return (
+    nonStream?.ok === true
+    || stream?.ok === true
+    || embeddings?.ok === true
+    || rerank?.ok === true
+  );
 }

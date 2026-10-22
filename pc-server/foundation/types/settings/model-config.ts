@@ -16,5 +16,10 @@ export interface ModelConfig {
   compressModelId: string;
   // 模型 ID,用于对话界面"优化提示词"按钮。空串 = 未配置(按钮会提示去设置页配置)。
   promptOptimizeModelId: string;
+  // 全局「嵌入 / 重排」场景档(PC 独有:APP Settings 无对应字段,导出时被 ignoreUnknownKeys 忽略)。
+  // 指向 provider.models 里 type === "EMBEDDING" / "RERANK" 的模型;空串 = 未配置。
+  // 语义检索类功能(记忆向量索引 / 召回重排)统一按这两档取模型,不再各自存一份设置。
+  embeddingModelId: string;
+  rerankModelId: string;
   assistantId: string;
 }

@@ -312,11 +312,23 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // 同「未填 key」。pc-backup(PC→PC)不剥,跨机恢复带上(免重登,与 apiKey 同策略)。
     if (Array.isArray(copy.providers)) {
       copy.providers = copy.providers.map((p: any) => {
-        if (!isRecord(p) || (p.authMode === undefined && p.oauth === undefined)) return p;
-        const stripped = { ...p };
-        delete stripped.authMode;
-        delete stripped.oauth;
-        return stripped;
+        if (!isRecord(p)) return p;
+        let stripped = p;
+        // 移动端 ModelType 是 kotlinx 严格枚举（CHAT/IMAGE/EMBEDDING，Model.kt:25），
+        // 未知值不是「忽略一个键」而是整份 settings 反序列化失败——重排档位是 PC 独有，
+        // 导出到安卓时整条剔除该模型（供应商行保留，其余模型与引用不受影响）。
+        // pc-backup.json（PC→PC）走的是未剥这份的副本，RERANK 模型跨机恢复原样保留。
+        if (Array.isArray(stripped.models)) {
+          const keptModels = stripped.models.filter(
+            (m: any) => !(isRecord(m) && String(m.type ?? "").toUpperCase() === "RERANK"),
+          );
+          if (keptModels.length !== stripped.models.length) stripped = { ...stripped, models: keptModels };
+        }
+        if (stripped.authMode === undefined && stripped.oauth === undefined) return stripped;
+        const next = { ...stripped };
+        delete next.authMode;
+        delete next.oauth;
+        return next;
       });
     }
     // 快速模型收敛:PC 内部统一用 fastModelId(对齐 APP)。导出前清掉 2.4.16 之前残留的
@@ -325,6 +337,9 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.titleModelId;
     delete copy.suggestionModelId;
     // Fix empty-string UUID fields — Android's Uuid deserializer rejects ""
+    // ⚠️ 只登记「安卓 Settings 里确实是 Uuid 字段」的键。embeddingModelId / rerankModelId
+    // （全局嵌入、重排场景档）与 promptOptimizeModelId 同属 PC-only 字符串键，APP 侧靠
+    // ignoreUnknownKeys 无视：误登记会把用户的「未设置」改写成一个随机 UUID。
     const uuidFields = ["chatModelId", "fastModelId", "translateModeId", "imageGenerationModelId", "ocrModelId", "compressModelId", "assistantId", "selectedTTSProviderId", "selectedASRProviderId"];
     for (const field of uuidFields) {
       if (field in copy && (copy[field] === "" || copy[field] === null || copy[field] === undefined)) {

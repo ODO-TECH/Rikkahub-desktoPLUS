@@ -243,3 +243,91 @@ describe("rewriteAndroidFileUrl(H-1 安卓 upload 引用改写)", () => {
     expect(out.count).toBe(3);
   });
 });
+
+describe("RERANK 档位不出 PC（移动端 ModelType 严格枚举保护）", () => {
+  const settingsWithModels = (types: string[]) => ({
+    providers: [
+      {
+        id: "silicon",
+        name: "硅基流动",
+        type: "openai",
+        models: types.map((type, index) => ({ id: `m${index}`, modelId: `m${index}`, displayName: `M${index}`, type })),
+      },
+    ],
+  });
+
+  test("to-android：重排模型整条剔除，聊天/嵌入/图像保留，供应商行本身不删", () => {
+    const out = rewriteAvatarsInSettings(
+      settingsWithModels(["CHAT", "EMBEDDING", "RERANK", "IMAGE", "rerank"]),
+      PC_AVATAR_TYPE_TO_ANDROID,
+      "to-android",
+    );
+    expect(out.providers[0].models.map((m: any) => m.type)).toEqual(["CHAT", "EMBEDDING", "IMAGE"]);
+    expect(out.providers[0].id).toBe("silicon");
+    expect(out.providers).toHaveLength(1);
+  });
+
+  test("to-android：没有重排模型时不复制供应商对象（引用与键序原样）", () => {
+    const src = settingsWithModels(["CHAT", "EMBEDDING"]);
+    const out = rewriteAvatarsInSettings(src, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(out.providers[0].models).toHaveLength(2);
+    expect(out.providers[0].models[0].type).toBe("CHAT");
+  });
+
+  test("to-pc 方向不剥：APP 传来的 settings 一律原样保留（两端对齐由导入侧负责）", () => {
+    const out = rewriteAvatarsInSettings(
+      settingsWithModels(["CHAT", "RERANK"]),
+      PC_AVATAR_TYPE_TO_ANDROID,
+      "to-pc",
+    );
+    expect(out.providers[0].models.map((m: any) => m.type)).toEqual(["CHAT", "RERANK"]);
+  });
+
+  test("剥重排与剥 OAuth 互不干扰：同一供应商两种剥除都生效", () => {
+    const out = rewriteAvatarsInSettings(
+      {
+        providers: [
+          {
+            id: "sub",
+            name: "订阅",
+            type: "claude",
+            authMode: "oauth",
+            oauth: { flow: "claude-code", credential: { refresh: "r" } },
+            models: [{ id: "m1", modelId: "k3", type: "CHAT" }, { id: "m2", modelId: "rerank-x", type: "RERANK" }],
+          },
+        ],
+      },
+      PC_AVATAR_TYPE_TO_ANDROID,
+      "to-android",
+    );
+    expect(out.providers[0].authMode).toBeUndefined();
+    expect(out.providers[0].oauth).toBeUndefined();
+    expect(out.providers[0].models.map((m: any) => m.id)).toEqual(["m1"]);
+  });
+});
+
+// 全局「嵌入 / 重排」场景档是 PC-only 字符串键（APP Settings 无对应字段，靠 ignoreUnknownKeys
+// 无视）。风险面不同于模型行：uuidFields 修复器会把空串改成随机 UUID，若误登记本键，
+// 移动端会收到一个指向不存在模型的“已配置”档位，PC 侧清空状态也会被备份往返改写。
+describe("PC-only 嵌入 / 重排场景档跨端透传", () => {
+  test("to-android：两键原样保留，空串不被 uuidFields 改写", () => {
+    const out = rewriteAvatarsInSettings(
+      { embeddingModelId: "", rerankModelId: "", promptOptimizeModelId: "" },
+      PC_AVATAR_TYPE_TO_ANDROID,
+      "to-android",
+    );
+    expect(out.embeddingModelId).toBe("");
+    expect(out.rerankModelId).toBe("");
+    expect(out.promptOptimizeModelId).toBe("");
+  });
+
+  test("to-android：已配置时传原值（移动端读不到，但 pc-backup 跨机恢复要保持）", () => {
+    const out = rewriteAvatarsInSettings(
+      { embeddingModelId: "emb-1", rerankModelId: "rerank-1" },
+      PC_AVATAR_TYPE_TO_ANDROID,
+      "to-android",
+    );
+    expect(out.embeddingModelId).toBe("emb-1");
+    expect(out.rerankModelId).toBe("rerank-1");
+  });
+});

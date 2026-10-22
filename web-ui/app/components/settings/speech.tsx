@@ -340,15 +340,12 @@ export function TtsSection({
                 active={provider.id === selectedId}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={reorderProviders}
-                actions={[
-                  // 系统语音是设备能力,不可复制/删除。
-                  ...(provider.type === "system"
+                actions={(provider.type === "system"
                     ? []
                     : [
                         copyRowAction(() => copyProviderById(provider.id)),
                         deleteRowAction(() => removeProviderById(provider.id)),
-                      ]),
-                ]}
+                      ])}
               >
                 <ProviderListItem
                   name={provider.name}

@@ -373,7 +373,7 @@ function McpServerEditor({
       ...clone(target),
       id: createId(),
       commonOptions: {
-        ...(sourceCommon ?? {}),
+        ...sourceCommon,
         name: copyItemName(mcpName(target, t("settings:mcp.server.default_name")), new Set(servers.map((item) => mcpName(item, t("settings:mcp.server.default_name"))))),
         oauth: null,
         connected: false,

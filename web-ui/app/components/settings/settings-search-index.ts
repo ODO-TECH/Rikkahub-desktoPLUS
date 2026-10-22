@@ -173,6 +173,8 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("models/scenes", "models.feature.compress.title"),
   row("models/scenes", "models.feature.ocr.title"),
   row("models/scenes", "models.feature.image.title"),
+  row("models/scenes", "models.feature.embedding.title", { keywords: "embedding" }),
+  row("models/scenes", "models.feature.rerank.title", { keywords: "rerank" }),
 
   // 网络
   row("network", "search.type"),

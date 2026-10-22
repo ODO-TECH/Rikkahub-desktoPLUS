@@ -8,7 +8,8 @@ import type { Assistant, Model, Provider } from "../foundation/types";
 import { state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { findAssistant } from "../assistants";
-import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerCustomHeaderRecords, providerTestCorePassed, providerTestModel, textBody } from "./index";
+import { applyCustomBody, jsonBody, modelsEndpointFor, normalizeFetchedModels, applyRequestHeaders, providerCustomHeaderRecords, providerTestCorePassed, providerTestModel, textBody, type ProviderTestMode } from "./index";
+import { describeNonChatProbe, nonChatEndpointFor, probeNonChatModel } from "./embeddings";
 import { applyShaping, bundledModelsFor, isOAuthProvider, oauthFlowFor, resolveProviderAuthForProvider } from "./auth";
 import { hostOfProvider } from "../inference-engine/message-builder";
 import { deltaReasoningContent, deltaTextContent, modelsDevCache, parseSseChunks, responseEventToDelta, upstreamHttpError } from "../inference-engine/providers";
@@ -465,6 +466,65 @@ export async function runProviderCheck(providerItem: Provider, mode: "non_stream
     endpoint: url,
     preview: textBody(text || (mode === "stream" && response.ok ? "流式测试已收到事件" : "")),
   };
+}
+
+/** 某一检测档位的实际端点——请求连不出去时（catch 分支）也要显示「本来会打到哪」。 */
+export function testEndpointFor(providerItem: Provider, mode: ProviderTestMode): string {
+  if (mode === "embeddings") return nonChatEndpointFor(providerItem, "EMBEDDING");
+  if (mode === "rerank") return nonChatEndpointFor(providerItem, "RERANK");
+  return endpointFor(providerItem);
+}
+
+/** 非聊天模型（EMBEDDING/RERANK）的检测档位：打一次极小真实请求，把结果折算成一行
+ *  人能读懂的话（维度 / 打分）。返回与 runProviderCheck 同形状，前端结果网格无需分支。
+ *  与聊天探测同纪律：只在用户主动点「测试」时发生，个位数 token，不构成静默消费。 */
+export async function runNonChatCheck(
+  providerItem: Provider,
+  mode: "embeddings" | "rerank",
+  selectedModel: string,
+  fetchedModels: Model[] = [],
+) {
+  const modelItem = providerTestModel(providerItem, selectedModel, fetchedModels);
+  const kind = mode === "embeddings" ? "EMBEDDING" : "RERANK";
+  const endpoint = nonChatEndpointFor(providerItem, kind);
+  const declaredType = String(modelItem.type ?? "CHAT").toUpperCase();
+  try {
+    const probe = await probeNonChatModel(providerItem, modelItem, kind);
+    return {
+      mode,
+      ok: true,
+      status: 200,
+      endpoint,
+      preview: describeNonChatProbe(probe),
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const status = Number((err as Error & { status?: number })?.status ?? 0);
+    return {
+      mode,
+      ok: false,
+      status,
+      endpoint,
+      preview:
+        declaredType !== kind
+          ? `该模型在供应商页登记为 ${declaredType}，但检测走的是 ${kind === "EMBEDDING" ? "/embeddings" : "/rerank"} 线路。\n${detail}`
+          : detail,
+    };
+  }
+}
+
+/** 连通性测试的唯一入口：按所选模型的类型自动分流到聊天三模式或工具型单模式。
+ *  调用方（api/handlers/settings.ts 的两条检测路由）不必各自再判一次类型。 */
+export async function runProviderCheckForModel(
+  providerItem: Provider,
+  mode: ProviderTestMode,
+  selectedModel: string,
+  fetchedModels: Model[] = [],
+) {
+  if (mode === "embeddings" || mode === "rerank") {
+    return runNonChatCheck(providerItem, mode, selectedModel, fetchedModels);
+  }
+  return runProviderCheck(providerItem, mode, selectedModel, fetchedModels);
 }
 
 /** 全面审查 R5-3:凭据/端点字段是否变更。变更即旧测试结论失效——settings/provider 保存

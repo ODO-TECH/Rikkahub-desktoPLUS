@@ -173,7 +173,9 @@ export interface McpServerConfig {
   [key: string]: unknown;
 }
 
-// 单源自服务端 Model.type("CHAT" | "IMAGE" | "EMBEDDING")。
+// 单源自服务端 Model.type("CHAT" | "IMAGE" | "EMBEDDING" | "RERANK")。
+// EMBEDDING 与 RERANK 都有真实出线路（pc-server/model-providers/embeddings.ts），
+// 会被模型检测打到；RERANK 是 PC 独有档位，导出到安卓时由 backup/export.ts 剔除。
 export type ModelType = ServerModel["type"];
 // PC keeps the wider Modality list (AUDIO/VIDEO/DOCUMENT) for forward-compat with providers
 // that already accept those — Android only has TEXT/IMAGE today but we don't want PC to ship

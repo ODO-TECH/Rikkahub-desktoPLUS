@@ -2,7 +2,7 @@
 // 格式切换换算。端点预览与服务端 model-providers/checks.ts 的 endpointFor 同款规则。
 
 import { createId } from "~/lib/id";
-import type { ProviderProfile } from "~/types";
+import type { ModelType, ProviderProfile } from "~/types";
 import { textValue } from "~/components/settings/shared";
 
 // API 格式切换的 base 换算(协议默认/出厂/登记三张表 + 机器地址判定 + 换算规则)独立在
@@ -13,11 +13,21 @@ import { type ProviderKind, baseUrlForKindSwitch } from "~/lib/provider-base-url
 // Best-effort model-type inference from model id; falls back to CHAT when nothing matches.
 // Used to pre-fill the per-model type selector when the user toggles a model on. Users can
 // always override in the model row (parity with Android, which makes this manual).
-export function inferModelType(modelId: string): "CHAT" | "IMAGE" | "EMBEDDING" {
+//
+// 判定顺序即优先级：rerank 先于 embedding。bge-reranker-v2-m3 / qwen3-rerank 这类名字里
+// 同时带 bge、m3 与 rerank，反过来写会把重排模型错标成嵌入模型（检测结果会打到
+// /embeddings，用户看到的是「模型能用」的假信号）。
+export function inferModelType(modelId: string): ModelType {
   const id = String(modelId ?? "").toLowerCase();
   if (!id) return "CHAT";
   if (
-    /(text-embedding|^embedding|-embed(ding)?|bge|e5|gte|m3-embedding|nomic-embed|jina-embed)/.test(
+    /(rerank|reranker|bge-rerank|jina-rerank|cohere-rerank|qwen3-rerank|mixed-?rerank|madrox-?rerank|readerlm)/.test(
+      id,
+    )
+  )
+    return "RERANK";
+  if (
+    /(text-embedding|^embedding|-embed(ding)?|bge|e5|gte|m3-embedding|nomic-embed|jina-embed|voyage-|vovk-large|gemini-embedding)/.test(
       id,
     )
   )

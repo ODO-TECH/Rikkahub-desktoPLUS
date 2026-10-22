@@ -1,5 +1,7 @@
-// components/settings/providers/test-panel.tsx — 供应商详情 › 测试:选模型 + 三模式连通性测试(聊天模型)
-// 或生图测试(IMAGE 模型)。按供应商 key 重挂载,切换供应商即清空上一个的测试结果。
+// components/settings/providers/test-panel.tsx — 供应商详情 › 测试:选模型 + 按模型类型分流的连通性测试。
+// 聊天模型跑三模式;IMAGE 模型走生图测试;EMBEDDING/RERANK 由服务端分流到 /embeddings、/rerank
+// 各打一次极小真实请求(与聊天探测送 "hello" 同纪律,只在用户主动点「测试」时发生)。
+// 按供应商 key 重挂载,切换供应商即清空上一个的测试结果。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -13,7 +15,15 @@ import api, { appendWebAuthQuery } from "~/services/api";
 import type { ProviderModel, ProviderProfile, Settings } from "~/types";
 import { SettingsGroup, SettingsRow, SettingsRows } from "~/components/settings/shared";
 
-type ProviderTestMode = "non_stream" | "stream" | "tools";
+/** 与服务端 model-providers/index.ts 的 ProviderTestMode 同集合。 */
+type ProviderTestMode = "non_stream" | "stream" | "tools" | "embeddings" | "rerank";
+
+const CHAT_MODES: ProviderTestMode[] = ["non_stream", "stream", "tools"];
+const NON_CHAT_MODES: ProviderTestMode[] = ["embeddings", "rerank"];
+
+function isNonChatType(type: string): boolean {
+  return type === "EMBEDDING" || type === "RERANK";
+}
 
 interface ProviderTestCheck {
   mode: ProviderTestMode;
@@ -82,10 +92,15 @@ export function ProviderTestPanel({
     return String(persisted?.type ?? merged?.type ?? "CHAT").toUpperCase();
   })();
   const isImageTestMode = effectiveTestModelType === "IMAGE";
+  const isNonChatTestMode = isNonChatType(effectiveTestModelType);
+  // 结果网格按类型给档位:工具型模型只显示它那一条,否则三格聊天档永远挂着「未测试」。
+  const gridModes = isNonChatTestMode ? NON_CHAT_MODES : CHAT_MODES;
   const testModeLabels: Record<ProviderTestMode, string> = {
     non_stream: t("settings:providers.mode_non_stream"),
     stream: t("settings:providers.mode_stream"),
     tools: t("settings:providers.mode_tools"),
+    embeddings: t("settings:providers.mode_embeddings"),
+    rerank: t("settings:providers.mode_rerank"),
   };
   const test = async () => {
     setTesting(true);
@@ -300,8 +315,9 @@ export function ProviderTestPanel({
                   : t("settings:providers.awaiting")}
             </div>
           </div>
-          <div className="grid gap-2 @xl:grid-cols-3">
-            {(["non_stream", "stream", "tools"] as ProviderTestMode[]).map((mode) => {
+          {/* 嵌入/重排只有一条线路,用单列;聊天三档才排三列。 */}
+          <div className={isNonChatTestMode ? "space-y-2" : "grid gap-2 @xl:grid-cols-3"}>
+            {gridModes.map((mode) => {
               const check = testChecks.find((item) => item.mode === mode);
               const pending = testing && !check;
               return (
@@ -334,6 +350,9 @@ export function ProviderTestPanel({
               );
             })}
           </div>
+          {isNonChatTestMode ? (
+            <div className="text-xs text-[var(--ds-text-secondary)]">{t("settings:providers.non_chat_test_note")}</div>
+          ) : null}
         </div>
       ) : null}
       {isImageTestMode && testing && !imageTestResult ? (

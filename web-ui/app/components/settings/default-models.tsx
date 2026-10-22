@@ -3,10 +3,12 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
+  ArrowDownWideNarrow,
   Bot,
   FileClock,
   FileImage,
   Globe,
+  Layers,
   NotebookText,
   RefreshCw,
   Settings2,
@@ -48,7 +50,9 @@ type ModelKey =
   | "imageGenerationModelId"
   | "ocrModelId"
   | "compressModelId"
-  | "promptOptimizeModelId";
+  | "promptOptimizeModelId"
+  | "embeddingModelId"
+  | "rerankModelId";
 
 /** 兜底档:未设置时自动跟随会话当前模型(提示词优化/翻译/上下文压缩)。快速模型是静默档
  *  (未设置=标题用首条消息文本、建议不生成),OCR/图像生成是报错档(未设置=功能不可用)。 */
@@ -152,9 +156,12 @@ export function DefaultModelsSection({
   const { t } = useTranslation();
   // 本页全是宿主引擎角色(默认聊天/标题/翻译/压缩/OCR…),仅工作区的订阅供应商
   // (Claude Pro/Max,chatCapable=false)不列——宿主闸门会拒绝,选了即陷阱。
+  // 同理排除嵌入/重排模型:它们只走 /embeddings、/rerank,发给 chat/completions 一定 400。
   const allModels = settings.providers.flatMap((provider) =>
     provider.enabled && provider.oauthStatus?.chatCapable !== false
-      ? (provider.models ?? []).map((model) => ({ ...model, providerName: provider.name }))
+      ? (provider.models ?? [])
+          .filter((model) => model.type !== "EMBEDDING" && model.type !== "RERANK")
+          .map((model) => ({ ...model, providerName: provider.name }))
       : [],
   );
   // Image generation models live on providers that don't necessarily pass the chat test
@@ -174,6 +181,18 @@ export function DefaultModelsSection({
         )
         .map((model) => ({ ...model, providerName: provider.name })),
     );
+  // 嵌入 / 重排是「按类型点名」的场景档:只列该类型且供应商已启用的模型。与 allModels 里
+  // 排除这两类的口径互为补集——聊天场景看不见它们,这里也看不见别的类型。
+  const modelsOfType = (type: "EMBEDDING" | "RERANK") =>
+    settings.providers
+      .filter((provider) => provider.enabled !== false)
+      .flatMap((provider) =>
+        (provider.models ?? [])
+          .filter((model) => model.type === type)
+          .map((model) => ({ ...model, providerName: provider.name })),
+      );
+  const embeddingModels = modelsOfType("EMBEDDING");
+  const rerankModels = modelsOfType("RERANK");
   type Draft = {
     chatModelId: string;
     fastModelId: string;
@@ -184,6 +203,8 @@ export function DefaultModelsSection({
     ocrModelId: string;
     compressModelId: string;
     promptOptimizeModelId: string;
+    embeddingModelId: string;
+    rerankModelId: string;
     promptOptimizePrompt: string;
     titlePrompt: string;
     translatePrompt: string;
@@ -208,6 +229,8 @@ export function DefaultModelsSection({
     ocrModelId: textValue(settings.ocrModelId),
     compressModelId: textValue(settings.compressModelId),
     promptOptimizeModelId: textValue(settings.promptOptimizeModelId),
+    embeddingModelId: textValue(settings.embeddingModelId),
+    rerankModelId: textValue(settings.rerankModelId),
     promptOptimizePrompt: textValue(settings.promptOptimizePrompt),
     titlePrompt: textValue(settings.titlePrompt),
     translatePrompt: textValue(settings.translatePrompt),
@@ -269,8 +292,19 @@ export function DefaultModelsSection({
     autosave.markDirty();
     setDraft((current) => ({ ...current, ...patch }));
   };
+  // 每个场景档位的候选模型集合:聊天类场景共用 allModels(已排除嵌入/重排),
+  // 图像/嵌入/重排各自按能力点名。抽成函数是为了让行渲染也能拿到候选数,
+  // 好在一个模型都没有时给出「去哪儿补」的提示。
+  const sceneOptions = (key: ModelKey) =>
+    key === "imageGenerationModelId"
+      ? imageModels
+      : key === "embeddingModelId"
+        ? embeddingModels
+        : key === "rerankModelId"
+          ? rerankModels
+          : allModels;
   const modelSelect = (key: ModelKey) => {
-    const options = key === "imageGenerationModelId" ? imageModels : allModels;
+    const options = sceneOptions(key);
     // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
     //   兜底档(优化/翻译/压缩)→ 跟随主模型;静默档(快速模型)→ 标题用首条消息文本、
     //   建议不生成;报错档(OCR/图像生成)→ 功能不可用,用时提示去配置。
@@ -357,6 +391,8 @@ export function DefaultModelsSection({
     icon: React.ComponentType<{ className?: string }>;
     title: string;
     description: string;
+    /** 有值 = 候选为空时在该行描述后补一句「去供应商页把模型类型标为 XX」。 */
+    emptyTypeLabelKey?: string;
   }> = [
     {
       modelKey: "chatModelId",
@@ -405,6 +441,20 @@ export function DefaultModelsSection({
       title: t("settings:models.feature.image.title"),
       description: t("settings:models.feature.image.desc"),
     },
+    {
+      modelKey: "embeddingModelId",
+      icon: Layers,
+      title: t("settings:models.feature.embedding.title"),
+      description: t("settings:models.feature.embedding.desc"),
+      emptyTypeLabelKey: "settings:model_edit.type_embedding",
+    },
+    {
+      modelKey: "rerankModelId",
+      icon: ArrowDownWideNarrow,
+      title: t("settings:models.feature.rerank.title"),
+      description: t("settings:models.feature.rerank.desc"),
+      emptyTypeLabelKey: "settings:model_edit.type_rerank",
+    },
   ];
   const activePrompt = activePromptKey ? promptMeta[activePromptKey] : null;
 
@@ -417,6 +467,13 @@ export function DefaultModelsSection({
         <SettingsRows className="mt-2">
           {features.map((feature) => {
             const Icon = feature.icon;
+            // 候选为空 = 该档位没人可选,下拉里只剩「未设置」,看着像坏了。补一句指向供应商页的提示。
+            const emptyHint =
+              feature.emptyTypeLabelKey && sceneOptions(feature.modelKey).length === 0 ? (
+                <span className="mt-1 block text-[var(--ds-text-secondary)]">
+                  {t("settings:models.scene_empty", { type: t(feature.emptyTypeLabelKey) })}
+                </span>
+              ) : null;
             return (
               <SettingsRow
                 key={feature.modelKey}
@@ -426,7 +483,12 @@ export function DefaultModelsSection({
                     {feature.title}
                   </span>
                 }
-                description={<span className="block pl-6">{feature.description}</span>}
+                description={
+                  <span className="block pl-6">
+                    {feature.description}
+                    {emptyHint}
+                  </span>
+                }
                 control={
                   <>
                     <div className="w-60">{modelSelect(feature.modelKey)}</div>

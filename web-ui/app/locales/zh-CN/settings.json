@@ -55,6 +55,8 @@
       "api_key": "密钥,令牌,key,token",
       "balance": "额度,余额,账户",
       "fast_model": "标题生成,建议",
+      "embedding": "嵌入,向量,向量化,embeddings,语义检索",
+      "rerank": "重排,二次排序,召回排序,rerank",
       "bypass": "直连,白名单,不走代理",
       "port": "端口,监听",
       "user_agent": "UA,浏览器标识",
@@ -290,6 +292,9 @@
     "mode_non_stream": "非流式",
     "mode_stream": "流式",
     "mode_tools": "工具调用",
+    "mode_embeddings": "嵌入 /embeddings",
+    "mode_rerank": "重排 /rerank",
+    "non_chat_test_note": "嵌入与重排不走 chat/completions，检测只会向对应端点发一次极小请求（一句文本 / 两条短文档），计费与聊天探测同量级。",
     "check_ok": "成功 · HTTP {{status}}",
     "check_failed": "失败 · {{status}}",
     "not_connected": "未连接",
@@ -668,6 +673,7 @@
     "not_set": "未设置",
     "not_set_fallback": "跟随主模型",
     "not_set_disabled": "未设置",
+    "scene_empty": "当前没有可选模型：先到「模型 › 供应商」把某个模型的类型标为「{{type}}」。",
     "autosave_failed": "自动保存默认模型失败",
     "edit_prompt": "编辑 Prompt",
     "variables_label": "变量：",
@@ -726,6 +732,14 @@
       "image": {
         "title": "图像生成",
         "desc": "用于支持具备图像生成能力的模型入口。未设置时无法生成图像。"
+      },
+      "embedding": {
+        "title": "嵌入模型",
+        "desc": "把文本编码成向量的全局档位，调用 /embeddings 端点。只列出已添加的嵌入类型模型。未设置时相关功能不可用。"
+      },
+      "rerank": {
+        "title": "重排模型",
+        "desc": "对检索候选二次排序的全局档位，调用 /rerank 端点。未设置时相关功能按原始分数排序。"
       }
     }
   },
@@ -1341,6 +1355,7 @@
     "type_chat": "聊天",
     "type_image": "图像生成",
     "type_embedding": "嵌入",
+    "type_rerank": "重排",
     "modality_text": "文本",
     "modality_image": "图像",
     "modality_audio": "音频",
@@ -1377,14 +1392,16 @@
     "display_name_hint": "仅 UI 展示用，不会发到上游。",
     "display_name_placeholder": "例如：GPT-4o Mini",
     "model_type": "模型类型",
-    "model_type_hint": "IMAGE 类型在测试图像端点会被作为默认模型挑选；EMBEDDING 目前未参与路由分发。",
+    "model_type_hint": "决定请求走哪条上游线路：聊天 → chat/completions，图像 → 生图接口，嵌入 → /embeddings，重排 → /rerank。",
     "input_modalities": "输入模态",
     "input_modalities_hint": "文本以外的模态今天仅作为元数据保存，不参与上游请求过滤。",
     "output_modalities": "输出模态",
     "output_modalities_hint": "勾选 IMAGE 后，OpenRouter 路径会在请求体里加 modalities=['image','text']。",
     "abilities": "能力",
     "not_chat_image": "图像生成模型不使用模态/能力字段。",
-    "not_chat_embedding": "嵌入模型不使用模态/能力字段。",
+    "not_chat_embedding": "嵌入模型不使用模态/能力字段，请求走 baseUrl + /embeddings。",
+    "not_chat_rerank": "重排模型不使用模态/能力字段，请求走 baseUrl + /rerank（Cohere 需 …/v2，SiliconFlow、Jina、Voyage 需 …/v1）。",
+    "non_chat_endpoint_hint": "端点路径不符合默认约定时，在「高级 › 供应商覆盖」里为该模型单独填完整 baseUrl。",
     "custom_headers": "自定义请求头",
     "custom_headers_hint": "会注入到所有走这个模型的上游请求里。",
     "add": "添加",

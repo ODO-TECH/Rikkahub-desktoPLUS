@@ -55,6 +55,8 @@
       "api_key": "secret,token,key",
       "balance": "quota,credit,account",
       "fast_model": "title generation,suggestion",
+      "embedding": "embedding,vectors,embeddings,semantic retrieval",
+      "rerank": "rerank,re-ranking,recall ordering",
       "bypass": "direct,whitelist,no proxy",
       "port": "port,listen",
       "user_agent": "UA,browser identifier",
@@ -290,6 +292,9 @@
     "mode_non_stream": "Non-streaming",
     "mode_stream": "Streaming",
     "mode_tools": "Tool calling",
+    "mode_embeddings": "Embeddings /embeddings",
+    "mode_rerank": "Rerank /rerank",
+    "non_chat_test_note": "Embedding and rerank models never touch chat/completions. The check sends one tiny request to the matching endpoint (a short sentence, or two short documents) — billed like the chat probe.",
     "check_ok": "Success · HTTP {{status}}",
     "check_failed": "Failed · {{status}}",
     "not_connected": "not connected",
@@ -668,6 +673,7 @@
     "not_set": "Not set",
     "not_set_fallback": "Follow primary model",
     "not_set_disabled": "Not set",
+    "scene_empty": "No models to choose from yet: first mark a model's type as “{{type}}” under Models › Providers.",
     "autosave_failed": "Failed to auto-save default models",
     "edit_prompt": "Edit prompt",
     "variables_label": "Variables: ",
@@ -726,6 +732,14 @@
       "image": {
         "title": "Image generation",
         "desc": "Entry point for models with image generation capability. Image generation is unavailable until a model is set."
+      },
+      "embedding": {
+        "title": "Embedding model",
+        "desc": "The global tier that encodes text into vectors via the /embeddings endpoint. Only models of the embedding type are listed. When unset, related features are unavailable."
+      },
+      "rerank": {
+        "title": "Rerank model",
+        "desc": "The global tier that re-scores retrieved candidates via the /rerank endpoint. When unset, results keep their original ranking."
       }
     }
   },
@@ -1341,6 +1355,7 @@
     "type_chat": "Chat",
     "type_image": "Image generation",
     "type_embedding": "Embedding",
+    "type_rerank": "Rerank",
     "modality_text": "Text",
     "modality_image": "Image",
     "modality_audio": "Audio",
@@ -1377,14 +1392,16 @@
     "display_name_hint": "UI display only. Never sent upstream.",
     "display_name_placeholder": "e.g. GPT-4o Mini",
     "model_type": "Model type",
-    "model_type_hint": "IMAGE models are picked as default in the image test endpoint; EMBEDDING is not routed yet.",
+    "model_type_hint": "Picks the upstream route: chat → chat/completions, image → image generation, embedding → /embeddings, rerank → /rerank.",
     "input_modalities": "Input modalities",
     "input_modalities_hint": "Modalities other than text are metadata only today; they do not filter upstream requests.",
     "output_modalities": "Output modalities",
     "output_modalities_hint": "With IMAGE checked, the OpenRouter path adds modalities=['image','text'] to the request body.",
     "abilities": "Abilities",
     "not_chat_image": "Image generation models do not use modality/ability fields.",
-    "not_chat_embedding": "Embedding models do not use modality/ability fields.",
+    "not_chat_embedding": "Embedding models do not use modality/ability fields; requests go to baseUrl + /embeddings.",
+    "not_chat_rerank": "Rerank models do not use modality/ability fields; requests go to baseUrl + /rerank (Cohere needs …/v2, SiliconFlow, Jina and Voyage need …/v1).",
+    "non_chat_endpoint_hint": "If the provider's path does not follow the default convention, set a full baseUrl for this model under Advanced › Provider override.",
     "custom_headers": "Custom headers",
     "custom_headers_hint": "Injected into every upstream request that uses this model.",
     "add": "Add",

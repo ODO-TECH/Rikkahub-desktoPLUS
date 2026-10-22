@@ -45,7 +45,8 @@ import { DEFAULT_COMPRESS_PROMPT, DEFAULT_OCR_PROMPT, DEFAULT_PROMPT_OPTIMIZE_PR
 import { PI_COMPACTION_PROMPT } from "../../pi-engine/compaction-prompt-text";
 import { updateSettings } from "../../app-config";
 import { markProviderTestResult, providerAuthChanged } from "../../model-providers/checks";
-import { endpointFor, fetchProviderBalance, fetchProviderModels, runProviderCheck } from "../../model-providers/checks";
+import { endpointFor, fetchProviderBalance, fetchProviderModels, runProviderCheckForModel, testEndpointFor } from "../../model-providers/checks";
+import { providerTestModelType, providerTestModesForType } from "../../model-providers";
 import { cancelLogin, currentLoginEvent, loginInProgress, logoutProvider, resumePrompt, startLogin } from "../../model-providers/auth";
 
 // 全面审查 R5-4:MCP 服务器写操作按 id 串行化。detail/sync 在 await 网络同步(秒级)
@@ -912,6 +913,10 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       ocrModelId: String(body.ocrModelId ?? state.settings.ocrModelId),
       compressModelId: String(body.compressModelId ?? state.settings.compressModelId),
       promptOptimizeModelId: String(body.promptOptimizeModelId ?? state.settings.promptOptimizeModelId ?? ""),
+      // 全局嵌入 / 重排场景档:与其余模型档一样按字段合并、写入侧不校验(与 OCR/图像生成同口径,
+      // 失效 id 由读取方 modelExists + 类型判定兜底)。空串 = 未配置。
+      embeddingModelId: String(body.embeddingModelId ?? state.settings.embeddingModelId ?? ""),
+      rerankModelId: String(body.rerankModelId ?? state.settings.rerankModelId ?? ""),
       promptOptimizePrompt: String(body.promptOptimizePrompt ?? state.settings.promptOptimizePrompt ?? DEFAULT_PROMPT_OPTIMIZE_PROMPT),
       titlePrompt: String(body.titlePrompt ?? state.settings.titlePrompt ?? DEFAULT_TITLE_PROMPT),
       translatePrompt: String(body.translatePrompt ?? state.settings.translatePrompt ?? DEFAULT_TRANSLATION_PROMPT),
@@ -1105,12 +1110,14 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       const result = await fetchProviderModels(providerItem);
       const selectedModel = firstProviderModel(providerItem, body.modelId, result.models);
       const checks = [];
-      for (const mode of ["non_stream", "stream", "tools"] as const) {
-        checks.push(await runProviderCheck(providerItem, mode, selectedModel, result.models).catch((err) => ({
+      // 按所选模型类型分流：嵌入/重排模型打 chat/completions 一定 400（假红），各打自己线路一次。
+      const modes = providerTestModesForType(providerTestModelType(providerItem, selectedModel, result.models));
+      for (const mode of modes) {
+        checks.push(await runProviderCheckForModel(providerItem, mode, selectedModel, result.models).catch((err) => ({
           mode,
           ok: false,
           status: 0,
-          endpoint: endpointFor(providerItem),
+          endpoint: testEndpointFor(providerItem, mode),
           preview: friendlyRequestError(err, state.settings.proxyConfig),
         })));
       }
@@ -1177,13 +1184,23 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
             preview: result.preview,
           });
           const checks = [];
-          for (const mode of ["non_stream", "stream", "tools"] as const) {
-            send("progress", { message: `正在测试 ${mode}...` });
-            const check = await runProviderCheck(providerItem, mode, selectedModel, result.models).catch((err) => ({
+          // 与同步检测路由同分流：嵌入/重排模型只打自己那条线路一次极小真实请求。
+          const testType = providerTestModelType(providerItem, selectedModel, result.models);
+          const modes = providerTestModesForType(testType);
+          for (const mode of modes) {
+            send("progress", {
+              message:
+                mode === "embeddings"
+                  ? "正在向 /embeddings 发送一次极小检测请求…"
+                  : mode === "rerank"
+                    ? "正在向 /rerank 发送一次极小检测请求…"
+                    : `正在测试 ${mode}...`,
+            });
+            const check = await runProviderCheckForModel(providerItem, mode, selectedModel, result.models).catch((err) => ({
               mode,
               ok: false,
               status: 0,
-              endpoint: endpointFor(providerItem),
+              endpoint: testEndpointFor(providerItem, mode),
               preview: friendlyRequestError(err, state.settings.proxyConfig),
             }));
             checks.push(check);

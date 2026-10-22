@@ -24,6 +24,7 @@ import {
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { inferModelType } from "~/components/settings/providers/common";
 import { cn } from "~/lib/utils";
 import { confirmDialog } from "~/stores/confirm-store";
 import type {
@@ -38,13 +39,15 @@ import type {
   ProviderOverwrite,
 } from "~/types/settings";
 
-// Mirrors Android's ModelType segmented selector (CHAT/IMAGE/EMBEDDING). Server-side audit
-// (pc-server, api/handlers/settings.ts + model-providers) only routes "IMAGE" today — "EMBEDDING" is declared but unused.
-// We surface it anyway because Android has it and the upstream JSON schema accepts it.
+// 四档模型类型。CHAT/IMAGE/EMBEDDING 与安卓 ModelType 同名同义；RERANK 是 PC 独有档位
+// （安卓枚举里没有，导出到移动端时由 pc-server/backup/export.ts 整条剔除，备份不会因此导入失败）。
+// EMBEDDING 与 RERANK 都不是「声明了但没路」：请求体与响应解析在
+// pc-server/model-providers/embeddings.ts（/embeddings、/rerank），模型检测会实打实调一次。
 const TYPE_OPTIONS: { value: ModelType; labelKey: string }[] = [
   { value: "CHAT", labelKey: "model_edit.type_chat" },
   { value: "IMAGE", labelKey: "model_edit.type_image" },
   { value: "EMBEDDING", labelKey: "model_edit.type_embedding" },
+  { value: "RERANK", labelKey: "model_edit.type_rerank" },
 ];
 
 // Android only has TEXT/IMAGE today; PC kept the wider list because some providers
@@ -171,6 +174,10 @@ export function ModelEditDialog({
   // displayName 是否被用户手动编辑过(add 模式的预填跟随开关):一旦触碰永久停止跟随
   // modelId 输入的预填,后续改 modelId 绝不覆盖用户输入的任何字符。
   const [displayNameDirty, setDisplayNameDirty] = React.useState(false);
+  // 同理管住「模型类型」的自动识别:add 模式下用户没点过类型时,类型跟着 modelId 的启发式走
+  // (输入 bge-m3 落嵌入、bge-reranker 落重排),避免存成一个「类型=聊天、上游只有
+  // /embeddings」的死模型(检测必红)。用户手动点过一次即永久尊重,编辑已有模型也不重判。
+  const [typeDirty, setTypeDirty] = React.useState(false);
 
   // Reset draft whenever the dialog opens with a new model — critical for the "click row → edit"
   // flow where the same dialog instance is reused across many different models.
@@ -186,6 +193,7 @@ export function ModelEditDialog({
         customBodies: toArray<CustomBody>(initialModel.customBodies),
       });
       setDisplayNameDirty((initialModel.displayName ?? "").trim().length > 0);
+      setTypeDirty((initialModel.type ?? "CHAT") !== "CHAT");
       setTab(TAB_BASIC);
       setError(null);
     }
@@ -193,11 +201,18 @@ export function ModelEditDialog({
 
   const update = <K extends keyof ProviderModel>(key: K, value: ProviderModel[K]) => {
     if (key === "displayName") setDisplayNameDirty(true);
+    if (key === "type") setTypeDirty(true);
     // add 模式的预填跟随:用户没动过名字框时,modelId 每次输入都把启发式规整名同步进
     // 名字框(所见即所得,保存的即规整名);用户一旦动手,跟随即永久关闭。
-    if (key === "modelId" && mode === "add" && !displayNameDirty) {
+    // 类型同一条规则(见 typeDirty):没手点过就跟着 id 的启发式落档,手点过就只认用户的。
+    if (key === "modelId" && mode === "add") {
       const suggested = prettifyModelId(String(value ?? ""));
-      setDraft((current) => ({ ...current, modelId: String(value), displayName: suggested }));
+      setDraft((current) => ({
+        ...current,
+        modelId: String(value),
+        displayName: displayNameDirty ? current.displayName : suggested,
+        type: typeDirty ? current.type : inferModelType(String(value)),
+      }));
       return;
     }
     setDraft((current) => ({ ...current, [key]: value }));
@@ -475,9 +490,17 @@ function BasicTab({
         </>
       ) : (
         <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-          {draft.type === "IMAGE"
-            ? t("model_edit.not_chat_image")
-            : t("model_edit.not_chat_embedding")}
+          <div>
+            {draft.type === "IMAGE"
+              ? t("model_edit.not_chat_image")
+              : draft.type === "RERANK"
+                ? t("model_edit.not_chat_rerank")
+                : t("model_edit.not_chat_embedding")}
+          </div>
+          {/* 嵌入/重排的端点路径是拼出来的，供应商前缀不标准时给一条能自己修的路。 */}
+          {draft.type === "EMBEDDING" || draft.type === "RERANK" ? (
+            <div className="mt-1">{t("model_edit.non_chat_endpoint_hint")}</div>
+          ) : null}
         </div>
       )}
     </div>

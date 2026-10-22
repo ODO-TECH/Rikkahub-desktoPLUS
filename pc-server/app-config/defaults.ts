@@ -99,6 +99,10 @@ export function defaultSettings(): Settings {
     ocrModelId: "",
     compressModelId: DEFAULT_AUTO_MODEL_ID,
     promptOptimizeModelId: "",
+    // 全局嵌入 / 重排场景档:默认未配置(空串),由用户在「设置 › 模型 › 场景模型」里
+    // 从已添加的 EMBEDDING / RERANK 模型中选。两者都是「报错档」语义:没选 = 相关功能不可用。
+    embeddingModelId: "",
+    rerankModelId: "",
     promptOptimizePrompt: DEFAULT_PROMPT_OPTIMIZE_PROMPT,
     titlePrompt: DEFAULT_TITLE_PROMPT,
     translatePrompt: DEFAULT_TRANSLATION_PROMPT,

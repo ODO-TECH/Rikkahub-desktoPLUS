@@ -14,7 +14,7 @@ import { ModelEditDialog } from "~/components/model-edit-dialog";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
 import { cn } from "~/lib/utils";
-import type { ProviderModel, ProviderProfile } from "~/types";
+import type { ModelType, ProviderModel, ProviderProfile } from "~/types";
 import { SettingsEmpty, SettingsGroup } from "~/components/settings/shared";
 import { applyAutoModelType } from "~/components/settings/providers/common";
 
@@ -129,7 +129,7 @@ export function ProviderModelList({
     visibleModels.length > 0 && visibleModels.every((model) => selectedModelIds.has(model.modelId));
   const toggleModel = (model: ProviderModel, checked: boolean) => {
     const models = checked
-      ? // Auto-fill type for newly enabled models (CHAT/IMAGE/EMBEDDING) — user can override per-row.
+      ? // Auto-fill type for newly enabled models (CHAT/IMAGE/EMBEDDING/RERANK) — user can override per-row.
         [...(draft.models ?? []), applyAutoModelType(model)].filter(
           (item, index, arr) => arr.findIndex((x) => x.modelId === item.modelId) === index,
         )
@@ -316,7 +316,7 @@ export function ProviderModelList({
                 (item) => item.modelId === model.modelId,
               );
               const currentType =
-                (persisted?.type as "CHAT" | "IMAGE" | "EMBEDDING" | undefined) ?? "CHAT";
+                (persisted?.type as ModelType | undefined) ?? "CHAT";
               const currentAbilities = Array.isArray(persisted?.abilities)
                 ? persisted!.abilities
                 : [];

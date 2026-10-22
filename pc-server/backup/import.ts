@@ -762,6 +762,10 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         workspaceLastPermissionPreset: pc.workspaceLastPermissionPreset,
         promptOptimizeModelId: pc.promptOptimizeModelId,
         promptOptimizePrompt: pc.promptOptimizePrompt,
+        // 全局嵌入 / 重排场景档同为 PC-only(APP Settings 无此字段):`...app` 里没有这两个键,
+        // 不显式保 PC 就会被 normalizeState 重置成未配置,用户选好的模型在导入一次手机备份后就没了。
+        embeddingModelId: pc.embeddingModelId,
+        rerankModelId: pc.rerankModelId,
         // keybindings 是 PC-only 字段(APP 无对应),导入时必须保 PC 自定义,否则被 normalizeState 重置为默认。
         keybindings: pc.keybindings,
         // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState

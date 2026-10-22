@@ -127,7 +127,14 @@ export function mapKelivoProvider(
     const created = model(modelId, kelivoText(override.name) || modelId);
     return {
       ...created,
-      type: typeName === "embedding" ? "EMBEDDING" as const : typeName === "image" ? "IMAGE" as const : "CHAT" as const,
+      // rerank 档位是 PC 独有（Kelivo 的 ModelType 只有 chat/embedding/image，未知值它会
+      // 退回 chat）。这里认出 "rerank" 是为了 PC→Kelivo→PC 往返不把重排模型洗成聊天模型；
+      // 同一 modelId 若在 PC 已存在，上面的 prior 分支会直接保留原类型，不依赖这里。
+      type:
+        typeName === "embedding" ? ("EMBEDDING" as const)
+        : typeName === "image" ? ("IMAGE" as const)
+        : typeName === "rerank" ? ("RERANK" as const)
+        : ("CHAT" as const),
       inputModalities: modalities("input")?.length ? modalities("input")! : created.inputModalities,
       outputModalities: modalities("output")?.length ? modalities("output")! : created.outputModalities,
       abilities: abilities.length ? abilities : created.abilities,
