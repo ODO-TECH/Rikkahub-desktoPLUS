@@ -12,7 +12,7 @@ import { friendlyRequestError } from "../../foundation/net";
 import { state } from "../../persistence/json-store";
 import { getConversationsDb } from "../../conversations";
 import { countConversations } from "../../conversations/read-queries";
-import { createSettingsBackupZipToPath } from "../../backup/export";
+import { createSettingsBackupZipToPath, resolveBackupScope } from "../../backup/export";
 import { applyAndroidZipBackupFromPath, applyBackupPayload, buildImportWarnings, customJsImportWarning, customJsScriptSignatures } from "../../backup/import";
 import { normalizeKelivoSyncOptions } from "../../backup/kelivo/options";
 import { createKelivoBackupIfEnabled, kelivoExportEnabled, kelivoSiblingPath } from "../../backup/kelivo/service";
@@ -395,7 +395,7 @@ export async function handleDataRoutes(request: Request, url: URL, path: string)
     // 就位(同盘原子,覆盖语义与保存对话框的覆盖确认一致);失败清部件,不留半个 zip。
     const partPath = join(targetDir, `.${basename(targetPath)}.part-${Math.random().toString(36).slice(2, 8)}`);
     try {
-      const { size, warnings } = createSettingsBackupZipToPath(partPath, undefined, state.settings.backupScope);
+      const { size, warnings } = createSettingsBackupZipToPath(partPath, undefined, resolveBackupScope(state.settings));
       renameSync(partPath, targetPath);
       let kelivoFileName: string | null = null;
       let kelivoSize: number | null = null;
@@ -470,7 +470,7 @@ export async function handleDataRoutes(request: Request, url: URL, path: string)
     mkdirSync(tmpRoot, { recursive: true });
     const zipPath = join(tmpRoot, exportFileName);
     try {
-      const { size, warnings } = createSettingsBackupZipToPath(zipPath, undefined, state.settings.backupScope);
+      const { size, warnings } = createSettingsBackupZipToPath(zipPath, undefined, resolveBackupScope(state.settings));
       // Stream the file as the response body — Bun handles the file-to-stream conversion
       // without buffering. We can't auto-delete the temp dir mid-stream, so register a
       // delayed cleanup; if the user cancels mid-download Bun closes the stream and the

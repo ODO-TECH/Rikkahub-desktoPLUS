@@ -40,12 +40,20 @@ export function BackupSection({
   const { t } = useTranslation();
   const importInputRef = React.useRef<HTMLInputElement>(null);
   // 长任务状态在模块级 store(见 backup-task-store):切到别的页再回来,进度与禁用态仍在。
-  const { exporting, importing, importPhase, importProgress, exportLoaded: exportedBytes, exportTotal: exportTotalBytes } =
-    useBackupTaskStore();
-  const exportProgress = exportTotalBytes > 0 ? Math.round((exportedBytes / exportTotalBytes) * 100) : 0;
+  const {
+    exporting,
+    importing,
+    importPhase,
+    importProgress,
+    exportLoaded: exportedBytes,
+    exportTotal: exportTotalBytes,
+  } = useBackupTaskStore();
+  const exportProgress =
+    exportTotalBytes > 0 ? Math.round((exportedBytes / exportTotalBytes) * 100) : 0;
   const [schemaStatus, setSchemaStatus] = useSchemaStatus();
   // 远端备份不含对话的提示徽标:只在 APP端适配卡启用且确认未注册时出现(未知态不画)。
-  const chatUnsyncable = ANDROID_COMPAT_CARD_ENABLED && schemaStatus != null && !schemaStatus.hasAndroidSchema;
+  const chatUnsyncable =
+    ANDROID_COMPAT_CARD_ENABLED && schemaStatus != null && !schemaStatus.hasAndroidSchema;
 
   // 导出前确认走全局 confirmDialog:它挂在 root、z 序在设置模态之上。此前手写的
   // fixed 遮罩渲染在模态 DialogContent 内部,而 DialogContent 带 transform(成为 fixed 的
@@ -68,7 +76,9 @@ export function BackupSection({
       description: withSchema
         ? t("settings:data.export_with_schema", { count: status?.conversationCount ?? 0 })
         : t("settings:data.export_without_schema"),
-      confirmLabel: withSchema ? t("settings:data.confirm_export") : t("settings:data.export_no_chat"),
+      confirmLabel: withSchema
+        ? t("settings:data.confirm_export")
+        : t("settings:data.export_no_chat"),
     });
     if (confirmed) await doExport();
   };
@@ -82,7 +92,13 @@ export function BackupSection({
     try {
       const { save } = await import("@tauri-apps/plugin-dialog");
       // 建议名与服务端 GET 流程同构(时间戳仅为对话框预填,最终名以用户输入为准)。
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/T/, "_").replace(/Z$/, "").replace(/-/g, "").slice(0, 15);
+      const stamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .replace(/T/, "_")
+        .replace(/Z$/, "")
+        .replace(/-/g, "")
+        .slice(0, 15);
       target = await save({
         defaultPath: `rikkahub-backup-${stamp}.zip`,
         filters: [{ name: "Zip", extensions: ["zip"] }],
@@ -100,16 +116,25 @@ export function BackupSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetPath: target }),
       });
-      const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; fileName?: string; kelivoFileName?: string | null; warnings?: string[]; error?: string }
-        | null;
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        fileName?: string;
+        kelivoFileName?: string | null;
+        warnings?: string[];
+        error?: string;
+      } | null;
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || t("settings:data.export_http_error", { status: res.status }));
+        throw new Error(
+          data?.error || t("settings:data.export_http_error", { status: res.status }),
+        );
       }
       toast.dismiss(prepToast);
       // 成功文案展示用户选择的完整路径(比 GET 流程的"文件名+去下载目录找"更明确)。
       if (data.kelivoFileName) {
-        toast.success(t("settings:data.export_done_kelivo", { name: target, kelivo: data.kelivoFileName }), { duration: 10000 });
+        toast.success(
+          t("settings:data.export_done_kelivo", { name: target, kelivo: data.kelivoFileName }),
+          { duration: 10000 },
+        );
       } else {
         toast.success(t("settings:data.export_done", { name: target }), { duration: 8000 });
       }
@@ -125,32 +150,36 @@ export function BackupSection({
   /** 浏览器端的第二份下载：Kelivo 兼容归档。失败不影响主备份（已落盘）。 */
   const downloadKelivoCompanion = async () => {
     try {
-      const result: { blob: Blob; fileName: string; warnings: string[] } = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", appendWebAuthQuery("/api/data/export/kelivo"));
-        xhr.responseType = "blob";
-        xhr.onerror = () => reject(new Error(t("settings:data.export_network_error")));
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            let warnings: string[] = [];
-            const warningsHeader = xhr.getResponseHeader("X-Export-Warnings");
-            if (warningsHeader) {
-              try {
-                const parsed = JSON.parse(warningsHeader);
-                if (Array.isArray(parsed)) warnings = parsed.map((w) => String(w));
-              } catch { /* ignore */ }
+      const result: { blob: Blob; fileName: string; warnings: string[] } = await new Promise(
+        (resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("GET", appendWebAuthQuery("/api/data/export/kelivo"));
+          xhr.responseType = "blob";
+          xhr.onerror = () => reject(new Error(t("settings:data.export_network_error")));
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              let warnings: string[] = [];
+              const warningsHeader = xhr.getResponseHeader("X-Export-Warnings");
+              if (warningsHeader) {
+                try {
+                  const parsed = JSON.parse(warningsHeader);
+                  if (Array.isArray(parsed)) warnings = parsed.map((w) => String(w));
+                } catch {
+                  /* ignore */
+                }
+              }
+              resolve({
+                blob: xhr.response as Blob,
+                fileName: xhr.getResponseHeader("X-Export-Filename") || "kelivo-backup.zip",
+                warnings,
+              });
+            } else {
+              reject(new Error(t("settings:data.export_http_error", { status: xhr.status })));
             }
-            resolve({
-              blob: xhr.response as Blob,
-              fileName: xhr.getResponseHeader("X-Export-Filename") || "kelivo-backup.zip",
-              warnings,
-            });
-          } else {
-            reject(new Error(t("settings:data.export_http_error", { status: xhr.status })));
-          }
-        };
-        xhr.send();
-      });
+          };
+          xhr.send();
+        },
+      );
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement("a");
       link.href = url;
@@ -159,10 +188,14 @@ export function BackupSection({
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      toast.success(t("settings:data.kelivo_export_done", { name: result.fileName }), { duration: 8000 });
+      toast.success(t("settings:data.kelivo_export_done", { name: result.fileName }), {
+        duration: 8000,
+      });
       for (const warning of result.warnings) toast.warning(warning, { duration: 12000 });
     } catch (error) {
-      toast.warning(error instanceof Error ? error.message : t("settings:data.kelivo_export_failed"));
+      toast.warning(
+        error instanceof Error ? error.message : t("settings:data.kelivo_export_failed"),
+      );
     }
   };
 
@@ -178,45 +211,47 @@ export function BackupSection({
       // progress bar — Bun's response carries a Content-Length so the browser knows the
       // total up front. ky/fetch don't expose download progress without a custom
       // ReadableStream consumer; XHR is simpler and well-supported by Tauri's webview.
-      const result: { blob: Blob; fileName: string; warnings: string[] } = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", appendWebAuthQuery("/api/data/export"));
-        xhr.responseType = "blob";
-        xhr.onprogress = (ev) => {
-          if (ev.lengthComputable && ev.total > 0) {
-            patchBackupTask({ exportTotal: ev.total, exportLoaded: ev.loaded });
-          } else {
-            // Server didn't send Content-Length (shouldn't happen with our endpoint, but be
-            // defensive). At least bump the byte counter so the user sees something moving.
-            patchBackupTask({ exportLoaded: ev.loaded });
-          }
-        };
-        xhr.onerror = () => reject(new Error(t("settings:data.export_network_error")));
-        xhr.onabort = () => reject(new Error(t("settings:data.export_cancelled")));
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            // X-Export-Filename is set by the server with the canonical zip filename, so we
-            // don't have to recompute the timestamp on the client (and risk it drifting).
-            const headerName = xhr.getResponseHeader("X-Export-Filename") || "";
-            // B4-①:关键降级项(安卓库失败/附件缺失)随 header 透出,逐条解析成可读文案。
-            let warnings: string[] = [];
-            const warningsHeader = xhr.getResponseHeader("X-Export-Warnings");
-            if (warningsHeader) {
-              try {
-                const parsed = JSON.parse(warningsHeader);
-                if (Array.isArray(parsed)) warnings = parsed.map((w) => String(w));
-              } catch {
-                warnings = [];
-              }
+      const result: { blob: Blob; fileName: string; warnings: string[] } = await new Promise(
+        (resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("GET", appendWebAuthQuery("/api/data/export"));
+          xhr.responseType = "blob";
+          xhr.onprogress = (ev) => {
+            if (ev.lengthComputable && ev.total > 0) {
+              patchBackupTask({ exportTotal: ev.total, exportLoaded: ev.loaded });
+            } else {
+              // Server didn't send Content-Length (shouldn't happen with our endpoint, but be
+              // defensive). At least bump the byte counter so the user sees something moving.
+              patchBackupTask({ exportLoaded: ev.loaded });
             }
-            const fallback = `rikkahub-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
-            resolve({ blob: xhr.response as Blob, fileName: headerName || fallback, warnings });
-          } else {
-            reject(new Error(t("settings:data.export_http_error", { status: xhr.status })));
-          }
-        };
-        xhr.send();
-      });
+          };
+          xhr.onerror = () => reject(new Error(t("settings:data.export_network_error")));
+          xhr.onabort = () => reject(new Error(t("settings:data.export_cancelled")));
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              // X-Export-Filename is set by the server with the canonical zip filename, so we
+              // don't have to recompute the timestamp on the client (and risk it drifting).
+              const headerName = xhr.getResponseHeader("X-Export-Filename") || "";
+              // B4-①:关键降级项(安卓库失败/附件缺失)随 header 透出,逐条解析成可读文案。
+              let warnings: string[] = [];
+              const warningsHeader = xhr.getResponseHeader("X-Export-Warnings");
+              if (warningsHeader) {
+                try {
+                  const parsed = JSON.parse(warningsHeader);
+                  if (Array.isArray(parsed)) warnings = parsed.map((w) => String(w));
+                } catch {
+                  warnings = [];
+                }
+              }
+              const fallback = `rikkahub-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.zip`;
+              resolve({ blob: xhr.response as Blob, fileName: headerName || fallback, warnings });
+            } else {
+              reject(new Error(t("settings:data.export_http_error", { status: xhr.status })));
+            }
+          };
+          xhr.send();
+        },
+      );
 
       // Hand off the blob to a hidden <a download> click; the browser writes it to its
       // default Downloads folder. We can't get the real filesystem path back from the
@@ -238,7 +273,7 @@ export function BackupSection({
       for (const warning of result.warnings) {
         toast.warning(warning, { duration: 12000 });
       }
-      if (settings.exportKelivoBackup !== false) {
+      if (settings.exportKelivoBackup === true) {
         await downloadKelivoCompanion();
       }
     } catch (error) {
@@ -296,7 +331,7 @@ export function BackupSection({
           if (xhr.status >= 200 && xhr.status < 300) {
             try {
               resolve(JSON.parse(xhr.responseText));
-            } catch (err) {
+            } catch {
               reject(new Error("Invalid server response"));
             }
           } else {
@@ -352,71 +387,79 @@ export function BackupSection({
         <AndroidCompatCard schemaStatus={schemaStatus} onSchemaStatus={setSchemaStatus} />
       ) : null}
       <SettingsStack>
-      {/* 同步选项是整页的第一块:先定「打包什么」,再看存储与本地/云端操作。 */}
-      <SyncOptionsCard settings={settings} />
-      <StorageOverviewCard />
-      <SettingsGroup
-        title={t("settings:data.backup_title")}
-        description={t("settings:data.backup_desc")}
-      >
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            variant="tertiary"
-            size="compact"
-            onClick={() => void handleExportClick()}
-            disabled={exporting || importing}
-          >
-            {exporting ? <Loader2 className="animate-spin" /> : <Download />}
-            {t("settings:data.export_backup")}
-          </Button>
-          <Button
-            variant="tertiary"
-            size="compact"
-            onClick={() => importInputRef.current?.click()}
-            disabled={importing || exporting}
-          >
-            {importing ? <Loader2 className="animate-spin" /> : <Upload />}
-            {t("settings:data.import_backup")}
-          </Button>
-          <input
-            ref={importInputRef}
-            className="sr-only"
-            type="file"
-            accept="application/json,.json,application/zip,.zip"
-            onChange={(event) => void importData(event)}
-          />
-        </div>
-        {exporting ? (
-          <BackupProgress
-            label={exportTotalBytes > 0 ? t("settings:data.downloading") : t("settings:data.preparing_file")}
-            detail={
-              exportTotalBytes > 0
-                ? t("settings:data.progress_mb", {
-                    loaded: (exportedBytes / (1024 * 1024)).toFixed(1),
-                    total: (exportTotalBytes / (1024 * 1024)).toFixed(1),
-                    percent: exportProgress,
-                  })
-                : undefined
-            }
-            percent={exportTotalBytes > 0 ? exportProgress : null}
-            hint={exportTotalBytes === 0 ? t("settings:data.pack_slow") : undefined}
-          />
-        ) : null}
-        {importing ? (
-          <BackupProgress
-            label={
-              importPhase === "uploading"
-                ? t("settings:data.uploading")
-                : importPhase === "processing"
-                  ? t("settings:data.extracting")
-                  : t("settings:data.preparing")
-            }
-            detail={importPhase === "uploading" ? t("settings:data.progress_percent", { percent: importProgress }) : undefined}
-            percent={importPhase === "uploading" ? importProgress : null}
-            hint={importPhase === "processing" ? t("settings:data.extract_slow") : undefined}
-          />
-        ) : null}
-      </SettingsGroup>
+        {/* 同步选项是整页的第一块:先定「打包什么」,再看存储与本地/云端操作。 */}
+        <SyncOptionsCard settings={settings} />
+        <StorageOverviewCard />
+        <SettingsGroup
+          title={t("settings:data.backup_title")}
+          description={t("settings:data.backup_desc")}
+        >
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="tertiary"
+              size="compact"
+              onClick={() => void handleExportClick()}
+              disabled={exporting || importing}
+            >
+              {exporting ? <Loader2 className="animate-spin" /> : <Download />}
+              {t("settings:data.export_backup")}
+            </Button>
+            <Button
+              variant="tertiary"
+              size="compact"
+              onClick={() => importInputRef.current?.click()}
+              disabled={importing || exporting}
+            >
+              {importing ? <Loader2 className="animate-spin" /> : <Upload />}
+              {t("settings:data.import_backup")}
+            </Button>
+            <input
+              ref={importInputRef}
+              className="sr-only"
+              type="file"
+              accept="application/json,.json,application/zip,.zip"
+              onChange={(event) => void importData(event)}
+            />
+          </div>
+          {exporting ? (
+            <BackupProgress
+              label={
+                exportTotalBytes > 0
+                  ? t("settings:data.downloading")
+                  : t("settings:data.preparing_file")
+              }
+              detail={
+                exportTotalBytes > 0
+                  ? t("settings:data.progress_mb", {
+                      loaded: (exportedBytes / (1024 * 1024)).toFixed(1),
+                      total: (exportTotalBytes / (1024 * 1024)).toFixed(1),
+                      percent: exportProgress,
+                    })
+                  : undefined
+              }
+              percent={exportTotalBytes > 0 ? exportProgress : null}
+              hint={exportTotalBytes === 0 ? t("settings:data.pack_slow") : undefined}
+            />
+          ) : null}
+          {importing ? (
+            <BackupProgress
+              label={
+                importPhase === "uploading"
+                  ? t("settings:data.uploading")
+                  : importPhase === "processing"
+                    ? t("settings:data.extracting")
+                    : t("settings:data.preparing")
+              }
+              detail={
+                importPhase === "uploading"
+                  ? t("settings:data.progress_percent", { percent: importProgress })
+                  : undefined
+              }
+              percent={importPhase === "uploading" ? importProgress : null}
+              hint={importPhase === "processing" ? t("settings:data.extract_slow") : undefined}
+            />
+          ) : null}
+        </SettingsGroup>
         {/* 本地与云端之间:Kelivo 导入属于"拿一份外部备份进来",与本地导入同组,
             排在 WebDAV/S3 之前,导完再决定要不要往云上传。 */}
         <KelivoSyncCard settings={settings} />
@@ -453,7 +496,12 @@ function RestoreReport({ report }: { report: Settings["lastRestoreReport"] }) {
     <Notice
       tone="warning"
       action={
-        <Button size="compact" variant="tertiary" disabled={dismissing} onClick={() => void dismiss()}>
+        <Button
+          size="compact"
+          variant="tertiary"
+          disabled={dismissing}
+          onClick={() => void dismiss()}
+        >
           {t("settings:data.restore_report_dismiss")}
         </Button>
       }
@@ -466,7 +514,11 @@ function RestoreReport({ report }: { report: Settings["lastRestoreReport"] }) {
           <li>{t("settings:data.restore_report_db_error", { error: report.dbReadError })}</li>
         ) : null}
         {report.messageNodesUnreadable > 0 ? (
-          <li>{t("settings:data.restore_report_nodes_skipped", { count: report.messageNodesUnreadable })}</li>
+          <li>
+            {t("settings:data.restore_report_nodes_skipped", {
+              count: report.messageNodesUnreadable,
+            })}
+          </li>
         ) : null}
         {report.filesDeduped > 0 ? (
           <li className="text-[var(--ds-text-secondary)]">

@@ -1,12 +1,12 @@
-// backup/kelivo/service.ts — 导出侧的开关与文件命名。Kelivo 兼容备份默认开启，
-// 用户可在数据管理页关闭；关闭后本地与云备份都不再生成第二份归档。
+// backup/kelivo/service.ts — 导出侧的开关与文件命名。Kelivo 兼容备份默认关闭（与「全部
+// 数据」完整备份不对齐）；用户开启后只能按细项导出，关闭后本地与云备份都不再生成第二份归档。
 
 import { basename, dirname, join } from "node:path";
 import { state } from "../../persistence/json-store";
 import { createKelivoBackupZipToPath, type KelivoExportResult } from "./encode";
 
 export function kelivoExportEnabled(): boolean {
-  return state.settings.exportKelivoBackup !== false;
+  return state.settings.exportKelivoBackup === true;
 }
 
 /** 主备份旁边的 Kelivo 归档名：rikkahub-backup-X.zip → kelivo-backup-X.zip；

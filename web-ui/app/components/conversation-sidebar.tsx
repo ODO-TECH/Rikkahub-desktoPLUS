@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   Check,
   CheckSquare,
+  Copy,
   Images,
   Languages,
   Moon,
@@ -25,7 +26,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { SettingsLink } from "~/components/settings/settings-link";
 import { useTranslation } from "react-i18next";
 
@@ -71,6 +72,13 @@ import {
 } from "~/components/ui/sidebar";
 import { UIAvatar } from "~/components/ui/ui-avatar";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "~/components/ui/context-menu";
+import {
   useTheme,
   type ColorTheme,
   type CustomThemeCss,
@@ -78,12 +86,15 @@ import {
 } from "~/components/theme-provider";
 import { ConversationSearchButton } from "~/components/conversation-search-button";
 import { CustomThemeDialog } from "~/components/custom-theme-dialog";
+import { useAssistantActions } from "~/hooks/use-assistant-actions";
+import { isDesktopViewport } from "~/hooks/use-mobile";
 import { getAssistantDisplayName } from "~/lib/display";
 import { cn } from "~/lib/utils";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { clearWebAuthToken } from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
 import { useConversationEngineStatus } from "~/stores/conversation-store";
+import { openSettingsDialog } from "~/stores/settings-dialog-store";
 import api from "~/services/api";
 import type { AssistantAvatar, AssistantProfile, AssistantTag, ConversationListDto } from "~/types";
 
@@ -634,6 +645,11 @@ export const ConversationSidebar = React.memo(
     webAuthEnabled = false,
   }: ConversationSidebarProps) => {
     const { t, i18n } = useTranslation();
+    const navigate = useNavigate();
+    // 右键菜单触发的「编辑」:先关选择器,等它的关闭焦点归还结束时再开设置——
+    // 否则选择器卸下时把焦点还给侧栏触发钮,会和刚打开的设置模态抢焦点。
+    const [pendingSettingsSearch, setPendingSettingsSearch] = React.useState<string | null>(null);
+    const { startCopyAssistant, removeAssistantById, copyDialog } = useAssistantActions();
     const {
       colorTheme,
       setColorTheme,
@@ -761,6 +777,21 @@ export const ConversationSidebar = React.memo(
       },
       [currentAssistantId, onAssistantChange],
     );
+
+    // 「编辑」= 设置 → 助手,并选中这一位。桌面走设置模态(留在当前页),窄屏走
+    // /settings 整页——与 SettingsLink 同一套承载判断。
+    const openAssistantSettings = React.useCallback((assistantId: string) => {
+      setPendingSettingsSearch(`?section=assistants&assistantId=${encodeURIComponent(assistantId)}`);
+      setPickerOpen(false);
+    }, []);
+
+    const openPendingSettings = React.useCallback(() => {
+      if (!pendingSettingsSearch) return;
+      const search = pendingSettingsSearch;
+      setPendingSettingsSearch(null);
+      if (isDesktopViewport()) openSettingsDialog(search);
+      else navigate(`/settings${search}`);
+    }, [navigate, pendingSettingsSearch]);
 
     const handleBackToTop = React.useCallback(() => {
       const scrollContainer = document.getElementById("conversationScrollTarget");
@@ -1128,7 +1159,15 @@ export const ConversationSidebar = React.memo(
                 )}
               </SidebarMenuButton>
             </DialogTrigger>
-            <DialogContent className="max-h-[80svh] max-w-xl overflow-hidden p-0">
+            <DialogContent
+              className="max-h-[80svh] max-w-xl overflow-hidden p-0"
+              // 菜单「编辑」的交接点:接管焦点归还,关掉选择器的同一个事件里打开设置。
+              onCloseAutoFocus={(event) => {
+                if (!pendingSettingsSearch) return;
+                event.preventDefault();
+                openPendingSettings();
+              }}
+            >
               <DialogHeader className="border-b px-6 py-4">
                 <DialogTitle>{t("conversation_sidebar.select_assistant")}</DialogTitle>
               </DialogHeader>
@@ -1165,27 +1204,62 @@ export const ConversationSidebar = React.memo(
                       const switching = switchingAssistantId === assistant.id;
                       const displayName = getAssistantDisplayName(assistant.name);
                       return (
-                        <button
-                          key={assistant.id}
-                          type="button"
-                          className="flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition hover:bg-muted"
-                          onClick={() => void handleAssistantSelect(assistant.id)}
-                          disabled={switchingAssistantId !== null}
-                        >
-                          <UIAvatar size="sm" name={displayName} avatar={assistant.avatar} />
-                          <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
-                          {selected && !switching && (
-                            <Badge variant="secondary" className="gap-1">
-                              <Check className="size-3" />
-                              {t("conversation_sidebar.current")}
-                            </Badge>
-                          )}
-                          {switching && (
-                            <Badge variant="secondary" className="text-xs">
-                              {t("conversation_sidebar.switching")}
-                            </Badge>
-                          )}
-                        </button>
+                        <ContextMenu key={assistant.id}>
+                          <ContextMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition hover:bg-muted"
+                              onClick={() => void handleAssistantSelect(assistant.id)}
+                              disabled={switchingAssistantId !== null}
+                            >
+                              <UIAvatar size="sm" name={displayName} avatar={assistant.avatar} />
+                              <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
+                              {selected && !switching && (
+                                <Badge variant="secondary" className="gap-1">
+                                  <Check className="size-3" />
+                                  {t("conversation_sidebar.current")}
+                                </Badge>
+                              )}
+                              {switching && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {t("conversation_sidebar.switching")}
+                                </Badge>
+                              )}
+                            </button>
+                          </ContextMenuTrigger>
+                          {/* 右键条目操作:编辑去设置页改配置,复制/删除与设置页共用
+                              同一套记忆感知确认(见 use-assistant-actions)。只剩一个
+                              助手时不给删除——与设置页列表同口径。 */}
+                          <ContextMenuContent className="min-w-40">
+                            <ContextMenuItem
+                              disabled={switchingAssistantId !== null}
+                              onSelect={() => openAssistantSettings(assistant.id)}
+                            >
+                              <Pencil className="size-4" />
+                              {t("conversation_sidebar.assistant_edit")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={switchingAssistantId !== null}
+                              onSelect={() => void startCopyAssistant(assistant.id)}
+                            >
+                              <Copy className="size-4" />
+                              {t("conversation_sidebar.assistant_copy")}
+                            </ContextMenuItem>
+                            {assistants.length > 1 && (
+                              <>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  variant="destructive"
+                                  disabled={switchingAssistantId !== null}
+                                  onSelect={() => void removeAssistantById(assistant.id)}
+                                >
+                                  <Trash2 className="size-4" />
+                                  {t("conversation_sidebar.assistant_delete")}
+                                </ContextMenuItem>
+                              </>
+                            )}
+                          </ContextMenuContent>
+                        </ContextMenu>
                       );
                     })}
                     {filteredAssistants.length === 0 && (
@@ -1198,6 +1272,9 @@ export const ConversationSidebar = React.memo(
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* 复制助手时「同时复制记忆」的询问框(与设置页同一份)。 */}
+          {copyDialog}
 
           <CustomThemeDialog
             open={themeEditor.open}

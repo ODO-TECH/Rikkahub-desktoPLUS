@@ -68,7 +68,12 @@ async function toolPartLines(part: ToolPart): Promise<string[]> {
         lines.push(out.text);
         lines.push("```");
       } else if (out.type === "reasoning" && out.reasoning.trim()) {
-        lines.push(...out.reasoning.trim().split("\n").map((l) => `> ${l}`));
+        lines.push(
+          ...out.reasoning
+            .trim()
+            .split("\n")
+            .map((l) => `> ${l}`),
+        );
       } else if (out.type === "image" && out.url) {
         lines.push(await imageMarkdown(out.url));
       } else if (out.type === "document" && out.fileName) {
@@ -179,7 +184,7 @@ export async function convertConversationToMarkdown(
 
 export function safeMarkdownFilename(name: string, fallback = "conversation") {
   const cleaned = name
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/[<>:"/\\|?*\p{Cc}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[. ]+$/g, "");

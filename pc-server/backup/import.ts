@@ -499,6 +499,18 @@ function applyPcBackupFromExtractDir(extractDir: string, pcBackupPath: string): 
             : img,
         );
       }
+      // 特性 B 产出账本:url 是 /api/files/<旧id>/content,fileId 是数字引用,两者都要改。
+      if (Array.isArray(state.generatedMedia)) {
+        const rewritten = rewritePcFileUrlsDeep(
+          state.generatedMedia as unknown as JsonValue,
+          oldIdToNewId,
+        ) as unknown as typeof state.generatedMedia;
+        state.generatedMedia = rewritten.map((media) =>
+          typeof media.fileId === "number" && oldIdToNewId.has(media.fileId)
+            ? { ...media, fileId: oldIdToNewId.get(media.fileId)! }
+            : media,
+        );
+      }
     }
     // Skills are restored via importSkills() above; count them from the skills array if present.
     if (Array.isArray((body as { skills?: unknown }).skills)) {
@@ -766,6 +778,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         // 不显式保 PC 就会被 normalizeState 重置成未配置,用户选好的模型在导入一次手机备份后就没了。
         embeddingModelId: pc.embeddingModelId,
         rerankModelId: pc.rerankModelId,
+        // 媒体提示词改写模型同为 PC-only:同上保 PC 值,导入手机备份不重置。
+        mediaPromptRewriteModelId: pc.mediaPromptRewriteModelId,
         // keybindings 是 PC-only 字段(APP 无对应),导入时必须保 PC 自定义,否则被 normalizeState 重置为默认。
         keybindings: pc.keybindings,
         // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState

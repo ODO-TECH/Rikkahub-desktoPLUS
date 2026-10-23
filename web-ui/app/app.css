@@ -1353,7 +1353,8 @@
     @apply border-border outline-ring/50;
   }
   /* 设置模态的顶带替身(titlebar-overlay.tsx):本体遮罩(z-50)压住真实顶带让其
-     毛玻璃,替身在更高层(z-[90])复刻品牌行 + [-口×] 保持清晰。模态打开时 Radix
+     毛玻璃,替身在更高层(z-[90])复刻 [-口×] 保持清晰;品牌行不复刻——真实品牌行
+     留在原地被遮罩盖住(模糊可见),关模态时无需重现、零延迟。模态打开时 Radix
      给 body 挂 pointer-events:none(连同后代继承)——替身壳自身 pointer-events:none
      (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见命中;
      拖拽区是 div(非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,
@@ -1364,21 +1365,21 @@
   [data-titlebar-overlay] [data-tauri-drag-region] {
     visibility: visible;
   }
-  /* 替身内的按钮/链接/角色按钮:窗控钮 [-口×] 与品牌行的可点形态在替身里恢复命中。 */
+  /* 替身内的按钮/链接/角色按钮:窗控钮 [-口×] 的可点形态在替身里恢复命中。 */
   [data-titlebar-overlay] :is(button, a, [role="button"]) {
     visibility: visible;
   }
-  /* 消「暗影环」:设置模态打开时,把真实顶带的 chrome(品牌行 + [-口×])隐去,
-     让本体遮罩的 backdrop-filter 只采样顶带那片均匀背景(糊了看不出);清晰版由
-     z-[90] 替身供给。若留着真实 chrome,它的像素会被糊成一团鬼影,替身清晰版
-     盖上去后鬼影向外晕开,在 Logo/品牌名外围形成一圈暗影。
+  /* 消「暗影环」:设置模态打开时,把真实窗控条 [-口×] 隐去——它的像素会被遮罩糊成
+     一团鬼影,替身清晰副本盖上去后鬼影向外晕开、形成一圈暗影,故隐去让遮罩只采样
+     顶带那片均匀背景。品牌行(data-titlebar-brand)例外:不复刻替身副本,留在原地
+     被遮罩盖住即可——清晰副本 + 糊鬼影叠在同一坐标才是暗影环的成因,没有副本就没有环。
      用 visibility:hidden(而非 display:none)——顶带容器保留布局、不触发回流;
      替身自身不受影响(见下条豁免)。chrome 标在组件根(sidebar-brand/window-controls),
      替身复用同一组共享组件,其副本会命中下条替身作用域豁免,保持可见。 */
-  body:has([data-settings-overlay]) [data-titlebar-chrome] {
+  body:has([data-settings-overlay]) [data-titlebar-chrome]:not([data-titlebar-brand]) {
     visibility: hidden;
   }
-  /* 替身副本豁免:替身里的品牌行/窗控条也带 data-titlebar-chrome(同组件),须保持可见。 */
+  /* 替身副本豁免:替身里的窗控条也带 data-titlebar-chrome(同组件),须保持可见。 */
   body:has([data-settings-overlay]) [data-titlebar-overlay] [data-titlebar-chrome] {
     visibility: visible;
   }

@@ -917,6 +917,9 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       // 失效 id 由读取方 modelExists + 类型判定兜底)。空串 = 未配置。
       embeddingModelId: String(body.embeddingModelId ?? state.settings.embeddingModelId ?? ""),
       rerankModelId: String(body.rerankModelId ?? state.settings.rerankModelId ?? ""),
+      // 媒体工作台「优化提示词」模型:同口径字段合并、写入侧不校验(失效/纯文本 id 由
+      // 前端选择时把关)。空串 = 未配置。
+      mediaPromptRewriteModelId: String(body.mediaPromptRewriteModelId ?? state.settings.mediaPromptRewriteModelId ?? ""),
       promptOptimizePrompt: String(body.promptOptimizePrompt ?? state.settings.promptOptimizePrompt ?? DEFAULT_PROMPT_OPTIMIZE_PROMPT),
       titlePrompt: String(body.titlePrompt ?? state.settings.titlePrompt ?? DEFAULT_TITLE_PROMPT),
       translatePrompt: String(body.translatePrompt ?? state.settings.translatePrompt ?? DEFAULT_TRANSLATION_PROMPT),
@@ -934,47 +937,81 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
         if (typeof body.options[key] === "boolean") nextOptions[key] = body.options[key] as boolean;
       }
     }
+    const nextExport = typeof body.exportKelivoBackup === "boolean"
+      ? body.exportKelivoBackup
+      : state.settings.exportKelivoBackup === true;
+    // Kelivo 兼容包只按细项生成：开启即锁死「全部数据」，只允许逐项导出；关闭后不自动
+    // 恢复完整备份，由用户重新勾选。
+    const nextAllData = nextExport ? false : state.settings.backupAllData !== false;
     // 同步选项已统一：Kelivo 的 8 类同时就是 backupScope 的实体键，老端点写入时两边一起改，
-    // 否则 UI 显示的勾选与云恢复实际执行的范围会分叉。
+    // 否则 UI 显示的勾选与云恢复实际执行的范围会分叉。完整备份模式下派生视图固定全开。
+    const nextScope = { ...state.settings.backupScope, ...nextOptions };
     updateSettings({
       ...state.settings,
-      exportKelivoBackup: typeof body.exportKelivoBackup === "boolean"
-        ? body.exportKelivoBackup
-        : state.settings.exportKelivoBackup,
-      kelivoSyncOptions: nextOptions,
-      backupScope: { ...state.settings.backupScope, ...nextOptions },
+      exportKelivoBackup: nextExport,
+      backupAllData: nextAllData,
+      backupScope: nextScope,
+      kelivoSyncOptions: nextAllData
+        ? {
+            conversations: true,
+            assistants: true,
+            memories: true,
+            models: true,
+            worldBooks: true,
+            promptInjections: true,
+            quickMessages: true,
+            searchServices: true,
+          }
+        : nextOptions,
     });
     return json({
       status: "ok",
       exportKelivoBackup: state.settings.exportKelivoBackup,
+      backupAllData: state.settings.backupAllData,
       kelivoSyncOptions: state.settings.kelivoSyncOptions,
     });
   }
   if (path === "settings/backup-scope" && request.method === "POST") {
     // 桌面端备份内容选择:逐键布尔,未识别的键忽略(前端多传不该炸设置端点)。
-    const body = await readJson<{ scope?: unknown }>(request);
+    // allData 是独立的「全部数据」备份模式:开启时导出忽略逐项开关,逐项值只作为关闭后的记忆。
+    const body = await readJson<{ scope?: unknown; allData?: unknown }>(request);
+    // Kelivo 兼容备份与「全部数据」互斥且锁定：它是按细项生成的，完整备份无法对齐。
+    if (body.allData === true && state.settings.exportKelivoBackup === true) {
+      return error("Kelivo 兼容备份已开启：只能按细项导出，请先关闭 Kelivo 兼容备份", 400);
+    }
     const nextScope = { ...state.settings.backupScope };
     if (isRecord(body.scope)) {
       for (const key of Object.keys(nextScope) as Array<keyof typeof nextScope>) {
         if (typeof body.scope[key] === "boolean") nextScope[key] = body.scope[key] as boolean;
       }
     }
+    const nextAllData = state.settings.exportKelivoBackup === true
+      ? false
+      : typeof body.allData === "boolean"
+        ? body.allData
+        : state.settings.backupAllData !== false;
     // 统一同步选项：8 个实体键同步派生到 kelivoSyncOptions（Kelivo 导入 / 云端恢复读取）。
+    // 全部数据模式下派生为全开，避免云恢复还按旧的逐项开关少恢复。
     updateSettings({
       ...state.settings,
+      backupAllData: nextAllData,
       backupScope: nextScope,
       kelivoSyncOptions: {
-        conversations: nextScope.conversations,
-        assistants: nextScope.assistants,
-        memories: nextScope.memories,
-        models: nextScope.models,
-        worldBooks: nextScope.worldBooks,
-        promptInjections: nextScope.promptInjections,
-        quickMessages: nextScope.quickMessages,
-        searchServices: nextScope.searchServices,
+        conversations: nextAllData || nextScope.conversations,
+        assistants: nextAllData || nextScope.assistants,
+        memories: nextAllData || nextScope.memories,
+        models: nextAllData || nextScope.models,
+        worldBooks: nextAllData || nextScope.worldBooks,
+        promptInjections: nextAllData || nextScope.promptInjections,
+        quickMessages: nextAllData || nextScope.quickMessages,
+        searchServices: nextAllData || nextScope.searchServices,
       },
     });
-    return json({ status: "ok", backupScope: state.settings.backupScope });
+    return json({
+      status: "ok",
+      backupScope: state.settings.backupScope,
+      backupAllData: state.settings.backupAllData,
+    });
   }
   if (path === "settings/favorite-models" && request.method === "POST") {
     const body = await readJson<{ modelIds: string[] }>(request);

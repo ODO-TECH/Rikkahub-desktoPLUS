@@ -9,28 +9,26 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Notice } from "~/components/ui/notice";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Slider } from "~/components/ui/slider";
 import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { UIAvatar } from "~/components/ui/ui-avatar";
+import { useAssistantActions } from "~/hooks/use-assistant-actions";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "~/components/ui/dialog";
 import { createId } from "~/lib/id";
 import { getModelDisplayName } from "~/lib/display";
-import { copyItemName } from "~/lib/copy-name";
 import { patchSettingsLocal, upsertById } from "~/lib/settings-patch";
 import { cn } from "~/lib/utils";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import api from "~/services/api";
-import { confirmDialog } from "~/stores/confirm-store";
+import { getSettingsParam } from "~/stores/settings-dialog-store";
 import type { AssistantProfile, ProviderModel, Settings } from "~/types";
 import {
   clone,
@@ -88,7 +86,16 @@ const ROLE_KEYS = {
 } as const;
 const ROLE_VALUES = Object.keys(ROLE_KEYS) as (keyof typeof ROLE_KEYS)[];
 
-const TEMPLATE_VARIABLES = ["role", "message", "time", "date", "cur_datetime", "user", "char", "model_name"];
+const TEMPLATE_VARIABLES = [
+  "role",
+  "message",
+  "time",
+  "date",
+  "cur_datetime",
+  "user",
+  "char",
+  "model_name",
+];
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -152,7 +159,14 @@ export function AssistantsSection({
   onSettings: (settings: Settings) => void;
 }) {
   const { t } = useTranslation();
-  const [assistantId, setAssistantId] = React.useState(settings.assistantId);
+  // ?assistantId= 深链(侧栏助手列表「编辑」)只在挂载时读一次:之后的设置更新
+  // (自动保存、SSE 回推)不能把选中拉回深链目标或默认第一个。
+  const [assistantId, setAssistantId] = React.useState(() => {
+    const requested = getSettingsParam("assistantId");
+    return requested && settings.assistants.some((item) => item.id === requested)
+      ? requested
+      : settings.assistantId;
+  });
   const assistant = (settings.assistants.find((item) => item.id === assistantId) ??
     settings.assistants[0]) as AssistantProfile | undefined;
   const [draft, setDraft] = React.useState<AssistantProfile | null>(
@@ -169,7 +183,10 @@ export function AssistantsSection({
         assistants: current.assistants.map((item) => (item.id === draft.id ? draft : item)),
       }));
     },
-    { onSaveError: (error) => toast.error((error as Error).message || t("settings:assistants.autosave_failed")) },
+    {
+      onSaveError: (error) =>
+        toast.error((error as Error).message || t("settings:assistants.autosave_failed")),
+    },
   );
 
   // assistantsRef:重对齐只在切换助手(assistantId)时重载表单。settings.assistants 不能
@@ -223,98 +240,22 @@ export function AssistantsSection({
     setAssistantId(created.id);
     toast.success(t("settings:assistants.added"));
   };
-  // 复制助手:独立记忆非空时先问「同时复制记忆」(对齐 APP AssistantPage 的 cloneTarget
-  // 确认框);无记忆直接克隆。名字走「原名 (N)」序号后缀(与会话 fork 同款命名纪律)。
-  const [cloneTarget, setCloneTarget] = React.useState<AssistantProfile | null>(null);
-  const [cloneMemoryCount, setCloneMemoryCount] = React.useState(0);
-  const [cloneWithMemories, setCloneWithMemories] = React.useState(false);
-  const copyAssistantById = async (targetId: string, copyMemories: boolean) => {
-    const target = settings.assistants.find((item) => item.id === targetId);
-    if (!target) return;
-    const name = copyItemName(
-      target.name || t("settings:assistants.default_name"),
-      new Set(settings.assistants.map((item) => item.name || t("settings:assistants.default_name"))),
-    );
-    try {
-      const result = await api.post<{ assistant: AssistantProfile }>("settings/assistant/copy", {
-        id: targetId,
-        name,
-        copyMemories,
-      });
-      patchSettingsLocal((current) => ({
-        assistants: upsertById(current.assistants, result.assistant),
-      }));
-      setAssistantId(result.assistant.id);
-      toast.success(t("settings:assistants.copied", { name }));
-    } catch (error) {
-      toast.error((error as Error).message || t("settings:assistants.copy_failed"));
-    }
-  };
-  const startCopyAssistant = async (targetId: string) => {
-    const target = settings.assistants.find((item) => item.id === targetId);
-    if (!target) return;
-    let memoryCount = 0;
-    try {
-      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(targetId)}`);
-      memoryCount = result.memories?.length ?? 0;
-    } catch { /* 记忆查询失败按 0 处理(与删除路径同款兜底) */ }
-    if (memoryCount > 0) {
-      setCloneMemoryCount(memoryCount);
-      setCloneWithMemories(false);
-      setCloneTarget(target);
-      return;
-    }
-    await copyAssistantById(targetId, false);
-  };
+  // 复制/删除与侧栏助手列表共用同一套流程(记忆感知确认、防复活时序、store 回写)。
+  // 本页只补两处差异:复制后选中副本;删的是当前编辑行时先收尾自动保存、再把选中移到下一个。
+  const { startCopyAssistant, removeAssistantById, copyDialog } = useAssistantActions({
+    onCopied: (copied) => setAssistantId(copied.id),
+    beforeDelete: async (targetId) => {
+      if (draft?.id === targetId) await autosave.discard();
+    },
+    onDeleted: (targetId, nextId) => {
+      if (draft?.id === targetId) setAssistantId(nextId);
+    },
+  });
 
   const moveAssistant = async (from: number, to: number) => {
     const assistants = moveItem(settings.assistants, from, to);
     patchSettingsLocal({ assistants });
     await api.post("settings/assistants/reorder", { ids: assistants.map((item) => item.id) });
-  };
-  // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。至少保留一个助手。
-  const removeAssistantById = async (targetId: string) => {
-    if (settings.assistants.length <= 1) return;
-    const target = settings.assistants.find((item) => item.id === targetId);
-    if (!target) return;
-    const nameLabel = target.name || t("settings:assistants.default_name");
-    // M4:先查该助手记忆数,有记忆则让用户选"同时删除 / 保留为孤儿"(默认保留,防误删助手连带丢记忆)
-    let memoryCount = 0;
-    try {
-      const result = await api.get<{ memories: unknown[] }>(`memory/assistant/${encodeURIComponent(targetId)}`);
-      memoryCount = result.memories?.length ?? 0;
-    } catch { /* 记忆查询失败按 0 处理 */ }
-    let deleteMemories = false;
-    if (memoryCount > 0) {
-      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm_with_memories", { name: nameLabel, n: memoryCount }), danger: true }))) return;
-      // 第二步:确定=同时删记忆,取消=保留为孤儿(记忆页可管理)
-      deleteMemories = await confirmDialog({
-        title: t("settings:assistants.delete_memories_title", { n: memoryCount }),
-        description: t("settings:assistants.delete_memories_desc"),
-        confirmLabel: t("settings:assistants.delete_memories_label"),
-        cancelLabel: t("settings:assistants.keep_memories_label"),
-        danger: true,
-      });
-    } else {
-      if (!(await confirmDialog({ title: t("settings:assistants.delete_confirm", { name: nameLabel }), danger: true }))) return;
-    }
-    // 防复活:丢弃待保存脏编辑并等在飞保存收尾,DELETE 不与迟到 POST 乱序(复审 F1)。
-    // 仅当删的是正在编辑的那条才需要 discard(其余行的草稿与本编辑会话无关)。
-    const removingActive = draft?.id === targetId;
-    if (removingActive) await autosave.discard();
-    await api.delete(`settings/assistant/${encodeURIComponent(targetId)}${deleteMemories ? "?deleteMemories=true" : ""}`);
-    let nextId = "";
-    patchSettingsLocal((current) => {
-      const assistants = current.assistants.filter((item) => item.id !== targetId);
-      nextId = assistants[0]?.id ?? "";
-      return {
-        assistants,
-        assistantId: current.assistantId === targetId ? nextId : current.assistantId,
-      };
-    });
-    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
-    if (removingActive) setAssistantId(nextId);
-    toast.success(t("settings:assistants.deleted"));
   };
 
   const list = (
@@ -324,11 +265,10 @@ export function AssistantsSection({
         icon={<CopyPlus className="size-4" />}
         onClick={() => void addAssistant()}
       />
-      {settings.assistants.map((item, index) => (
+      {settings.assistants.map((item) => (
         <SettingsListRow
           key={item.id}
           id={item.id}
-          index={index}
           active={item.id === draft?.id}
           onSelect={() => setAssistantId(item.id)}
           onMove={moveAssistant}
@@ -341,7 +281,11 @@ export function AssistantsSection({
           ]}
         >
           <span className="flex items-center gap-2">
-            <UIAvatar size="sm" name={item.name || t("settings:assistants.default_name")} avatar={item.avatar} />
+            <UIAvatar
+              size="sm"
+              name={item.name || t("settings:assistants.default_name")}
+              avatar={item.avatar}
+            />
             <span className="truncate">{item.name || t("settings:assistants.default_name")}</span>
           </span>
         </SettingsListRow>
@@ -363,48 +307,10 @@ export function AssistantsSection({
             onAdvancedOpenChange={setAdvancedOpen}
           />
         ) : (
-          <SettingsEmpty size="md">
-            {t("settings:assistants.empty")}
-          </SettingsEmpty>
+          <SettingsEmpty size="md">{t("settings:assistants.empty")}</SettingsEmpty>
         )}
       </SettingsSplit>
-      {/* 复制助手的「同时复制记忆」询问:不是单纯确认/取消(confirmDialog 只有 boolean),
-          要带可勾选项,故用 Dialog(对齐 APP 的带 Checkbox 确认框)。默认不勾——记忆是
-          高个人化资产,多副本各自演化,保守起步。 */}
-      <Dialog open={cloneTarget !== null} onOpenChange={(open) => !open && setCloneTarget(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("settings:assistants.copy_title")}</DialogTitle>
-            <DialogDescription>
-              {t("settings:assistants.copy_desc", {
-                name: cloneTarget?.name || t("settings:assistants.default_name"),
-                n: cloneMemoryCount,
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <label className="flex cursor-pointer items-center gap-3 rounded-[var(--ds-radius-sm)] px-1 py-1.5 text-sm">
-            <Checkbox
-              checked={cloneWithMemories}
-              onCheckedChange={(checked) => setCloneWithMemories(checked === true)}
-            />
-            {t("settings:assistants.copy_with_memories")}
-          </label>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCloneTarget(null)}>
-              {t("common:confirm_dialog.cancel")}
-            </Button>
-            <Button
-              onClick={() => {
-                const target = cloneTarget;
-                setCloneTarget(null);
-                if (target) void copyAssistantById(target.id, cloneWithMemories);
-              }}
-            >
-              {t("common:confirm_dialog.confirm")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {copyDialog}
     </>
   );
 }
@@ -485,12 +391,19 @@ function AssistantEditor({
     items: Array<Record<string, unknown>>,
     index: number,
   ) => {
-    patchDraft({ [key]: items.filter((_, itemIndex) => itemIndex !== index) } as Partial<AssistantProfile>);
+    patchDraft({
+      [key]: items.filter((_, itemIndex) => itemIndex !== index),
+    } as Partial<AssistantProfile>);
   };
 
   // 温度 / Top P:未设置(null)= 不发送,用模型默认值。滑块需要一个位置,未设置时停在 1 并淡化
   // 已选段,数字框留空显示「默认」——显示值与实际发送一致;「恢复默认」写回 null。
-  const parameterControl = (key: "temperature" | "topP", label: string, max: number, step: number) => {
+  const parameterControl = (
+    key: "temperature" | "topP",
+    label: string,
+    max: number,
+    step: number,
+  ) => {
     const unset = typeof draft[key] !== "number";
     const value = unset ? 1 : (draft[key] as number);
     const commit = (raw: string) => {
@@ -526,7 +439,9 @@ function AssistantEditor({
             value={[value]}
             aria-label={label}
             className={cn(unset && "[&_[data-slot=slider-thumb]]:before:opacity-25")}
-            onValueChange={([next]) => patchDraft({ [key]: next ?? null } as Partial<AssistantProfile>)}
+            onValueChange={([next]) =>
+              patchDraft({ [key]: next ?? null } as Partial<AssistantProfile>)
+            }
           />
           <Input
             key={`${key}-${unset ? "unset" : value}`}
@@ -547,7 +462,11 @@ function AssistantEditor({
 
   // 头像立即保存并强制在聊天中使用助手头像(换了头像却不显示没有意义);恢复默认同走这里。
   const saveAvatar = async (avatar: AssistantProfile["avatar"]) => {
-    const nextDraft = { ...draft, avatar, useAssistantAvatar: avatar?.type !== "dummy" || draft.useAssistantAvatar };
+    const nextDraft = {
+      ...draft,
+      avatar,
+      useAssistantAvatar: avatar?.type !== "dummy" || draft.useAssistantAvatar,
+    };
     setDraft(nextDraft);
     await api.post("settings/assistant/detail", nextDraft);
     patchSettingsLocal((current) => ({
@@ -565,18 +484,15 @@ function AssistantEditor({
     />
   );
 
-  const isTool = (tool: unknown, type: string) => (isPlainRecord(tool) ? tool.type === type : tool === type);
+  const isTool = (tool: unknown, type: string) =>
+    isPlainRecord(tool) ? tool.type === type : tool === type;
   const localTools = Array.isArray(draft.localTools) ? draft.localTools : [];
   const setLocalTool = (type: string, enabled: boolean) => {
     const others = localTools.filter((tool) => !isTool(tool, type));
     patchDraft({ localTools: enabled ? [...others, { type }] : others });
   };
 
-  const emptyHint = (text: string) => (
-    <SettingsEmpty>
-      {text}
-    </SettingsEmpty>
-  );
+  const emptyHint = (text: string) => <SettingsEmpty>{text}</SettingsEmpty>;
   const addButton = (onClick: () => void) => (
     <Button type="button" size="compact" variant="tertiary" onClick={onClick}>
       <Plus className="size-4" />
@@ -635,7 +551,9 @@ function AssistantEditor({
             hint={
               // 专题11-P0:秒级时间变量每次请求都变,提示词前缀缓存全灭,就地提醒改天级
               /\{\{\s*(cur_time|cur_datetime|time)\s*\}\}/.test(textValue(draft.systemPrompt)) ? (
-                <span className="text-warning">{t("settings:assistants.system_prompt_cache_hint")}</span>
+                <span className="text-warning">
+                  {t("settings:assistants.system_prompt_cache_hint")}
+                </span>
               ) : undefined
             }
           >
@@ -660,7 +578,11 @@ function AssistantEditor({
         >
           <SettingsRows>
             {BASIC_SWITCHES.map(switchRow)}
-            <SettingsAdvancedRegion id={switchesId} open={advancedOpen} className="divide-y divide-[var(--ds-divider)]">
+            <SettingsAdvancedRegion
+              id={switchesId}
+              open={advancedOpen}
+              className="divide-y divide-[var(--ds-divider)]"
+            >
               {ADVANCED_SWITCHES.map(switchRow)}
             </SettingsAdvancedRegion>
           </SettingsRows>
@@ -718,7 +640,9 @@ function AssistantEditor({
                   max={512}
                   step={1}
                   aria-label={t("settings:assistants.context_message_size")}
-                  value={[typeof draft.contextMessageLimit === "number" ? draft.contextMessageLimit : 0]}
+                  value={[
+                    typeof draft.contextMessageLimit === "number" ? draft.contextMessageLimit : 0,
+                  ]}
                   onValueChange={([next]) => patchDraft({ contextMessageLimit: next ?? 0 })}
                 />
                 <Input
@@ -739,7 +663,8 @@ function AssistantEditor({
                     }
                     const parsed = Math.floor(Number(raw));
                     patchDraft({
-                      contextMessageLimit: Number.isFinite(parsed) && parsed > 0 ? Math.min(512, parsed) : 0,
+                      contextMessageLimit:
+                        Number.isFinite(parsed) && parsed > 0 ? Math.min(512, parsed) : 0,
                     });
                   }}
                 />
@@ -771,23 +696,32 @@ function AssistantEditor({
               />
               {messageTemplateMissingMessage ? (
                 <Notice tone="danger">
-                  {t("settings:assistants.template_missing_warn", { token: DEFAULT_MESSAGE_TEMPLATE })}
+                  {t("settings:assistants.template_missing_warn", {
+                    token: DEFAULT_MESSAGE_TEMPLATE,
+                  })}
                 </Notice>
               ) : null}
               <div className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
-                <div className="mb-2 text-sm font-medium">{t("settings:assistants.template_preview")}</div>
+                <div className="mb-2 text-sm font-medium">
+                  {t("settings:assistants.template_preview")}
+                </div>
                 <div className="space-y-2">
                   {messageTemplatePreview.map((item) => (
                     <div key={item.role} className="rounded-md bg-background p-3 text-xs">
                       <div className="mb-1 text-muted-foreground">{t(ROLE_KEYS[item.role])}</div>
-                      <pre className="whitespace-pre-wrap font-sans leading-relaxed">{item.text}</pre>
+                      <pre className="whitespace-pre-wrap font-sans leading-relaxed">
+                        {item.text}
+                      </pre>
                     </div>
                   ))}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                   <span>{t("settings:assistants.available_vars")}</span>
                   {TEMPLATE_VARIABLES.map((variable) => (
-                    <code key={variable} className="rounded bg-[var(--ds-on-surface-active)] px-1.5 py-0.5 font-mono">
+                    <code
+                      key={variable}
+                      className="rounded bg-[var(--ds-on-surface-active)] px-1.5 py-0.5 font-mono"
+                    >
                       {`{{ ${variable} }}`}
                     </code>
                   ))}
@@ -799,17 +733,24 @@ function AssistantEditor({
               label={t("settings:assistants.preset_messages_title")}
               description={t("settings:assistants.preset_messages_desc")}
               trailing={addButton(() =>
-                patchDraft({ presetMessages: [...presetMessages, { role: "ASSISTANT", content: "" }] }),
+                patchDraft({
+                  presetMessages: [...presetMessages, { role: "ASSISTANT", content: "" }],
+                }),
               )}
             >
               <div className="space-y-3">
                 {presetMessages.length === 0 ? emptyHint(t("settings:assistants.no_preset")) : null}
                 {presetMessages.map((message, index) => (
-                  <div key={String(message.id ?? index)} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
+                  <div
+                    key={String(message.id ?? index)}
+                    className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3"
+                  >
                     <div className="mb-2 flex items-center gap-2">
                       <Select
                         value={textValue(message.role).toUpperCase() || "ASSISTANT"}
-                        onValueChange={(role) => updateAt("presetMessages", presetMessages, index, { role })}
+                        onValueChange={(role) =>
+                          updateAt("presetMessages", presetMessages, index, { role })
+                        }
                       >
                         <SelectTrigger className="w-36">
                           <SelectValue />
@@ -832,7 +773,9 @@ function AssistantEditor({
                       className="min-h-24"
                       value={textValue(message.content)}
                       onChange={(event) =>
-                        updateAt("presetMessages", presetMessages, index, { content: event.target.value })
+                        updateAt("presetMessages", presetMessages, index, {
+                          content: event.target.value,
+                        })
                       }
                     />
                   </div>
@@ -861,27 +804,42 @@ function AssistantEditor({
               )}
             >
               <div className="space-y-3">
-                {assistantRegexes.length === 0 ? emptyHint(t("settings:assistants.no_regex")) : null}
+                {assistantRegexes.length === 0
+                  ? emptyHint(t("settings:assistants.no_regex"))
+                  : null}
                 {assistantRegexes.map((regex, index) => {
-                  const scopes = Array.isArray(regex.affectingScope) ? regex.affectingScope.map(String) : [];
+                  const scopes = Array.isArray(regex.affectingScope)
+                    ? regex.affectingScope.map(String)
+                    : [];
                   const toggleScope = (scope: "USER" | "ASSISTANT", checked: boolean) => {
                     const nextScopes = new Set(scopes);
                     if (checked) nextScopes.add(scope);
                     else nextScopes.delete(scope);
-                    updateAt("regexes", assistantRegexes, index, { affectingScope: [...nextScopes] });
+                    updateAt("regexes", assistantRegexes, index, {
+                      affectingScope: [...nextScopes],
+                    });
                   };
                   return (
-                    <div key={String(regex.id ?? index)} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
+                    <div
+                      key={String(regex.id ?? index)}
+                      className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3"
+                    >
                       <div className="mb-3 flex items-center gap-2">
                         <Switch
                           checked={regex.enabled !== false}
                           aria-label={t("settings:assistants.regex_enabled")}
-                          onCheckedChange={(checked) => updateAt("regexes", assistantRegexes, index, { enabled: checked })}
+                          onCheckedChange={(checked) =>
+                            updateAt("regexes", assistantRegexes, index, { enabled: checked })
+                          }
                         />
                         <Input
                           className="h-8"
                           value={textValue(regex.name)}
-                          onChange={(event) => updateAt("regexes", assistantRegexes, index, { name: event.target.value })}
+                          onChange={(event) =>
+                            updateAt("regexes", assistantRegexes, index, {
+                              name: event.target.value,
+                            })
+                          }
                           placeholder={t("settings:assistants.regex_name_ph")}
                         />
                         {deleteButton(t("settings:assistants.delete_regex"), () =>
@@ -890,20 +848,28 @@ function AssistantEditor({
                       </div>
                       <div className="grid gap-3 @xl:grid-cols-2">
                         <label className="space-y-1">
-                          <span className="text-xs text-muted-foreground">{t("settings:assistants.regex_find")}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {t("settings:assistants.regex_find")}
+                          </span>
                           <Input
                             value={textValue(regex.findRegex)}
                             onChange={(event) =>
-                              updateAt("regexes", assistantRegexes, index, { findRegex: event.target.value })
+                              updateAt("regexes", assistantRegexes, index, {
+                                findRegex: event.target.value,
+                              })
                             }
                           />
                         </label>
                         <label className="space-y-1">
-                          <span className="text-xs text-muted-foreground">{t("settings:assistants.regex_replace")}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {t("settings:assistants.regex_replace")}
+                          </span>
                           <Input
                             value={textValue(regex.replaceString)}
                             onChange={(event) =>
-                              updateAt("regexes", assistantRegexes, index, { replaceString: event.target.value })
+                              updateAt("regexes", assistantRegexes, index, {
+                                replaceString: event.target.value,
+                              })
                             }
                           />
                         </label>
@@ -922,7 +888,9 @@ function AssistantEditor({
                           <Checkbox
                             checked={regex.visualOnly === true}
                             onCheckedChange={(checked) =>
-                              updateAt("regexes", assistantRegexes, index, { visualOnly: checked === true })
+                              updateAt("regexes", assistantRegexes, index, {
+                                visualOnly: checked === true,
+                              })
                             }
                           />
                           {t("settings:assistants.visual_only")}
@@ -944,7 +912,9 @@ function AssistantEditor({
                 value: textValue(header.value),
               }))}
               onChange={(next) =>
-                patchDraft({ customHeaders: next.map((item) => ({ name: item.key, value: item.value })) })
+                patchDraft({
+                  customHeaders: next.map((item) => ({ name: item.key, value: item.value })),
+                })
               }
               keyPlaceholder={t("settings:common.header_name")}
               valuePlaceholder={t("settings:common.header_value")}
@@ -954,16 +924,23 @@ function AssistantEditor({
             <SettingsField
               label={t("settings:assistants.bodies")}
               description={t("settings:assistants.bodies_desc")}
-              trailing={addButton(() => patchDraft({ customBodies: [...customBodies, { key: "", value: '""' }] }))}
+              trailing={addButton(() =>
+                patchDraft({ customBodies: [...customBodies, { key: "", value: '""' }] }),
+              )}
             >
               <div className="space-y-2">
                 {customBodies.length === 0 ? emptyHint(t("settings:assistants.no_body")) : null}
                 {customBodies.map((body, index) => (
-                  <div key={index} className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3">
+                  <div
+                    key={index}
+                    className="rounded-[var(--ds-radius-md)] bg-[var(--ds-on-surface)] p-3"
+                  >
                     <div className="mb-2 flex items-center gap-2">
                       <Input
                         value={textValue(body.key ?? body.name)}
-                        onChange={(event) => updateAt("customBodies", customBodies, index, { key: event.target.value })}
+                        onChange={(event) =>
+                          updateAt("customBodies", customBodies, index, { key: event.target.value })
+                        }
                         placeholder={t("settings:assistants.body_key_ph")}
                         aria-label={t("settings:assistants.body_key_ph")}
                       />
@@ -973,8 +950,14 @@ function AssistantEditor({
                     </div>
                     <Textarea
                       className="min-h-24 font-mono text-xs"
-                      value={typeof body.value === "string" ? body.value : JSON.stringify(body.value ?? "", null, 2)}
-                      onChange={(event) => updateAt("customBodies", customBodies, index, { value: event.target.value })}
+                      value={
+                        typeof body.value === "string"
+                          ? body.value
+                          : JSON.stringify(body.value ?? "", null, 2)
+                      }
+                      onChange={(event) =>
+                        updateAt("customBodies", customBodies, index, { value: event.target.value })
+                      }
                       placeholder={t("settings:assistants.body_value_ph")}
                     />
                   </div>
@@ -985,7 +968,9 @@ function AssistantEditor({
         </SettingsAdvancedRegion>
 
         <SettingsDetailFooter
-          status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
+          status={
+            <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
+          }
         />
       </SettingsStack>
     </div>

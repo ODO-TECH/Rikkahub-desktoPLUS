@@ -5,7 +5,6 @@ import { describe, expect, test } from "bun:test";
 import {
   advanceFrozenPrefix,
   EMPTY_FROZEN_PREFIX,
-  STREAM_PROMOTE_HOLDBACK_BLOCKS,
   STREAM_PROMOTE_RETRY_GROWTH,
   STREAM_TAIL_PROMOTE_THRESHOLD,
   tailRenderIntervalMs,

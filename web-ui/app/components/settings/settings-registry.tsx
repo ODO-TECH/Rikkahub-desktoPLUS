@@ -13,6 +13,8 @@ import { BackupSection } from "~/components/settings/data/backup";
 import { WebServiceSection } from "~/components/settings/data/web-service";
 import { DefaultModelsSection } from "~/components/settings/default-models";
 import { McpSection } from "~/components/settings/extensions/mcp";
+import { MediaProvidersSection } from "~/components/settings/media/providers";
+import { MediaStorageSection } from "~/components/settings/media/storage";
 import { PromptInjectionSection } from "~/components/settings/extensions/injection";
 import { QuickMessagesSection } from "~/components/settings/extensions/quick-messages";
 import { SkillsSection } from "~/components/settings/extensions/skills";
@@ -86,6 +88,8 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   assistants: AssistantsSection,
   "models/providers": ProvidersSection,
   "models/scenes": DefaultModelsSection,
+  "media/providers": MediaProvidersSection,
+  "media/storage": MediaStorageSection,
   network: SearchSection,
   "connectivity/proxy": ProxySection,
   "connectivity/server": WebServiceSection,
@@ -116,6 +120,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
 export const SETTINGS_DOCKED_PAGES: ReadonlySet<SettingsPageKey> = new Set([
   "assistants",
   "models/providers",
+  "media/providers",
   "network",
   "extensions/mcp",
   "extensions/skills",

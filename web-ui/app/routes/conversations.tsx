@@ -47,10 +47,7 @@ import { useConversationList } from "~/hooks/use-conversation-list";
 import { onHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import type { SlashCommandDto } from "~/lib/slash-commands";
-import {
-  convertConversationToMarkdown,
-  safeMarkdownFilename,
-} from "~/lib/export-markdown";
+import { convertConversationToMarkdown, safeMarkdownFilename } from "~/lib/export-markdown";
 import { exportTextFile } from "~/lib/export-file";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { cn } from "~/lib/utils";
@@ -71,9 +68,7 @@ import {
   useConversationSubscription,
 } from "~/stores/conversation-stream";
 import { WorkbenchHost } from "~/components/workbench/workbench-host";
-import {
-  ConversationFilesLauncherProvider,
-} from "~/components/workbench/conversation-files-launcher";
+import { ConversationFilesLauncherProvider } from "~/components/workbench/conversation-files-launcher";
 import { ContainerPlusMenu } from "~/components/workspace/container-plus-menu";
 import { ContainerTabBar } from "~/components/workspace/container-tab-bar";
 import { SidebarBrandRow } from "~/components/sidebar-brand";
@@ -100,6 +95,7 @@ import {
 } from "~/stores/container-tabs-store";
 import { useTabDragStore } from "~/stores/tab-drag-store";
 import {
+  type WorkbenchPanel,
   useWorkbench,
   useWorkbenchController,
   WorkbenchProvider,
@@ -123,7 +119,7 @@ import {
   X,
 } from "lucide-react";
 import { EmptyGreeting } from "~/components/empty-greeting";
-import type { GroupImperativeHandle, PanelImperativeHandle } from "react-resizable-panels";
+import type { GroupImperativeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -220,10 +216,31 @@ const EMPTY_SUGGESTIONS: string[] = [];
 const VirtuosoListPadding = () => <div className="h-4" />;
 const VIRTUOSO_COMPONENTS = { Header: VirtuosoListPadding, Footer: VirtuosoListPadding };
 const COMPRESS_TOKEN_OPTIONS = [500, 1000, 2000, 4000];
-// 工作台面板宽度(占横向组宽的百分比)。注意 react-resizable-panels v4 的数字按像素
-// 解析,百分比必须传字符串(如 "36%")。
-const WORKBENCH_DEFAULT_WIDTH_PCT = 36;
-const WORKBENCH_MIN_WIDTH_PCT = 20;
+// 右侧工作台是组外的一张固定宽浮卡:宽度用像素持久化、自绘分隔条拖拽调整。
+// 不再参与 react-resizable-panels 的布局——v4 的 resize()/重注册与 React 状态各记一份,
+// 关合竞态下会脱钩(点了没反应/关不掉),命令式补丁越堆越脆。
+const WORKBENCH_DEFAULT_WIDTH_PX = 420;
+const WORKBENCH_MIN_WIDTH_PX = 240;
+const WORKBENCH_MAX_WIDTH_RATIO = 0.6;
+const WORKBENCH_WIDTH_KEY = "workbench-width-px";
+
+function readWorkbenchWidth(): number {
+  try {
+    const parsed = Number(localStorage.getItem(WORKBENCH_WIDTH_KEY));
+    if (Number.isFinite(parsed) && parsed >= WORKBENCH_MIN_WIDTH_PX) return parsed;
+  } catch {
+    // 读不到用默认。
+  }
+  return WORKBENCH_DEFAULT_WIDTH_PX;
+}
+
+function saveWorkbenchWidth(px: number): void {
+  try {
+    localStorage.setItem(WORKBENCH_WIDTH_KEY, String(Math.round(px)));
+  } catch {
+    // 存不进就只保留内存态。
+  }
+}
 const COMPRESS_KEEP_OPTIONS = [0, 16, 32, 64];
 const TRANSLATION_LANGUAGES = [
   { value: "zh-CN" },
@@ -289,16 +306,107 @@ function WorkbenchToggle({
         openPanel({
           type: "conversation-files",
           title: workspaceName ?? t("workbench.files.title", "文件面板"),
-          payload: conversationId
-            ? { conversationId }
-            : workspaceId
-              ? { workspaceId }
-              : {},
+          payload: conversationId ? { conversationId } : workspaceId ? { workspaceId } : {},
         });
       }}
     >
       <PanelRight className="size-4" strokeWidth={1.75} />
     </Button>
+  );
+}
+
+// 右侧工作台浮卡:对话分栏组之外的 flex 兄弟。宽度是本地像素状态,开合直接由
+// 「open ? 宽度 : 0」驱动 CSS 过渡——没有命令式布局、没有延时校准,状态与画面不会脱钩。
+// 拖分隔条到近 0 即收起;宽度记忆在 pointerup 时落盘,重开还是原宽。
+function WorkbenchSide({
+  open,
+  onClose,
+  panel,
+  activeConversationId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  panel: WorkbenchPanel | null;
+  activeConversationId?: string | null;
+}) {
+  const { t } = useTranslation();
+  const [width, setWidth] = React.useState(readWorkbenchWidth);
+  const [dragging, setDragging] = React.useState(false);
+  const widthRef = React.useRef(width);
+
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = widthRef.current;
+    const maxWidth = Math.max(
+      WORKBENCH_MIN_WIDTH_PX,
+      Math.round(window.innerWidth * WORKBENCH_MAX_WIDTH_RATIO),
+    );
+    setDragging(true);
+    handle.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      // 往左拖 = 变宽(右栏镜像),往右拖到底 = 收起。
+      const next = Math.min(maxWidth, Math.max(0, startWidth + (startX - moveEvent.clientX)));
+      widthRef.current = next;
+      setWidth(next);
+    };
+    const finish = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      setDragging(false);
+      if (widthRef.current < WORKBENCH_MIN_WIDTH_PX) {
+        // 收起是布局动作,不覆盖宽度记忆:下次打开仍是拖拽前的宽度。
+        widthRef.current =
+          startWidth >= WORKBENCH_MIN_WIDTH_PX ? startWidth : WORKBENCH_DEFAULT_WIDTH_PX;
+        setWidth(widthRef.current);
+        onClose();
+        return;
+      }
+      saveWorkbenchWidth(widthRef.current);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  };
+
+  return (
+    <>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("workbench.resize", "调整文件侧边栏宽度")}
+        onPointerDown={startDrag}
+        className={cn(
+          "relative z-10 w-2 shrink-0 cursor-col-resize touch-none transition-[width] duration-200 ease-linear",
+          "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors hover:after:bg-border/70",
+          !open && "pointer-events-none w-0",
+        )}
+      />
+      <div
+        className={cn(
+          "relative h-full shrink-0 overflow-hidden",
+          !dragging && "transition-[width] duration-200 ease-linear",
+        )}
+        style={{ width: open ? width : 0 }}
+      >
+        {/* 卡面宽度钉在像素上:开合过渡只裁切,文字不重排(与左栏同款观感)。 */}
+        <div className="absolute top-0 right-2 bottom-2" style={{ width: Math.max(0, width - 16) }}>
+          {panel ? (
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[18px] border border-black/[0.06] bg-sidebar shadow-[var(--ds-elevation-100)]">
+              <WorkbenchHost
+                panel={panel}
+                onClose={onClose}
+                activeConversationId={activeConversationId ?? undefined}
+                className="bg-transparent"
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -708,6 +816,7 @@ const ChatInputArea = React.memo(function ChatInputArea({
       onSlashCommand={onSlashCommand}
       getOptimizeContext={getOptimizeContext}
       conversationId={conversationId}
+      draftKey={draftKey}
       queueSlot={queueSlot}
     />
   );
@@ -870,7 +979,9 @@ const ConversationTimeline = React.memo(
         !!model && model.type !== "EMBEDDING" && model.type !== "RERANK" ? model : undefined;
       return (
         chatCapable(modelById.get(fallbackId)) ??
-        settings.providers.flatMap((provider) => provider.models).find((model) => !!chatCapable(model)) ??
+        settings.providers
+          .flatMap((provider) => provider.models)
+          .find((model) => !!chatCapable(model)) ??
         null
       );
     }, [assistant?.chatModelId, modelById, settings]);
@@ -1828,10 +1939,14 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
         // status 契约:compressed / aborted(服务端收到取消后静默吞掉 AbortError 的确认,
         // 不带成功文案)。客户端 abort 路径抛 AbortError;服务端已停止但 fetch 尚未断时
         // 走这里——同一轻量确认文案,不弹成功。
-        const result = await api.post<{ status: string }>(`conversations/${conversationId}/compress`, params, {
-          timeout: false,
-          signal: controller.signal,
-        });
+        const result = await api.post<{ status: string }>(
+          `conversations/${conversationId}/compress`,
+          params,
+          {
+            timeout: false,
+            signal: controller.signal,
+          },
+        );
         setCompressDialogOpen(false);
         if (result.status === "aborted") {
           toast.info(t("conversations.compress.aborted"));
@@ -1853,7 +1968,9 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           // 带业务码的错误按码查 i18n 文案(服务端 CodedError 通道;查不到用后端 message 兜底)。
           const coded =
             error instanceof ApiError && error.errorCode
-              ? t(`conversations.compress.error.${error.errorCode}`, { defaultValue: error.message })
+              ? t(`conversations.compress.error.${error.errorCode}`, {
+                  defaultValue: error.message,
+                })
               : undefined;
           const message =
             coded ?? (error instanceof Error ? error.message : t("conversations.compress.failed"));
@@ -1877,24 +1994,27 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   // ── 斜杠指令:清单(服务端权威)+ 执行分发表(实现池前端部分;方案 §3.4) ──────
   const availableSlashCommands = useAvailableCommands(activeId);
   // 域5-1(3F):执行器返回 false=未受理(如压缩占用),chat-input 据此回填原文;正常受理返回 void。
-  const slashExecutors: Record<string, (argument: string) => Promise<boolean | void>> = React.useMemo(
-    () => ({
-      // /compact [额外指示] → 既有压缩链路;进行中再触发提示占用(复用现有互斥)并告知未受理。
-      compact: async (argument: string) => {
-        if (compressing) {
-          toast.error(t("conversations.compress.busy"));
-          return false;
-        }
-        await performCompress({ additionalPrompt: argument }, "/compact ");
-      },
-    }),
-    [compressing, performCompress, t],
-  );
+  const slashExecutors: Record<string, (argument: string) => Promise<boolean | void>> =
+    React.useMemo(
+      () => ({
+        // /compact [额外指示] → 既有压缩链路;进行中再触发提示占用(复用现有互斥)并告知未受理。
+        compact: async (argument: string) => {
+          if (compressing) {
+            toast.error(t("conversations.compress.busy"));
+            return false;
+          }
+          await performCompress({ additionalPrompt: argument }, "/compact ");
+        },
+      }),
+      [compressing, performCompress, t],
+    );
   // 防两表漂移(方案 §3.1):服务端说可用但前端无执行器的指令不展示,并留痕便于排查。
   const slashCommands = React.useMemo(() => {
     const known = availableSlashCommands.filter((command) => command.name in slashExecutors);
     if (known.length !== availableSlashCommands.length) {
-      const missing = availableSlashCommands.filter((c) => !(c.name in slashExecutors)).map((c) => c.name);
+      const missing = availableSlashCommands
+        .filter((c) => !(c.name in slashExecutors))
+        .map((c) => c.name);
       console.warn("[slash-commands] 服务端清单存在前端未实现的指令,已隐藏:", missing);
     }
     return known;
@@ -1917,7 +2037,8 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   const voiceState = useVoiceModeState();
   const voiceActive = voiceState.phase !== "off";
   const selectedAsrProvider = React.useMemo(
-    () => settings?.asrProviders?.find((item) => item.id === settings?.selectedASRProviderId) ?? null,
+    () =>
+      settings?.asrProviders?.find((item) => item.id === settings?.selectedASRProviderId) ?? null,
     [settings],
   );
   const voiceCapable = Boolean(settings?.selectedASRProviderId && selectedAsrProvider);
@@ -1937,10 +2058,18 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
       return;
     }
     const sampleRate = Number(
-      selectedAsrProvider.sampleRate || (selectedAsrProvider.type === "openai_realtime" ? 24000 : 16000),
+      selectedAsrProvider.sampleRate ||
+        (selectedAsrProvider.type === "openai_realtime" ? 24000 : 16000),
     );
     voiceMode.start(activeId, selectedAsrProvider.id, sampleRate);
-  }, [voiceActive, activeId, settings?.selectedASRProviderId, selectedAsrProvider, voiceSupported, t]);
+  }, [
+    voiceActive,
+    activeId,
+    settings?.selectedASRProviderId,
+    selectedAsrProvider,
+    voiceSupported,
+    t,
+  ]);
 
   const handleSaveConversationSystemPrompt = React.useCallback(async () => {
     if (!activeId || activeAssistantForConversation?.allowConversationSystemPrompt !== true) return;
@@ -2054,7 +2183,8 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   // 本列是否接受当前拖拽:决定落点覆盖层挂不挂(不接受时不拦截指针、也不高亮)。
   // 一级载荷落到"自己这列"是常态而非异常(屏上的列都属于各组焦点容器),接与不接看
   // 本组是否还有别人接手这一组:有 = 可拆出去;只剩它自己 = 已是独立组,无处可拆。
-  const selfContainerDrag = dragPayload?.kind === "container" && dragPayload.container === container;
+  const selfContainerDrag =
+    dragPayload?.kind === "container" && dragPayload.container === container;
   const selfSplittable = useContainerTabsStore(
     (state) => groupSiblingOf(state.groups, container) !== null,
   );
@@ -2072,346 +2202,357 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
 
   return (
     <PaneContainerProvider container={container}>
-    <div
-      className="relative flex h-full min-h-0 flex-1 flex-col"
-      // 点击非焦点列任意处 → 聚焦并把路由切到它的激活会话。会话标签自己会导航到它指定
-      // 的会话(data-tab-nav),不能让这里先抢一次焦点切换,否则先跳本列旧会话、
-      // 再跳目标会话,中间闪一帧。
-      onMouseDownCapture={
-        focused
-          ? undefined
-          : (event) => {
-              if ((event.target as HTMLElement).closest("[data-tab-nav]")) return;
-              onFocusPane(container, paneIndex);
-            }
-      }
-    >
-      <ConversationTabStrip
-        container={container}
-        paneIndex={paneIndex}
-        focused={focused}
-        conversations={conversations}
-        onRename={onRenameConversation}
-        trailing={
-          canOverrideConversationSystemPrompt ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setSystemPromptDialogOpen(true)}
-              disabled={!hasDetail}
-              aria-label={t("conversations.custom_prompt.edit_aria")}
-              title={t("conversations.custom_prompt.edit_aria")}
-            >
-              <Pencil className="size-4" />
-            </Button>
-          ) : null
-        }
-      />
-
       <div
-        className={cn(
-          "flex flex-1 flex-col min-h-0 overflow-hidden",
-          isNewChat && "justify-center",
-        )}
+        className="relative flex h-full min-h-0 flex-1 flex-col"
+        // 点击非焦点列任意处 → 聚焦并把路由切到它的激活会话。会话标签自己会导航到它指定
+        // 的会话(data-tab-nav),不能让这里先抢一次焦点切换,否则先跳本列旧会话、
+        // 再跳目标会话,中间闪一帧。
+        onMouseDownCapture={
+          focused
+            ? undefined
+            : (event) => {
+                if ((event.target as HTMLElement).closest("[data-tab-nav]")) return;
+                onFocusPane(container, paneIndex);
+              }
+        }
       >
-        {!isNewChat && (
-          <>
-            {canOverrideConversationSystemPrompt && hasDetail ? (
-              <ConversationSystemPromptButton
-                value={conversationSystemPrompt}
-                onSave={handleSaveConversationSystemPromptValue}
-              />
-            ) : null}
-            <div className="relative flex min-h-0 flex-1">
-              <ConversationTimeline
-                activeId={activeId}
-                isHomeRoute={paneIsHome}
-                settings={settings}
-                onEdit={handleStartEdit}
-                onDelete={handleDeleteMessage}
-                onFork={handleForkMessage}
-                onRegenerate={handleRegenerate}
-                onSelectBranch={handleSelectBranch}
-                onTranslate={handleTranslateMessage}
-                onToolApproval={handleToolApproval}
-              />
-            </div>
-          </>
-        )}
+        <ConversationTabStrip
+          container={container}
+          paneIndex={paneIndex}
+          focused={focused}
+          conversations={conversations}
+          onRename={onRenameConversation}
+          trailing={
+            canOverrideConversationSystemPrompt ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setSystemPromptDialogOpen(true)}
+                disabled={!hasDetail}
+                aria-label={t("conversations.custom_prompt.edit_aria")}
+                title={t("conversations.custom_prompt.edit_aria")}
+              >
+                <Pencil className="size-4" />
+              </Button>
+            ) : null
+          }
+        />
 
-        <div>
-          {isNewChat &&
-            (activeWorkspace ? (
-              <WorkspaceEmptyState workspace={activeWorkspace} onPrompt={handleClickSuggestion} />
-            ) : (
-              <div className="mb-6 text-center">
-                <EmptyGreeting />
+        <div
+          className={cn(
+            "flex flex-1 flex-col min-h-0 overflow-hidden",
+            isNewChat && "justify-center",
+          )}
+        >
+          {!isNewChat && (
+            <>
+              {canOverrideConversationSystemPrompt && hasDetail ? (
+                <ConversationSystemPromptButton
+                  value={conversationSystemPrompt}
+                  onSave={handleSaveConversationSystemPromptValue}
+                />
+              ) : null}
+              <div className="relative flex min-h-0 flex-1">
+                <ConversationTimeline
+                  activeId={activeId}
+                  isHomeRoute={paneIsHome}
+                  settings={settings}
+                  onEdit={handleStartEdit}
+                  onDelete={handleDeleteMessage}
+                  onFork={handleForkMessage}
+                  onRegenerate={handleRegenerate}
+                  onSelectBranch={handleSelectBranch}
+                  onTranslate={handleTranslateMessage}
+                  onToolApproval={handleToolApproval}
+                />
               </div>
-            ))}
-          {/* 分块 TTS 播放条是全局单例状态,只挂在聚焦窗格,避免分栏时重复显示。 */}
-          {focused ? <TtsPlayBar /> : null}
-          {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
-          <EngineStatusBar conversationId={activeId} />
-          {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
-          {voiceActive && activeId ? (
-            <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />
-          ) : null}
-          <ChatInputArea
-            draftKey={draftKey}
-            slashCommands={slashCommands}
-            onSlashCommand={handleSlashCommand}
-            /* 消息发送队列贴片:渲染在输入卡上沿外侧(左右内缩、下沿被卡片盖住,自带
+            </>
+          )}
+
+          <div>
+            {isNewChat &&
+              (activeWorkspace ? (
+                <WorkspaceEmptyState workspace={activeWorkspace} onPrompt={handleClickSuggestion} />
+              ) : (
+                <div className="mb-6 text-center">
+                  <EmptyGreeting />
+                </div>
+              ))}
+            {/* 分块 TTS 播放条是全局单例状态,只挂在聚焦窗格,避免分栏时重复显示。 */}
+            {focused ? <TtsPlayBar /> : null}
+            {/* pi 引擎瞬态状态条(P5):按窗格各自订阅本会话状态,分栏互不串扰。 */}
+            <EngineStatusBar conversationId={activeId} />
+            {/* 语音模式横幅(免提对话循环;关闭时不渲染)。 */}
+            {voiceActive && activeId ? (
+              <VoiceModeBanner onEnd={() => voiceMode.stop()} onRetry={handleToggleVoiceMode} />
+            ) : null}
+            <ChatInputArea
+              draftKey={draftKey}
+              slashCommands={slashCommands}
+              onSlashCommand={handleSlashCommand}
+              /* 消息发送队列贴片:渲染在输入卡上沿外侧(左右内缩、下沿被卡片盖住,自带
                叠色色差),读作「附着在输入框上的队列」而非输入框的一部分。条件带 items
                长度——空队列不给插槽,否则输入卡上方会留一条空贴片。 */
-            queueSlot={
-              activeId && conversationMessageQueue && conversationMessageQueue.items.length > 0 ? (
-                <MessageQueuePanel conversationId={activeId} queue={conversationMessageQueue} />
-              ) : null
-            }
-            isGenerating={conversationIsGenerating}
-            disabled={detailLoading || Boolean(detailError)}
-            isEditing={Boolean(editingSession)}
-            suggestions={displaySuggestions}
-            onSuggestionClick={handleClickSuggestion}
-            onCancelEdit={editingSession ? handleCancelEdit : undefined}
-            shouldDeleteFileOnRemove={shouldDeleteAttachmentFileOnRemove}
-            onSend={handleSend}
-            onStop={activeId ? handleStop : undefined}
-            onExportConversation={
-              hasMessages
-                ? async (includeReasoning: boolean) => {
-                    // 导出需要完整历史:窗口化(I-2)时先拉全量;拿不到完整历史则报错
-                    // 放弃,绝不导出被窗口截断的部分内容。
-                    const detail = activeId ? await ensureFullConversationDetail(activeId) : null;
-                    if (!detail) {
-                      if (activeId) toast.error(t("conversations.errors.load_detail_failed"));
-                      return;
+              queueSlot={
+                activeId &&
+                conversationMessageQueue &&
+                conversationMessageQueue.items.length > 0 ? (
+                  <MessageQueuePanel conversationId={activeId} queue={conversationMessageQueue} />
+                ) : null
+              }
+              isGenerating={conversationIsGenerating}
+              disabled={detailLoading || Boolean(detailError)}
+              isEditing={Boolean(editingSession)}
+              suggestions={displaySuggestions}
+              onSuggestionClick={handleClickSuggestion}
+              onCancelEdit={editingSession ? handleCancelEdit : undefined}
+              shouldDeleteFileOnRemove={shouldDeleteAttachmentFileOnRemove}
+              onSend={handleSend}
+              onStop={activeId ? handleStop : undefined}
+              onExportConversation={
+                hasMessages
+                  ? async (includeReasoning: boolean) => {
+                      // 导出需要完整历史:窗口化(I-2)时先拉全量;拿不到完整历史则报错
+                      // 放弃,绝不导出被窗口截断的部分内容。
+                      const detail = activeId ? await ensureFullConversationDetail(activeId) : null;
+                      if (!detail) {
+                        if (activeId) toast.error(t("conversations.errors.load_detail_failed"));
+                        return;
+                      }
+                      const content = await convertConversationToMarkdown(detail, includeReasoning);
+                      const filename = safeMarkdownFilename(detail.title || "conversation");
+                      // 域10-1:桌面壳落盘 + 定位;浏览器维持下载(编排层分流)。
+                      await exportTextFile(content, filename);
                     }
-                    const content = await convertConversationToMarkdown(detail, includeReasoning);
-                    const filename = safeMarkdownFilename(detail.title || "conversation");
-                    // 域10-1:桌面壳落盘 + 定位;浏览器维持下载(编排层分流)。
-                    await exportTextFile(content, filename);
-                  }
-                : undefined
-            }
-            onCompressConversation={hasMessages ? handleCompressConversation : undefined}
-            getOptimizeContext={getOptimizeContext}
-            conversationId={activeId}
-            onToggleVoiceMode={voiceSupported || voiceActive ? handleToggleVoiceMode : undefined}
-            voiceModeActive={voiceActive}
-          />
-        </div>
-      </div>
-
-      {dropActive ? (
-        // 落点提示层:三区等分,命中区亮起品牌色薄底 + 描边,并给一句"放手会发生什么"。
-        // 只在本列接受当前拖拽时挂载 —— 不接受时既不拦指针也不亮,用户能看出此处不可放。
-        <div
-          className={cn("absolute inset-x-0 bottom-0 z-30", overlayTop)}
-          onDragOver={(event) => {
-            const zone = resolveDropZone(event);
-            // 拖本组焦点容器落回自己的中区 = 并入它已在的组,什么都不会发生:既不亮也不
-            // 拦指针(光标保持"不可放"),别承诺一个空动作。左右缘才是"拆出去"。
-            if (selfContainerDrag && zone === "center") {
-              setDropZone(null);
-              return;
-            }
-            event.preventDefault();
-            setDropZone(zone);
-          }}
-          onDragLeave={() => setDropZone(null)}
-          onDrop={handleZoneDrop}
-        >
-          {(["left", "center", "right"] as const).map((zone) => (
-            <div
-              key={zone}
-              className={cn(
-                "pointer-events-none absolute inset-y-1 flex items-center justify-center rounded-xl transition-all duration-150",
-                zone === "left" && "left-1 w-1/4",
-                zone === "center" && "left-1/4 right-1/4",
-                zone === "right" && "right-1 w-1/4",
-                dropZone === zone
-                  ? "bg-primary/10 ring-1 ring-primary/30"
-                  : "ring-1 ring-transparent",
-              )}
-            >
-              {dropZone === zone ? (
-                <span className="rounded-full bg-[var(--ds-surface-100)] px-2.5 py-1 text-mini font-medium text-[var(--ds-text-secondary)] shadow-[var(--ds-elevation-100)]">
-                  {t(
-                    zone === "center"
-                      ? "workspace.tabs.drop_hint_merge"
-                      : "workspace.tabs.drop_hint_split",
-                  )}
-                </span>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <Dialog
-        open={compressDialogOpen}
-        onOpenChange={(open) => !compressing && setCompressDialogOpen(open)}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t("conversations.compress.dialog_title")}</DialogTitle>
-            <DialogDescription>
-              {isWorkspaceConversation
-                ? t("conversations.compress.workspace_description")
-                : t("conversations.compress.dialog_description")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5">
-            {/* P5:工作区会话走 pi 原生压缩,目标 Token/保留最近消息是 UI 历史压缩的
-                参数(服务端忽略),隐藏以免误导;额外要求透传为压缩自定义指示。 */}
-            {!isWorkspaceConversation ? (
-              <>
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">{t("conversations.compress.target_tokens")}</div>
-                  <div className="grid grid-cols-4 gap-2">
-                    {COMPRESS_TOKEN_OPTIONS.map((value) => (
-                      <Button
-                        key={value}
-                        type="button"
-                        variant={compressTargetTokens === value ? "default" : "outline"}
-                        onClick={() => setCompressTargetTokens(value)}
-                      >
-                        {value}
-                      </Button>
-                    ))}
-                  </div>
-                  <Input
-                    type="number"
-                    min={256}
-                    value={compressTargetTokens}
-                    onChange={(event) =>
-                      setCompressTargetTokens(Math.max(256, Number(event.target.value) || 2000))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">{t("conversations.compress.keep_recent")}</div>
-                  <div className="grid grid-cols-4 gap-2">
-                    {COMPRESS_KEEP_OPTIONS.map((value) => (
-                      <Button
-                        key={value}
-                        type="button"
-                        variant={compressKeepRecent === value ? "default" : "outline"}
-                        onClick={() => setCompressKeepRecent(value)}
-                      >
-                        {value}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : null}
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">
-                {t("conversations.compress.additional_prompt")}
-              </span>
-              <Textarea
-                value={compressAdditionalPrompt}
-                onChange={(event) => setCompressAdditionalPrompt(event.target.value)}
-                placeholder={t("conversations.compress.additional_placeholder")}
-                className="min-h-28"
-              />
-            </label>
+                  : undefined
+              }
+              onCompressConversation={hasMessages ? handleCompressConversation : undefined}
+              getOptimizeContext={getOptimizeContext}
+              conversationId={activeId}
+              onToggleVoiceMode={voiceSupported || voiceActive ? handleToggleVoiceMode : undefined}
+              voiceModeActive={voiceActive}
+            />
           </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                // R7-4:压缩中点取消 = 中止请求并关框(后端保证取消后不改写会话);
-                // 未压缩时就是普通关闭。取消句柄在全局 store,切页回来仍可取消。
-                if (activeId) useCompressStore.getState().cancel(activeId);
-                setCompressDialogOpen(false);
-              }}
-            >
-              {t("conversations.compress.cancel")}
-            </Button>
-            <Button
-              type="button"
-              disabled={compressing}
-              onClick={() => void handleConfirmCompressConversation()}
-            >
-              {compressing ? <Loader2 className="size-4 animate-spin" /> : null}
-              {t("conversations.compress.start")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={Boolean(translationDialogMessageId)}
-        onOpenChange={(open) => {
-          if (!open && !translatingMessage) setTranslationDialogMessageId(null);
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t("conversations.translate.dialog_title")}</DialogTitle>
-            <DialogDescription>{t("conversations.translate.dialog_description")}</DialogDescription>
-          </DialogHeader>
-          <Select value={translationLanguage} onValueChange={setTranslationLanguage}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TRANSLATION_LANGUAGES.map((language) => (
-                <SelectItem key={language.value} value={language.value}>
-                  {t(`conversations.translate.lang.${language.value}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={translatingMessage}
-              onClick={() => setTranslationDialogMessageId(null)}
-            >
-              {t("conversations.translate.cancel")}
-            </Button>
-            <Button
-              type="button"
-              disabled={translatingMessage}
-              onClick={() => void handleConfirmTranslateMessage()}
-            >
-              {translatingMessage ? <Loader2 className="size-4 animate-spin" /> : null}
-              {t("conversations.translate.confirm")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={systemPromptDialogOpen} onOpenChange={setSystemPromptDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("conversations.custom_prompt.dialog_title")}</DialogTitle>
-            <DialogDescription>
-              {t("conversations.custom_prompt.dialog_description")}
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            value={systemPromptDraft}
-            onChange={(event) => setSystemPromptDraft(event.target.value)}
-            className="min-h-72 font-mono text-xs leading-relaxed"
-            placeholder={t("conversations.custom_prompt.dialog_placeholder")}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSystemPromptDialogOpen(false)}>
-              {t("conversations.custom_prompt.cancel")}
-            </Button>
-            <Button onClick={() => void handleSaveConversationSystemPrompt()} disabled={!activeId}>
-              {t("conversations.custom_prompt.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        </div>
+
+        {dropActive ? (
+          // 落点提示层:三区等分,命中区亮起品牌色薄底 + 描边,并给一句"放手会发生什么"。
+          // 只在本列接受当前拖拽时挂载 —— 不接受时既不拦指针也不亮,用户能看出此处不可放。
+          <div
+            className={cn("absolute inset-x-0 bottom-0 z-30", overlayTop)}
+            onDragOver={(event) => {
+              const zone = resolveDropZone(event);
+              // 拖本组焦点容器落回自己的中区 = 并入它已在的组,什么都不会发生:既不亮也不
+              // 拦指针(光标保持"不可放"),别承诺一个空动作。左右缘才是"拆出去"。
+              if (selfContainerDrag && zone === "center") {
+                setDropZone(null);
+                return;
+              }
+              event.preventDefault();
+              setDropZone(zone);
+            }}
+            onDragLeave={() => setDropZone(null)}
+            onDrop={handleZoneDrop}
+          >
+            {(["left", "center", "right"] as const).map((zone) => (
+              <div
+                key={zone}
+                className={cn(
+                  "pointer-events-none absolute inset-y-1 flex items-center justify-center rounded-xl transition-all duration-150",
+                  zone === "left" && "left-1 w-1/4",
+                  zone === "center" && "left-1/4 right-1/4",
+                  zone === "right" && "right-1 w-1/4",
+                  dropZone === zone
+                    ? "bg-primary/10 ring-1 ring-primary/30"
+                    : "ring-1 ring-transparent",
+                )}
+              >
+                {dropZone === zone ? (
+                  <span className="rounded-full bg-[var(--ds-surface-100)] px-2.5 py-1 text-mini font-medium text-[var(--ds-text-secondary)] shadow-[var(--ds-elevation-100)]">
+                    {t(
+                      zone === "center"
+                        ? "workspace.tabs.drop_hint_merge"
+                        : "workspace.tabs.drop_hint_split",
+                    )}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <Dialog
+          open={compressDialogOpen}
+          onOpenChange={(open) => !compressing && setCompressDialogOpen(open)}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{t("conversations.compress.dialog_title")}</DialogTitle>
+              <DialogDescription>
+                {isWorkspaceConversation
+                  ? t("conversations.compress.workspace_description")
+                  : t("conversations.compress.dialog_description")}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-5">
+              {/* P5:工作区会话走 pi 原生压缩,目标 Token/保留最近消息是 UI 历史压缩的
+                参数(服务端忽略),隐藏以免误导;额外要求透传为压缩自定义指示。 */}
+              {!isWorkspaceConversation ? (
+                <>
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">
+                      {t("conversations.compress.target_tokens")}
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {COMPRESS_TOKEN_OPTIONS.map((value) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          variant={compressTargetTokens === value ? "default" : "outline"}
+                          onClick={() => setCompressTargetTokens(value)}
+                        >
+                          {value}
+                        </Button>
+                      ))}
+                    </div>
+                    <Input
+                      type="number"
+                      min={256}
+                      value={compressTargetTokens}
+                      onChange={(event) =>
+                        setCompressTargetTokens(Math.max(256, Number(event.target.value) || 2000))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">
+                      {t("conversations.compress.keep_recent")}
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {COMPRESS_KEEP_OPTIONS.map((value) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          variant={compressKeepRecent === value ? "default" : "outline"}
+                          onClick={() => setCompressKeepRecent(value)}
+                        >
+                          {value}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+              <label className="block space-y-2">
+                <span className="text-sm font-medium">
+                  {t("conversations.compress.additional_prompt")}
+                </span>
+                <Textarea
+                  value={compressAdditionalPrompt}
+                  onChange={(event) => setCompressAdditionalPrompt(event.target.value)}
+                  placeholder={t("conversations.compress.additional_placeholder")}
+                  className="min-h-28"
+                />
+              </label>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  // R7-4:压缩中点取消 = 中止请求并关框(后端保证取消后不改写会话);
+                  // 未压缩时就是普通关闭。取消句柄在全局 store,切页回来仍可取消。
+                  if (activeId) useCompressStore.getState().cancel(activeId);
+                  setCompressDialogOpen(false);
+                }}
+              >
+                {t("conversations.compress.cancel")}
+              </Button>
+              <Button
+                type="button"
+                disabled={compressing}
+                onClick={() => void handleConfirmCompressConversation()}
+              >
+                {compressing ? <Loader2 className="size-4 animate-spin" /> : null}
+                {t("conversations.compress.start")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={Boolean(translationDialogMessageId)}
+          onOpenChange={(open) => {
+            if (!open && !translatingMessage) setTranslationDialogMessageId(null);
+          }}
+        >
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>{t("conversations.translate.dialog_title")}</DialogTitle>
+              <DialogDescription>
+                {t("conversations.translate.dialog_description")}
+              </DialogDescription>
+            </DialogHeader>
+            <Select value={translationLanguage} onValueChange={setTranslationLanguage}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSLATION_LANGUAGES.map((language) => (
+                  <SelectItem key={language.value} value={language.value}>
+                    {t(`conversations.translate.lang.${language.value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={translatingMessage}
+                onClick={() => setTranslationDialogMessageId(null)}
+              >
+                {t("conversations.translate.cancel")}
+              </Button>
+              <Button
+                type="button"
+                disabled={translatingMessage}
+                onClick={() => void handleConfirmTranslateMessage()}
+              >
+                {translatingMessage ? <Loader2 className="size-4 animate-spin" /> : null}
+                {t("conversations.translate.confirm")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={systemPromptDialogOpen} onOpenChange={setSystemPromptDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{t("conversations.custom_prompt.dialog_title")}</DialogTitle>
+              <DialogDescription>
+                {t("conversations.custom_prompt.dialog_description")}
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={systemPromptDraft}
+              onChange={(event) => setSystemPromptDraft(event.target.value)}
+              className="min-h-72 font-mono text-xs leading-relaxed"
+              placeholder={t("conversations.custom_prompt.dialog_placeholder")}
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSystemPromptDialogOpen(false)}>
+                {t("conversations.custom_prompt.cancel")}
+              </Button>
+              <Button
+                onClick={() => void handleSaveConversationSystemPrompt()}
+                disabled={!activeId}
+              >
+                {t("conversations.custom_prompt.save")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </PaneContainerProvider>
   );
 });
@@ -2452,9 +2593,7 @@ function ConversationsPageInner() {
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const workspaceOf = React.useCallback(
     (container: ContainerKey) =>
-      container === CHAT_CONTAINER
-        ? undefined
-        : workspaces.find((item) => item.id === container),
+      container === CHAT_CONTAINER ? undefined : workspaces.find((item) => item.id === container),
     [workspaces],
   );
   // 侧栏语义随容器切换(方案 §3.1):只列当前容器的会话;完整列表仍用于标题查找等。
@@ -2734,209 +2873,8 @@ function ConversationsPageInner() {
       payload: workbenchPanelContext,
     });
   }
-  const workbenchPanelRef = React.useRef<PanelImperativeHandle | null>(null);
-  // 工作台面板根节点:开合时给 flex-grow 挂 200ms 线性过渡,复刻左栏宽度动画。
-  const workbenchPanelElementRef = React.useRef<HTMLDivElement | null>(null);
-  // 卡面节点:开合期间把宽度钉死,由面板 overflow 裁切 —— 左栏卡片是"定宽滑出、视口
-  // 裁切",右栏若让卡面跟着 flex-grow 一起缩,中间帧文字会重新折行(空态文案竖排)。
-  const workbenchCardRef = React.useRef<HTMLDivElement | null>(null);
-  // 用户上次调整的工作台宽度(占组宽百分比),关闭再打开时恢复。
-  const workbenchWidthRef = React.useRef(WORKBENCH_DEFAULT_WIDTH_PCT);
-  // 程序化开合(200ms 过渡)期间 onResize 会按帧报中间尺寸:关闭后半程穿过 minSize
-  // 时若不屏蔽,20.6% 这类残宽会覆盖用户的宽度记忆,下次重开只剩一条缝。
-  const workbenchAnimatingRef = React.useRef(false);
-  // 右侧工作台:与分组面板平级的一整块浮起卡片(左栏镜像)——上下留画布边距、
-  // 18px 圆角、sidebar 底色 + elevation 阴影。宽度仍可拖,开合由 flex-grow 过渡。
-  const workbenchPane = (
-    <>
-      <ResizableHandle
-        withHandle={false}
-        className={cn(
-          // 分隔条就是右栏的"gap":与面板同起同落(200ms),不能等 220ms 保留期结束后
-          // 再缩 8px —— 那会在卡片已经滑完之后又拖出一段二次位移,左栏没有这种尾动作。
-          "w-2 bg-transparent transition-[width] duration-200 ease-linear hover:bg-border/60",
-          !panel && "w-0 pointer-events-none",
-        )}
-      />
-      <ResizablePanel
-        id="workbench-panel"
-        defaultSize="0%"
-        minSize={`${WORKBENCH_MIN_WIDTH_PCT}%`}
-        maxSize="60%"
-        collapsible
-        collapsedSize="0%"
-        panelRef={workbenchPanelRef}
-        elementRef={workbenchPanelElementRef}
-        onResize={(size) => {
-          // 只记有效宽度:关闭态/收起吸附产生的 0、以及程序化过渡的中间帧都不算偏好。
-          if (!workbenchAnimatingRef.current && size.asPercentage >= WORKBENCH_MIN_WIDTH_PCT) {
-            workbenchWidthRef.current = size.asPercentage;
-          }
-        }}
-        className="flex min-h-0 flex-col"
-      >
-        {displayedPanel ? (
-          <div
-            ref={workbenchCardRef}
-            className={cn(
-              // 卡面与左栏同源(bg-sidebar + elevation-100);右栏卡贴着分栏根节点,
-              // overflow:hidden 会把 elevation 向外的投影裁掉三面,只剩卡内一道几乎看不见的
-              // 白高光——这正是"右栏没有边缘阴影、看着比左栏平"的原因。外投影拿不回来,
-              // 就用 1px 实边补上轮廓(实测 rgba 0.06 在 1x 下与左栏 220~235 的边线同量级),
-              // elevation 的高光仍留在边内侧,读起来仍是同一张浮起的纸。
-              "flex h-full min-h-0 flex-col overflow-hidden rounded-[18px] border border-black/[0.06] bg-sidebar shadow-[var(--ds-elevation-100)]",
-              !panel && "pointer-events-none",
-            )}
-          >
-            {/* 卡面着色统一由外层负责;Host 自身透明才能让 elevation 的白色高光透出来,
-                与左栏卡面同一观感(抽屉里仍用 Host 自己的 bg-sidebar)。 */}
-            <WorkbenchHost
-              panel={displayedPanel}
-              onClose={closePanel}
-              activeConversationId={activeId}
-              className="bg-transparent"
-            />
-          </div>
-        ) : null}
-      </ResizablePanel>
-    </>
-  );
   // 一级分栏的组面板组:新组成立即与它组等宽(用户抱怨"拆完两栏不对称")。
   const outerGroupRef = React.useRef<GroupImperativeHandle | null>(null);
-  // 右栏开合时 v4 优先从"最近的一组"抽空间:两栏 50/50 会变成 46/18(最后一组被压到
-  // minSize),关掉后也回不到 50/50。开合前记住组间比例,按比例整组让位/回位,
-  // 右栏才像左栏一样整体平移,而不是单方面压扁最后一组。
-  const groupRatiosRef = React.useRef<number[] | null>(null);
-  const workbenchWasOpenRef = React.useRef(false);
-
-  // 工作台开合的根治方案(用户反馈:关闭后空间不回收/拖到边缘后重开只剩一条缝):
-  // react-resizable-panels v4 的三个坑一起踩过——
-  //   1. 数字尺寸按"像素"解析(字符串才是百分比),原 defaultSize={36}/minSize={24}
-  //      全是像素级碎宽,面板可被拖成任意残缝;
-  //   2. 动态 defaultSize 在 Panel 的重注册依赖里,每次开关都触发 unregister/register,
-  //      清空宽度记忆并与命令式调用竞态——关闭后 collapse() 的结果被重注册布局盖掉;
-  //   3. expand() 仅在当前尺寸"恰好等于 collapsedSize"时动作,残缝宽度让它彻底失灵。
-  // 因此:约束全部改为静态百分比字符串(杜绝重注册),开合一律用无前置条件的 resize()
-  // 显式驱动,宽度记忆由 onResize 维护。
-  React.useEffect(() => {
-    if (isMobile) return;
-
-    const workbenchPanel = workbenchPanelRef.current;
-    if (!workbenchPanel) return;
-
-    // 左栏是 200ms 线性滑出(CSS transition);右栏由 flex-grow 驱动,补同款过渡。
-    // 过渡只挂在程序化开合这一瞬——常驻会拖慢用户拖分隔条的跟手感。
-    const element = workbenchPanelElementRef.current;
-    const card = workbenchCardRef.current;
-    const opening = Boolean(panel);
-    workbenchAnimatingRef.current = true;
-    if (element) {
-      element.style.transition = "flex-grow 200ms linear";
-    }
-    // 与左栏同一套观感:卡片宽度全程不变,只被裁切。展开时钉到终态像素宽,收起时钉到
-    // 当前宽(此刻面板还没开始缩,量到的就是展开宽);过渡结束再交还自适应。
-    if (card && element) {
-      let pinnedWidth = 0;
-      if (opening) {
-        // 库内百分比的分母 = 组内各面板 offsetWidth 之和(不含分隔条)。这一刻工作台
-        // 面板为 0、分隔条正从 w-0 过渡到 w-2,先把还没长出来的宽度扣掉,卡片终宽
-        // 才不会比面板略宽一截(差值在过渡结束时交还自适应会带来一次微小重排)。
-        const groupElement = element.parentElement;
-        if (groupElement) {
-          let available = 0;
-          for (const child of Array.from(groupElement.children)) {
-            if (child instanceof HTMLElement && child.hasAttribute("data-panel")) {
-              available += child.offsetWidth;
-            }
-          }
-          const separator = element.previousElementSibling;
-          const separatorNow =
-            separator instanceof HTMLElement ? separator.getBoundingClientRect().width : 0;
-          // 分隔条 w-2 = 0.5rem,rem 随「界面字号缩放」变(见 app.css 的 :root font-size),
-          // 所以按根字号折算终宽,而不是硬编码 8px。
-          const separatorTarget =
-            (parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16) * 0.5;
-          available = Math.max(0, available - Math.max(0, separatorTarget - separatorNow));
-          pinnedWidth = (available * workbenchWidthRef.current) / 100;
-        }
-      } else {
-        pinnedWidth = element.getBoundingClientRect().width;
-      }
-      if (pinnedWidth > 0) {
-        card.style.width = `${pinnedWidth}px`;
-      }
-    }
-    const target = panel ? `${workbenchWidthRef.current}%` : "0%";
-    const wasOpen = workbenchWasOpenRef.current;
-    workbenchWasOpenRef.current = opening;
-    const group = outerGroupRef.current;
-    const groupIds = groups.length > 1 ? groups.map((_, gi) => `group-panel-${gi}`) : [];
-    const readGroupRatios = () => {
-      if (!group || groupIds.length === 0) return null;
-      try {
-        const layout = group.getLayout();
-        const sizes = groupIds.map((id) => layout[id]);
-        if (sizes.some((size) => !Number.isFinite(size))) return null;
-        const total = sizes.reduce((sum, size) => sum + size, 0);
-        return total > 0 ? sizes.map((size) => size / total) : null;
-      } catch {
-        return null;
-      }
-    };
-    // 只在新开面板时采样组间比例;多栏拆分(groups.length 变化)后面板会重注册,
-    // 旧比例长度对不上时按等宽兜底,让"拆完等宽"的既有语义继续成立。
-    if (opening && !wasOpen) {
-      const ratios = readGroupRatios();
-      if (ratios) groupRatiosRef.current = ratios;
-    }
-    // 兜底:窄屏↔宽屏切换、一级分栏拆合时,面板会搬到新 PanelGroup 重新注册,组的 layout
-    // 要到首测之后才建立,resize 会抛 "Layout not found for Panel"(不接就进错误边界,
-    // 或被对称布局按 0 宽定型)。逐帧重试到 layout 就绪,最多约 10 帧。
-    const applyResize = () => {
-      try {
-        workbenchPanel.resize(target);
-        // resize 后按记忆比例整组重铺:关合时组间保持原比例;展开时各组等比例让位,
-        // 不让 v4 把最后一组单独压到 minSize。单栏布局没有 outerGroupRef,自动跳过。
-        // 面板本来就关着且不是"刚关完"时(如初次挂载/面板关闭状态下拆栏),不要碰用户布局。
-        if (group && groupIds.length > 0 && (opening || wasOpen)) {
-          const ratios =
-            groupRatiosRef.current?.length === groupIds.length
-              ? groupRatiosRef.current
-              : groupIds.map(() => 1 / groupIds.length);
-          const remaining = opening ? Math.max(0, 100 - workbenchWidthRef.current) : 100;
-          group.setLayout({
-            ...Object.fromEntries(groupIds.map((id, index) => [id, ratios[index]! * remaining])),
-            "workbench-panel": opening ? workbenchWidthRef.current : 0,
-          });
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    let retryFrame = 0;
-    let retries = 0;
-    const retryResize = () => {
-      if (applyResize()) return;
-      retries += 1;
-      if (retries < 10) retryFrame = window.requestAnimationFrame(retryResize);
-    };
-    if (!applyResize()) {
-      retryFrame = window.requestAnimationFrame(retryResize);
-    }
-    const timer = window.setTimeout(() => {
-      workbenchAnimatingRef.current = false;
-      if (element) element.style.transition = "";
-      // 过渡结束,卡面交还自适应宽度。此刻面板已是终态宽,两者的差只剩亚像素级测量误差。
-      if (card) card.style.width = "";
-    }, 220);
-    return () => {
-      window.clearTimeout(timer);
-      if (retryFrame) window.cancelAnimationFrame(retryFrame);
-    };
-    // groups.length:拆/合一级分栏会把这个面板搬到另一个 PanelGroup 重新注册(尺寸归零),
-    // 面板开着时要按记忆宽度补回,否则内容还在、卡片却塌成一条缝。
-  }, [panel, isMobile, groups.length]);
 
   // 一级分栏对称初值(用户反馈:拖出一级分栏后两栏不是默认对称摆放):
   // v4 的动态面板仅保证 minSize 合规,新组会按比例摊薄既有宽度(如 95/5 拆成 90/5/5)。
@@ -2951,7 +2889,6 @@ function ConversationsPageInner() {
     const group = outerGroupRef.current;
     if (!group) return;
     const layout = group.getLayout();
-    const workbench = hasWorkbenchPanel ? Math.max(0, layout["workbench-panel"] ?? 0) : 0;
     const ids = groups.map((_, gi) => `group-panel-${gi}`);
     const sizes = ids.map((id) => layout[id] ?? NaN);
     const alreadyEqual = sizes.every(
@@ -2961,9 +2898,9 @@ function ConversationsPageInner() {
     // 绝不写半截布局(见下"5% 裂条"风险)。
     if (!sizes.every((size) => Number.isFinite(size))) return;
     if (!alreadyEqual) return;
-    const share = (100 - workbench) / ids.length;
+    const share = 100 / ids.length;
     group.setLayout(Object.fromEntries(ids.map((id) => [id, share])));
-  }, [groups, isMobile, hasWorkbenchPanel]);
+  }, [groups, isMobile]);
 
   // 全局拖放附件落进聚焦窗格的草稿(草稿键推导与窗格内 useDraftInputController 一致)。
   const focusedDraftKey = activeId ?? (isHomeRoute ? homeDraftId : null);
@@ -3081,140 +3018,165 @@ function ConversationsPageInner() {
               L 轮分区模型:分栏时每组是一块同款"撞色带 + 白面板"的独立单元(自己的一级
               标签栏只列本组成员 + 自己的内容列),与二级分栏"每列一条会话标签栏"同构;
               组间由画布色缝隙分隔 —— "两个组"是比"同组两列"更重的边界。 */}
-          {groups.length === 1 || isMobile ? (
-            <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1">
-              <ResizablePanel id="group-panel-0" minSize="18%" className="flex min-h-0 flex-col">
-                <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
-              {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
+          {/* 分栏组与工作台浮卡并排:工作台是组外的 flex 兄弟,宽度由自己的状态驱动,
+              不参与 v4 布局,开关与拖宽都不会和分栏互相改写。 */}
+          <div className="flex min-h-0 flex-1">
+            {groups.length === 1 || isMobile ? (
+              <ResizablePanelGroup
+                orientation="horizontal"
+                className="relative isolate flex min-h-0 min-w-0 flex-1"
+              >
+                <ResizablePanel id="group-panel-0" minSize="18%" className="flex min-h-0 flex-col">
+                  <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
+                    {/* 一级容器标签行:窗控/拖拽由上方 WindowControlsBar 负责,本行纯交互。
                   z-[3] 压过白面板的 elevation-100 外环阴影:否则那道
                   0.5px 暗环会横穿焦点标签与面板的连接处,连体处凭空多出一条缝。 */}
-              <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
-                <CollapsedSidebarTrigger />
-                <div className="relative flex h-full min-w-0 flex-1 items-end">
-                  <ContainerTabBar
-                    group={groups[0] ?? [CHAT_CONTAINER]}
-                    groupIndex={0}
-                    ghostTabs={ghostTabs}
-                    headerTrailing={<ContainerPlusMenu />}
-                  />
-                </div>
-                {/* 面板开着时由卡片头部（与左栏折叠钮镜像的 PanelRight）关闭，
+                    <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
+                      <CollapsedSidebarTrigger />
+                      <div className="relative flex h-full min-w-0 flex-1 items-end">
+                        <ContainerTabBar
+                          group={groups[0] ?? [CHAT_CONTAINER]}
+                          groupIndex={0}
+                          ghostTabs={ghostTabs}
+                          headerTrailing={<ContainerPlusMenu />}
+                        />
+                      </div>
+                      {/* 面板开着时由卡片头部（与左栏折叠钮镜像的 PanelRight）关闭，
                     和左栏“展开后收起钮移入卡内”同构，不在标签行重复一个图标。 */}
-                {!isMobile && !panel ? <WorkbenchToggle {...workbenchPanelContext} /> : null}
-              </div>
-              {/* 白色圆角内容面板:surface-200 底 + elevation-100,盖住撞色带主体,
+                      {!isMobile && !panel ? <WorkbenchToggle {...workbenchPanelContext} /> : null}
+                    </div>
+                    {/* 白色圆角内容面板:surface-200 底 + elevation-100,盖住撞色带主体,
                   焦点页签经连接条与面板连体;底部圆角与 wrapper 的 18px 对齐。
                   分栏:面板内是 1..MAX_PANES 个会话列(同容器的二级窗格);工作台卡片
-                  在组外与组并列,是左栏的镜像浮卡(见 workbenchPane)。 */}
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
-                {!isMobile ? (
-                  <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-                    {columns.map((column, index) => (
-                      <React.Fragment key={`${column.container}:${column.paneIndex}`}>
-                        {index > 0 ? <ResizableHandle /> : null}
-                        <ResizablePanel
-                          id={`conversation-column-${column.container}-${column.paneIndex}`}
-                          minSize="18%"
-                          className="flex min-h-0 flex-col"
-                        >
-                          {renderColumn(column)}
-                        </ResizablePanel>
-                      </React.Fragment>
-                    ))}
-                  </ResizablePanelGroup>
-                ) : (
-                  // 窄屏不分栏:只渲染焦点列(其它列的状态保留,回宽屏即恢复)。
-                  renderColumn(
-                    columns.find(
-                      (column) =>
-                        column.container === activeContainer && column.paneIndex === focusedPaneIndex,
-                    ) ?? columns[0]!,
-                  )
-                )}
+                  在组外与组并列,是左栏的镜像浮卡(见 WorkbenchSide)。 */}
+                    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
+                      {!isMobile ? (
+                        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
+                          {columns.map((column, index) => (
+                            <React.Fragment key={`${column.container}:${column.paneIndex}`}>
+                              {index > 0 ? <ResizableHandle /> : null}
+                              <ResizablePanel
+                                id={`conversation-column-${column.container}-${column.paneIndex}`}
+                                minSize="18%"
+                                className="flex min-h-0 flex-col"
+                              >
+                                {renderColumn(column)}
+                              </ResizablePanel>
+                            </React.Fragment>
+                          ))}
+                        </ResizablePanelGroup>
+                      ) : (
+                        // 窄屏不分栏:只渲染焦点列(其它列的状态保留,回宽屏即恢复)。
+                        renderColumn(
+                          columns.find(
+                            (column) =>
+                              column.container === activeContainer &&
+                              column.paneIndex === focusedPaneIndex,
+                          ) ?? columns[0]!,
+                        )
+                      )}
 
-                {isMobile && panel ? (
-                  <Drawer
-                    open={hasWorkbenchPanel}
-                    onOpenChange={(open) => {
-                      if (!open) {
-                        closePanel();
-                      }
-                    }}
-                    direction="bottom"
-                  >
-                    <DrawerContent className="h-[85vh] max-h-[85vh]">
-                      <WorkbenchHost panel={panel} onClose={closePanel} activeConversationId={activeId} />
-                    </DrawerContent>
-                  </Drawer>
-                ) : null}
-              </div>
-                </div>
-              </ResizablePanel>
-              {/* 窄屏走抽屉:不渲染并排卡片,否则会在抽屉底下再挤出一张右栏。 */}
-              {!isMobile ? workbenchPane : null}
-            </ResizablePanelGroup>
-          ) : (
-            // L 轮分区模型分栏:每组 = 撞色带 wrapper(自己的一级标签栏,渲染本组全部
-            // 标签)+ 白面板(该组焦点容器的二级列);右侧工作台也是同款浮卡,与所有组并列
-            // 可调。"新建容器"入口只在全局焦点组的标签栏上。
-            <ResizablePanelGroup orientation="horizontal" className="relative isolate flex min-h-0 flex-1" groupRef={outerGroupRef}>
-              {groups.map((group, groupIndex) => {
-                const focus = group.includes(activeContainer) ? activeContainer : group[0]!;
-                const groupColumns = columns.filter((column) => column.container === focus);
-                return (
-                  // 面板 id 按下标而非焦点容器命名:焦点容器随用户点击切换,若 id 跟着换,
-                  // v4 视作新面板注册,宽度记忆全丢。
-                  <React.Fragment key={groupIndex}>
-                    {groupIndex > 0 ? (
-                      <ResizableHandle className="w-1.5 bg-transparent after:w-1.5" />
-                    ) : null}
-                    <ResizablePanel
-                      id={`group-panel-${groupIndex}`}
-                      minSize="18%"
-                      className="flex min-h-0 flex-col"
-                    >
-                      <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
-                        {/* z-[3] 同单组分支:压过面板阴影外环,连体处不出缝(见上方注释) */}
-                        <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
-                          <div className="relative flex h-full min-w-0 flex-1 items-end">
-                            <ContainerTabBar
-                              group={group}
-                              groupIndex={groupIndex}
-                              ghostTabs={group.includes(activeContainer) ? ghostTabs : []}
-                              headerTrailing={group.includes(activeContainer) ? <ContainerPlusMenu /> : null}
+                      {isMobile && panel ? (
+                        <Drawer
+                          open={hasWorkbenchPanel}
+                          onOpenChange={(open) => {
+                            if (!open) {
+                              closePanel();
+                            }
+                          }}
+                          direction="bottom"
+                        >
+                          <DrawerContent className="h-[85vh] max-h-[85vh]">
+                            <WorkbenchHost
+                              panel={panel}
+                              onClose={closePanel}
+                              activeConversationId={activeId}
                             />
+                          </DrawerContent>
+                        </Drawer>
+                      ) : null}
+                    </div>
+                  </div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              // L 轮分区模型分栏:每组 = 撞色带 wrapper(自己的一级标签栏,渲染本组全部
+              // 标签)+ 白面板(该组焦点容器的二级列)。右侧工作台在组外,对所有组一视同仁。
+              <ResizablePanelGroup
+                orientation="horizontal"
+                className="relative isolate flex min-h-0 min-w-0 flex-1"
+                groupRef={outerGroupRef}
+              >
+                {groups.map((group, groupIndex) => {
+                  const focus = group.includes(activeContainer) ? activeContainer : group[0]!;
+                  const groupColumns = columns.filter((column) => column.container === focus);
+                  return (
+                    // 面板 id 按下标而非焦点容器命名:焦点容器随用户点击切换,若 id 跟着换,
+                    // v4 视作新面板注册,宽度记忆全丢。
+                    <React.Fragment key={groupIndex}>
+                      {groupIndex > 0 ? (
+                        <ResizableHandle className="w-1.5 bg-transparent after:w-1.5" />
+                      ) : null}
+                      <ResizablePanel
+                        id={`group-panel-${groupIndex}`}
+                        minSize="18%"
+                        className="flex min-h-0 flex-col"
+                      >
+                        <div className="relative isolate flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--ds-on-surface)] pt-[2px]">
+                          {/* z-[3] 同单组分支:压过面板阴影外环,连体处不出缝(见上方注释) */}
+                          <div className="relative z-[3] flex h-[31px] shrink-0 items-end gap-1 px-1">
+                            <div className="relative flex h-full min-w-0 flex-1 items-end">
+                              <ContainerTabBar
+                                group={group}
+                                groupIndex={groupIndex}
+                                ghostTabs={group.includes(activeContainer) ? ghostTabs : []}
+                                headerTrailing={
+                                  group.includes(activeContainer) ? <ContainerPlusMenu /> : null
+                                }
+                              />
+                            </div>
+                            {/* 同单组分支:面板开着时关闭入口在卡片头部,不在标签行重复。 */}
+                            {groupIndex === groups.length - 1 && !panel ? (
+                              <WorkbenchToggle {...workbenchPanelContext} />
+                            ) : null}
                           </div>
-                          {/* 同单组分支:面板开着时关闭入口在卡片头部,不在标签行重复。 */}
-                          {groupIndex === groups.length - 1 && !panel ? (
-                            <WorkbenchToggle {...workbenchPanelContext} />
-                          ) : null}
+                          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
+                            <ResizablePanelGroup
+                              orientation="horizontal"
+                              className="min-h-0 flex-1"
+                            >
+                              {groupColumns.map((column, index) => (
+                                <React.Fragment key={`${column.container}:${column.paneIndex}`}>
+                                  {index > 0 ? <ResizableHandle /> : null}
+                                  <ResizablePanel
+                                    id={`conversation-column-${column.container}-${column.paneIndex}`}
+                                    minSize="18%"
+                                    className="flex min-h-0 flex-col"
+                                  >
+                                    {renderColumn(column)}
+                                  </ResizablePanel>
+                                </React.Fragment>
+                              ))}
+                            </ResizablePanelGroup>
+                          </div>
                         </div>
-                        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[16px] rounded-b-[18px] bg-[var(--ds-surface-200)] shadow-[var(--ds-elevation-100)]">
-                          <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-                            {groupColumns.map((column, index) => (
-                              <React.Fragment key={`${column.container}:${column.paneIndex}`}>
-                                {index > 0 ? <ResizableHandle /> : null}
-                                <ResizablePanel
-                                  id={`conversation-column-${column.container}-${column.paneIndex}`}
-                                  minSize="18%"
-                                  className="flex min-h-0 flex-col"
-                                >
-                                  {renderColumn(column)}
-                                </ResizablePanel>
-                              </React.Fragment>
-                            ))}
-                          </ResizablePanelGroup>
-                        </div>
-                      </div>
-                    </ResizablePanel>
-                  </React.Fragment>
-                );
-              })}
-              {workbenchPane}
-            </ResizablePanelGroup>
-          )}
+                      </ResizablePanel>
+                    </React.Fragment>
+                  );
+                })}
+              </ResizablePanelGroup>
+            )}
+            {!isMobile ? (
+              <WorkbenchSide
+                open={Boolean(panel)}
+                onClose={closePanel}
+                panel={displayedPanel}
+                activeConversationId={activeId}
+              />
+            ) : null}
+          </div>
         </SidebarInset>
-        </SidebarProvider>
+      </SidebarProvider>
     </div>
   );
 }

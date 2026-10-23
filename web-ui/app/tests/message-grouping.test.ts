@@ -108,6 +108,27 @@ describe("groupMessageParts:抽屉合并分组", () => {
     expect(blocks.map((b) => b.type)).toEqual(["thinking", "pendingTool"]);
   });
 
+  test("ask_user 待回答时即使夹在长链中间也抽出独立块(折叠深度管不到它)", () => {
+    // 「折叠全部思考与工具步骤」把链内默认深度降到 0;ask_user 走 pendingTool
+    // 顶层卡,与链的折叠参数无关——这里锁住它永远不在链内。
+    const ask = tool("ask_user", { approvalState: { type: "pending" } });
+    const blocks = groupMessageParts([
+      reasoning(),
+      tool("search_web"),
+      tool("scrape_web"),
+      ask,
+      tool("scrape_web"),
+      reasoning(),
+    ]);
+    expect(blocks.map((b) => b.type)).toEqual(["thinking", "pendingTool", "thinking"]);
+    const askBlock = blocks[1];
+    expect(askBlock?.type === "pendingTool" && askBlock.tool.toolName).toBe("ask_user");
+    const chainToolNames = blocks.flatMap((b) =>
+      b.type === "thinking" ? b.steps.flatMap((s) => (s.type === "tool" ? [s.tool.toolName] : [])) : [],
+    );
+    expect(chainToolNames).not.toContain("ask_user");
+  });
+
   test("被拒动作走失败抽出而非留链", () => {
     const blocks = groupMessageParts([
       tool("edit", { approvalState: { type: "denied", reason: "危险" } }),

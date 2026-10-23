@@ -8,7 +8,7 @@ import type { S3Config, WebDavConfig } from "../foundation/types";
 import { backupStamp } from "../foundation/utils";
 import { tempDir } from "../foundation/platform";
 import { stripXmlText } from "../files/index";
-import { createSettingsBackupZipToPath } from "./export";
+import { createSettingsBackupZipToPath, resolveBackupScope } from "./export";
 import { state } from "../persistence/json-store";
 import { streamResponseToTempAndRestore } from "./import";
 import { createKelivoBackupIfEnabled, kelivoExportEnabled } from "./kelivo/service";
@@ -124,7 +124,7 @@ export async function webDavBackup(config: WebDavConfig, onProgress?: (message: 
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
-    const { size } = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg), state.settings.backupScope);
+    const { size } = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg), resolveBackupScope(state.settings));
     onProgress?.("正在上传...", 0);
     const file = Bun.file(zipPath);
     let uploaded = 0;
@@ -397,6 +397,48 @@ export async function s3TestConnection(config: S3Config) {
   if (!response.ok) throw new Error(`S3 测试失败：${response.status} ${text.slice(0, 500)}`);
 }
 
+// 特性 B:媒体参考素材上传（独立 uploadS3Config 桶）。单对象 PUT,字节数有界(图片/短视频),
+// 走内存 Buffer 即可,不涉及备份路径的流式大文件。
+export async function s3PutObject(config: S3Config, key: string, body: Buffer, contentType: string) {
+  const response = await s3Request(config, "PUT", key, { body, contentType, timeoutMs: 120_000 });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`S3 上传失败：${response.status} ${text.slice(0, 500)}`);
+  }
+}
+
+// SigV4 query 预签名（GET,UNSIGNED-PAYLOAD）。用于把本机素材变成供应商可访问的临时 URL。
+export function s3PresignUrl(config: S3Config, key: string, expiresSeconds: number): string {
+  if (!config.accessKeyId || !config.secretAccessKey) throw new Error("S3 凭据未配置");
+  if (!config.bucket) throw new Error("S3 bucket 未配置");
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const region = effectiveS3Region(config);
+  const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+  const { requestUrl, canonicalUri, host } = s3RequestUrl(config, key, {});
+  const query: Record<string, string> = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${config.accessKeyId}/${credentialScope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(Math.max(1, Math.min(Math.trunc(expiresSeconds), 604800))),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const canonicalQuery = Object.entries(query)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${awsUriEncode(k, true)}=${awsUriEncode(v, true)}`)
+    .join("&");
+  const canonicalHeaders = `host:${host}\n`;
+  const canonicalRequest = ["GET", canonicalUri, canonicalQuery, canonicalHeaders, "host", "UNSIGNED-PAYLOAD"].join("\n");
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, credentialScope, sha256Hex(canonicalRequest)].join("\n");
+  const kDate = hmacSha256(`AWS4${config.secretAccessKey}`, dateStamp);
+  const kRegion = hmacSha256(kDate, region);
+  const kService = hmacSha256(kRegion, "s3");
+  const kSigning = hmacSha256(kService, "aws4_request");
+  const signature = createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+  return `${requestUrl}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
 export async function s3ListBackups(config: S3Config) {
   const prefix = `${s3Prefix()}backup_`;
   const items: Array<{ href: string; displayName: string; size: number; lastModified: string }> = [];
@@ -447,7 +489,7 @@ export async function s3Backup(config: S3Config, onProgress?: (message: string, 
   mkdirSync(tmpRoot, { recursive: true });
   const zipPath = join(tmpRoot, fileName);
   try {
-    const { size } = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg), state.settings.backupScope);
+    const { size } = createSettingsBackupZipToPath(zipPath, (msg) => onProgress?.(msg), resolveBackupScope(state.settings));
     onProgress?.("正在上传...", 0);
     const file = Bun.file(zipPath);
     let uploaded = 0;

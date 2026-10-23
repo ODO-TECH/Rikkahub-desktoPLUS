@@ -28,6 +28,11 @@ import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
 import { normalizeTtsProviders } from "../media/tts";
 import { normalizeAsrProviders } from "../media/asr";
 import { normalizeS3Config, normalizeWebDavConfig } from "../app-config/backup-config";
+import {
+  normalizeMediaGenerationProviders,
+  normalizeMediaModelRef,
+  normalizeMediaUploadS3Config,
+} from "../app-config/media-generation-config";
 import { normalizeSshDevices } from "../ssh/devices";
 import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } from "../backup/file-refs";
 import { writeExtractedTextSidecar } from "../files/index";
@@ -80,6 +85,7 @@ export function normalizeState(input: Partial<State>): State {
       : [],
     files: Array.isArray(input.files) ? input.files : [],
     generatedImages: Array.isArray(input.generatedImages) ? input.generatedImages : [],
+    generatedMedia: Array.isArray(input.generatedMedia) ? input.generatedMedia : [],
     logs: [],  // 内存态:启动清空,对齐移动端(performStateSave 写盘排除)
     stats: normalizeRequestStats(input.stats, Array.isArray(input.logs) ? input.logs : []),
     memories: Array.isArray(input.memories) ? input.memories.filter(isRecord).map((memory, index) => {
@@ -321,10 +327,25 @@ export function normalizeState(input: Partial<State>): State {
     : defaults.searchServices.filter((service) => !dismissedSearchTypes.has(searchTypeOf(service)));
   normalized.settings.webDavConfig = normalizeWebDavConfig(normalized.settings.webDavConfig);
   normalized.settings.s3Config = normalizeS3Config(normalized.settings.s3Config);
+  // 特性 B:媒体供应商切片。老 state 无字段 → 空数组/未配置/默认模型 null,行为与旧版一致。
+  normalized.settings.mediaGenerationProviders = normalizeMediaGenerationProviders(
+    normalized.settings.mediaGenerationProviders,
+  );
+  normalized.settings.uploadS3Config = normalizeMediaUploadS3Config(
+    normalized.settings.uploadS3Config,
+    normalizeS3Config,
+  );
+  normalized.settings.defaultMediaImageModel = normalizeMediaModelRef(normalized.settings.defaultMediaImageModel);
+  normalized.settings.defaultMediaVideoModel = normalizeMediaModelRef(normalized.settings.defaultMediaVideoModel);
   normalized.settings.sshDevices = normalizeSshDevices(normalized.settings.sshDevices);
-  // Kelivo 双向同步：缺省开启。同步范围本身不再单独保存——统一由 backupScope 派生
-  // （见下方 unification），云端恢复据此执行。
-  normalized.settings.exportKelivoBackup = normalized.settings.exportKelivoBackup !== false;
+  // Kelivo 兼容备份：默认关闭（它与「全部数据」完整备份不对齐），只有显式开启才生效。
+  normalized.settings.exportKelivoBackup = normalized.settings.exportKelivoBackup === true;
+  // 「全部数据」是独立的备份模式（不是把 12 项勾满）：缺省开启；开启时导出/同步忽略
+  // backupScope，关闭后才按逐项选择执行。
+  normalized.settings.backupAllData = normalized.settings.backupAllData !== false;
+  // Kelivo 兼容包只按细项生成：开着 Kelivo 导出就锁死逐项模式，避免「完整 zip + 半套
+  // Kelivo 包」的错位组合；关掉 Kelivo 后可再开完整备份。
+  if (normalized.settings.exportKelivoBackup) normalized.settings.backupAllData = false;
   // 桌面端备份内容选择：旧 state 无字段时补齐默认(全开)，逐键回退——半截对象不能让某项变成
   // undefined，导出侧按它决定哪些条目进 zip。
   const backupDefaults = defaults.backupScope;
@@ -346,15 +367,17 @@ export function normalizeState(input: Partial<State>): State {
   // 统一同步选项：backupScope 的 8 个实体键是唯一事实来源，kelivoSyncOptions 是给
   //「Kelivo 导入 / 云端恢复」按老契约取用的派生视图。每次加载/恢复都从 backupScope
   // 重算，避免两处开关各说各话（老 state 里单独存过的 kelivoSyncOptions 随此升级让位）。
+  // 「全部数据」模式下派生视图固定全开，逐项开关只留作关闭模式后的记忆。
+  const backupAllData = normalized.settings.backupAllData !== false;
   normalized.settings.kelivoSyncOptions = {
-    conversations: normalized.settings.backupScope.conversations,
-    assistants: normalized.settings.backupScope.assistants,
-    memories: normalized.settings.backupScope.memories,
-    models: normalized.settings.backupScope.models,
-    worldBooks: normalized.settings.backupScope.worldBooks,
-    promptInjections: normalized.settings.backupScope.promptInjections,
-    quickMessages: normalized.settings.backupScope.quickMessages,
-    searchServices: normalized.settings.backupScope.searchServices,
+    conversations: backupAllData || normalized.settings.backupScope.conversations,
+    assistants: backupAllData || normalized.settings.backupScope.assistants,
+    memories: backupAllData || normalized.settings.backupScope.memories,
+    models: backupAllData || normalized.settings.backupScope.models,
+    worldBooks: backupAllData || normalized.settings.backupScope.worldBooks,
+    promptInjections: backupAllData || normalized.settings.backupScope.promptInjections,
+    quickMessages: backupAllData || normalized.settings.backupScope.quickMessages,
+    searchServices: backupAllData || normalized.settings.backupScope.searchServices,
   };
   normalized.settings.proxyConfig = normalizeProxyConfig(normalized.settings.proxyConfig);
   normalized.settings.preferredPort = normalizePreferredPort(normalized.settings.preferredPort);
@@ -678,6 +701,17 @@ async function migrateFileDedupIfNeeded(stateObj: State): Promise<void> {
           typeof img.fileId === "number" && idMap.has(img.fileId)
             ? { ...img, fileId: idMap.get(img.fileId)! }
             : img,
+        );
+      }
+      if (Array.isArray(stateObj.generatedMedia)) {
+        const rewritten = rewritePcFileUrlsDeep(
+          stateObj.generatedMedia as unknown as JsonValue,
+          idMap,
+        ) as unknown as typeof stateObj.generatedMedia;
+        stateObj.generatedMedia = rewritten.map((media) =>
+          typeof media.fileId === "number" && idMap.has(media.fileId)
+            ? { ...media, fileId: idMap.get(media.fileId)! }
+            : media,
         );
       }
       const dupIds = new Set(idMap.keys());

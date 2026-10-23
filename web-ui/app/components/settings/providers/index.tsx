@@ -16,7 +16,13 @@ import {
 } from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
 import { SegmentedControl } from "~/components/ui/segmented-tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { StatusBadge } from "~/components/ui/status-badge";
 import { Switch } from "~/components/ui/switch";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
@@ -92,7 +98,10 @@ export function ProvidersSection({
   }, []);
   // 深链高亮的模型只属于深链指向的那个供应商;切到别的供应商不再高亮同名模型。
   const deepLink = React.useMemo(
-    () => ({ providerId: getSettingsParam("providerId"), modelId: getSettingsParam("modelId") ?? "" }),
+    () => ({
+      providerId: getSettingsParam("providerId"),
+      modelId: getSettingsParam("modelId") ?? "",
+    }),
     [],
   );
   const [selectedId, setSelectedId] = React.useState(initialProviderId);
@@ -111,10 +120,15 @@ export function ProvidersSection({
       if (!draft) return;
       await api.post("settings/provider", draft);
       patchSettingsLocal((current) => ({
-        providers: current.providers.map((provider) => (provider.id === draft.id ? draft : provider)),
+        providers: current.providers.map((provider) =>
+          provider.id === draft.id ? draft : provider,
+        ),
       }));
     },
-    { onSaveError: (error) => toast.error((error as Error).message || t("settings:providers.autosave_failed")) },
+    {
+      onSaveError: (error) =>
+        toast.error((error as Error).message || t("settings:providers.autosave_failed")),
+    },
   );
   const lastSelectedRef = React.useRef(selectedId);
 
@@ -128,7 +142,8 @@ export function ProvidersSection({
   providersRef.current = settings.providers;
   React.useEffect(() => {
     const next =
-      providersRef.current.find((provider) => provider.id === selectedId) ?? providersRef.current[0];
+      providersRef.current.find((provider) => provider.id === selectedId) ??
+      providersRef.current[0];
     const selectedChanged = lastSelectedRef.current !== selectedId;
     lastSelectedRef.current = selectedId;
     setDraft(next ? clone(next) : null);
@@ -161,10 +176,12 @@ export function ProvidersSection({
   if (!draft) return null;
   const balanceOption = balanceOptionOf(draft);
   const kind = providerKind(draft) as ProviderKind;
-  const providerHeaders = (Array.isArray(draft.customHeaders) ? draft.customHeaders : []).map((header) => ({
-    key: textValue(header?.name),
-    value: textValue(header?.value),
-  }));
+  const providerHeaders = (Array.isArray(draft.customHeaders) ? draft.customHeaders : []).map(
+    (header) => ({
+      key: textValue(header?.name),
+      value: textValue(header?.value),
+    }),
+  );
 
   const patchDraft = (patch: Partial<ProviderProfile>) => {
     autosave.markDirty();
@@ -228,7 +245,9 @@ export function ProvidersSection({
       toast.success(t("settings:providers.enabled_models", { count: models.length }));
     } catch (error) {
       // 不 patch enabled —— 保持关闭
-      toast.error(error instanceof Error ? error.message : t("settings:providers.enable_fetch_failed"));
+      toast.error(
+        error instanceof Error ? error.message : t("settings:providers.enable_fetch_failed"),
+      );
     } finally {
       setFetchingModels(false);
     }
@@ -243,10 +262,17 @@ export function ProvidersSection({
         { providerId: draft.id },
         { timeout: false },
       );
-      setBalanceResult(t("settings:providers.balance_done", { value: result.value, endpoint: result.endpoint, preview: result.preview }));
+      setBalanceResult(
+        t("settings:providers.balance_done", {
+          value: result.value,
+          endpoint: result.endpoint,
+          preview: result.preview,
+        }),
+      );
       toast.success(t("settings:providers.balance_ok", { value: result.value }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("settings:providers.balance_failed");
+      const message =
+        error instanceof Error ? error.message : t("settings:providers.balance_failed");
       setBalanceResult(message);
       toast.error(message);
     } finally {
@@ -301,7 +327,9 @@ export function ProvidersSection({
     providerHeaders.some((header) => header.key.trim() !== "") ||
     (!isOauth &&
       kind === "openai" &&
-      (hasCustomEndpointPath(draft) || draft.includeHistoryReasoning === false || draft.promptCacheKey === true)) ||
+      (hasCustomEndpointPath(draft) ||
+        draft.includeHistoryReasoning === false ||
+        draft.promptCacheKey === true)) ||
     (!isOauth && kind === "claude" && draft.promptCaching === true) ||
     (!isOauth && kind === "google" && draft.useInteractionsApi === true) ||
     balanceOption.enabled === true;
@@ -317,7 +345,8 @@ export function ProvidersSection({
     };
     // 按登记表/协议默认换算过地址时告知用户去向;自定义地址不动则不打扰。端点尾缀在折叠区里,
     // 被静默归位时一并说明。
-    const baseChanged = next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl) !== "";
+    const baseChanged =
+      next.baseUrl !== textValue(draft.baseUrl) && textValue(draft.baseUrl) !== "";
     const pathReset = hasCustomEndpointPath(draft);
     if (baseChanged || pathReset) {
       toast(
@@ -349,9 +378,13 @@ export function ProvidersSection({
           wrap: (button: React.ReactElement) => (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-(--radix-dropdown-menu-trigger-width)">
+              <DropdownMenuContent
+                align="start"
+                className="min-w-(--radix-dropdown-menu-trigger-width)"
+              >
                 {OPENAI_FORMATS.map((format) => {
-                  const active = kind === "openai" && (draft.useResponseApi === true) === format.responseApi;
+                  const active =
+                    kind === "openai" && (draft.useResponseApi === true) === format.responseApi;
                   return (
                     <DropdownMenuItem
                       key={String(format.responseApi)}
@@ -377,7 +410,13 @@ export function ProvidersSection({
     if (settings.providers.length <= 1) return;
     const target = settings.providers.find((item) => item.id === targetId);
     if (!target) return;
-    if (!(await confirmDialog({ title: t("settings:providers.delete_confirm", { name: target.name }), danger: true }))) return;
+    if (
+      !(await confirmDialog({
+        title: t("settings:providers.delete_confirm", { name: target.name }),
+        danger: true,
+      }))
+    )
+      return;
     // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序)。
     const removingActive = draft.id === targetId;
     if (removingActive) await autosave.discard();
@@ -398,12 +437,14 @@ export function ProvidersSection({
       scroll
       list={
         <div className="space-y-1">
-          <SettingsListAddButton label={t("settings:providers.add")} onClick={() => void addProvider()} />
-          {settings.providers.map((provider, index) => (
+          <SettingsListAddButton
+            label={t("settings:providers.add")}
+            onClick={() => void addProvider()}
+          />
+          {settings.providers.map((provider) => (
             <SettingsListRow
               key={provider.id}
               id={provider.id}
-              index={index}
               active={provider.id === draft.id}
               onSelect={() => setSelectedId(provider.id)}
               onMove={moveProvider}
@@ -441,7 +482,9 @@ export function ProvidersSection({
             titlePlaceholder={t(providerFormatLabelKey(kind, draft))}
             titleLabel={t("settings:providers.name")}
             onTitleCommit={(name) => patchDraft({ name })}
-            description={textValue(draft.shortDescription) || t(providerFormatLabelKey(kind, draft))}
+            description={
+              textValue(draft.shortDescription) || t(providerFormatLabelKey(kind, draft))
+            }
             action={
               <label className="flex items-center gap-2 text-sm text-[var(--ds-text-secondary)]">
                 {t("settings:providers.enabled_label")}
@@ -470,9 +513,13 @@ export function ProvidersSection({
                   label="Base URL"
                   hint={
                     <span className="block space-y-0.5 break-all">
-                      <span className="block">{t("settings:providers.chat_url", { url: endpointPreview(draft) })}</span>
                       <span className="block">
-                        {t("settings:providers.models_url", { url: modelListEndpointPreview(draft) })}
+                        {t("settings:providers.chat_url", { url: endpointPreview(draft) })}
+                      </span>
+                      <span className="block">
+                        {t("settings:providers.models_url", {
+                          url: modelListEndpointPreview(draft),
+                        })}
                       </span>
                     </span>
                   }
@@ -508,11 +555,13 @@ export function ProvidersSection({
                   ) : undefined
                 }
               >
-                <PasswordInput value={textValue(draft.apiKey)} onChange={(apiKey) => patchDraft({ apiKey })} />
+                <PasswordInput
+                  value={textValue(draft.apiKey)}
+                  onChange={(apiKey) => patchDraft({ apiKey })}
+                />
               </SettingsField>
             )}
           </SettingsGroup>
-
 
           <ProviderModelList
             key={`models:${draft.id}`}
@@ -532,8 +581,11 @@ export function ProvidersSection({
             onSettings={onSettings}
           />
 
-
-          <SettingsAdvancedSection open={advancedOpen} onOpenChange={setAdvancedOpen} attention={advancedAttention}>
+          <SettingsAdvancedSection
+            open={advancedOpen}
+            onOpenChange={setAdvancedOpen}
+            attention={advancedAttention}
+          >
             <SettingsRows>
               {!isOauth && kind === "openai" ? (
                 // 尾缀随所选协议绑定字段(对齐安卓 ProviderConfigure):Chat Completions→
@@ -568,7 +620,9 @@ export function ProvidersSection({
                   label={t("settings:providers.history_reasoning_title")}
                   description={t("settings:providers.history_reasoning_desc")}
                   checked={draft.includeHistoryReasoning !== false}
-                  onCheckedChange={(includeHistoryReasoning) => patchDraft({ includeHistoryReasoning })}
+                  onCheckedChange={(includeHistoryReasoning) =>
+                    patchDraft({ includeHistoryReasoning })
+                  }
                 />
               ) : null}
               {!isOauth && kind === "openai" ? (
@@ -598,9 +652,14 @@ export function ProvidersSection({
                     <SettingsField label={t("settings:providers.cache_ttl")}>
                       <Select
                         value={textValue(draft.promptCacheTtl) || "5m"}
-                        onValueChange={(promptCacheTtl) => patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })}
+                        onValueChange={(promptCacheTtl) =>
+                          patchDraft({ promptCacheTtl: promptCacheTtl as "5m" | "1h" })
+                        }
                       >
-                        <SelectTrigger className="w-full max-w-60" aria-label={t("settings:providers.cache_ttl")}>
+                        <SelectTrigger
+                          className="w-full max-w-60"
+                          aria-label={t("settings:providers.cache_ttl")}
+                        >
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -616,7 +675,9 @@ export function ProvidersSection({
                 label={t("settings:providers.balance_title")}
                 description={t("settings:providers.balance_desc")}
                 checked={balanceOption.enabled === true}
-                onCheckedChange={(enabled) => patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })}
+                onCheckedChange={(enabled) =>
+                  patchDraft({ balanceOption: { ...balanceOptionOf(draft), enabled } })
+                }
               >
                 {balanceOption.enabled === true ? (
                   <div className="space-y-3">
@@ -625,7 +686,12 @@ export function ProvidersSection({
                         <Input
                           value={textValue(balanceOption.apiPath) || "/credits"}
                           onChange={(event) =>
-                            patchDraft({ balanceOption: { ...balanceOptionOf(draft), apiPath: event.target.value } })
+                            patchDraft({
+                              balanceOption: {
+                                ...balanceOptionOf(draft),
+                                apiPath: event.target.value,
+                              },
+                            })
                           }
                         />
                       </SettingsField>
@@ -642,7 +708,12 @@ export function ProvidersSection({
                         <Input
                           value={textValue(balanceOption.resultPath)}
                           onChange={(event) =>
-                            patchDraft({ balanceOption: { ...balanceOptionOf(draft), resultPath: event.target.value } })
+                            patchDraft({
+                              balanceOption: {
+                                ...balanceOptionOf(draft),
+                                resultPath: event.target.value,
+                              },
+                            })
                           }
                           aria-invalid={!resultPathValid}
                         />
@@ -672,7 +743,11 @@ export function ProvidersSection({
                   label={t("settings:providers.custom_headers_title")}
                   description={t("settings:providers.custom_headers_desc")}
                   items={providerHeaders}
-                  onChange={(next) => patchDraft({ customHeaders: next.map((item) => ({ name: item.key, value: item.value })) })}
+                  onChange={(next) =>
+                    patchDraft({
+                      customHeaders: next.map((item) => ({ name: item.key, value: item.value })),
+                    })
+                  }
                   keyPlaceholder={t("settings:common.header_name")}
                   valuePlaceholder={t("settings:common.header_value")}
                   emptyText={t("settings:common.no_headers")}
@@ -684,7 +759,9 @@ export function ProvidersSection({
           </SettingsAdvancedSection>
 
           <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
+            status={
+              <AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />
+            }
           />
         </SettingsStack>
       </div>

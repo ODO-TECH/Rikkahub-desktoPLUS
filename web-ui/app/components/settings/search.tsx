@@ -7,7 +7,13 @@ import { toast } from "sonner";
 import { AIIcon } from "~/components/ui/ai-icon";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
@@ -137,14 +143,20 @@ function SearchApiKeyList({
 }) {
   const { t } = useTranslation();
   const [keys, setKeys] = React.useState<string[]>(() => {
-    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    const parts = value
+      .split(SEARCH_KEY_SPLIT)
+      .map((k) => k.trim())
+      .filter(Boolean);
     return parts.length > 0 ? parts : [""];
   });
 
   // 外部 value 变化时同步。只在"非空 key 序列"不一致时才 setKeys——既覆盖切换服务/
   // 父重置,又避免覆盖编辑中的空框/中间状态,还阻断 commit→onChange→value 往返循环。
   React.useEffect(() => {
-    const parts = value.split(SEARCH_KEY_SPLIT).map((k) => k.trim()).filter(Boolean);
+    const parts = value
+      .split(SEARCH_KEY_SPLIT)
+      .map((k) => k.trim())
+      .filter(Boolean);
     const external = parts.length > 0 ? parts : [""];
     const localNonEmpty = keys.filter((k) => k.trim()).map((k) => k.trim());
     if (localNonEmpty.join("\n") !== external.join("\n")) setKeys(external);
@@ -186,7 +198,11 @@ function SearchApiKeyList({
         return (
           <div key={index} className="flex items-center gap-2">
             <div className="flex-1">
-              <PasswordInput value={key} onChange={(v) => update(index, v)} onBlur={trimTrailingEmpty} />
+              <PasswordInput
+                value={key}
+                onChange={(v) => update(index, v)}
+                onBlur={trimTrailingEmpty}
+              />
             </div>
             {entry ? (
               entry.status === "ok" ? (
@@ -219,7 +235,13 @@ function SearchApiKeyList({
         );
       })}
       {/* +号独立放底部:所有 key 框只有 input+叉号,等宽;末框不再被+号挤窄。 */}
-      <Button type="button" variant="tertiary" size="compact" onClick={add} className="w-full justify-center">
+      <Button
+        type="button"
+        variant="tertiary"
+        size="compact"
+        onClick={add}
+        className="w-full justify-center"
+      >
         <Plus className="size-4" />
         {t("settings:search.key_add")}
       </Button>
@@ -298,9 +320,14 @@ export function SearchSection({
         draft,
       );
       const savedService = toSearchService(result.service);
-      patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
+      patchSettingsLocal((current) => ({
+        searchServices: upsertById(current.searchServices, savedService),
+      }));
     },
-    { onSaveError: (error) => toast.error((error as Error).message || t("settings:search.autosave_failed")) },
+    {
+      onSaveError: (error) =>
+        toast.error((error as Error).message || t("settings:search.autosave_failed")),
+    },
   );
 
   // searchServicesRef: avoid re-running this effect after every autosave → onSettings
@@ -344,7 +371,9 @@ export function SearchSection({
       .then((result) => {
         const savedService = toSearchService(result.service);
         // 新建只追加并打开编辑,不改对话正在用的搜索服务(与后端一致)。
-        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, savedService) }));
+        patchSettingsLocal((current) => ({
+          searchServices: upsertById(current.searchServices, savedService),
+        }));
         setDraft(savedService as unknown as Record<string, unknown>);
         setSelectedId(String(savedService.id));
         setTestResult("");
@@ -387,7 +416,10 @@ export function SearchSection({
           );
         } else {
           setTestResult(
-            t("settings:search.test_success", { endpoint: result.endpoint, preview: result.preview }),
+            t("settings:search.test_success", {
+              endpoint: result.endpoint,
+              preview: result.preview,
+            }),
           );
         }
         toast.success(t("settings:search.test_ok"));
@@ -399,14 +431,14 @@ export function SearchSection({
         // issue11:友好原因之外附上服务端记录的底层错误原文(超时/证书/DNS/5xx 等),
         // 否则统一显示"网络异常或服务暂不可用",用户无从排查。
         const singleFailReason =
-          keys.length === 1
-            ? t(`settings:search.key_fail_${keys[0]?.failCode ?? "other"}`)
-            : null;
+          keys.length === 1 ? t(`settings:search.key_fail_${keys[0]?.failCode ?? "other"}`) : null;
         const singleFailDetail = keys.length === 1 ? keys[0]?.detail : undefined;
         setTestResult(
           keys.length > 1
             ? t("settings:search.test_all_failed", { count: keys.length })
-            : [singleFailReason ?? t("settings:search.test_failed"), singleFailDetail].filter(Boolean).join("\n\n"),
+            : [singleFailReason ?? t("settings:search.test_failed"), singleFailDetail]
+                .filter(Boolean)
+                .join("\n\n"),
         );
         toast.error(singleFailReason ?? t("settings:search.test_failed"));
       }
@@ -432,14 +464,20 @@ export function SearchSection({
       id: createId(),
       name: copyItemName(
         textValue(target.name) || searchServiceLabelForType(textValue(target.type)),
-        new Set(settings.searchServices.map((item) => textValue(item.name) || searchServiceLabelForType(textValue(item.type)))),
+        new Set(
+          settings.searchServices.map(
+            (item) => textValue(item.name) || searchServiceLabelForType(textValue(item.type)),
+          ),
+        ),
       ),
     } as Record<string, unknown>;
     void api
       .post<{ service: Record<string, unknown> }>("settings/search/service/detail", next)
       .then((result) => {
         // 新建只追加并打开编辑,不改对话正在用的搜索服务(与 addService 一致)。
-        patchSettingsLocal((current) => ({ searchServices: upsertById(current.searchServices, toSearchService(result.service)) }));
+        patchSettingsLocal((current) => ({
+          searchServices: upsertById(current.searchServices, toSearchService(result.service)),
+        }));
         setDraft(toSearchService(result.service) as unknown as Record<string, unknown>);
         setSelectedId(String(result.service.id));
         setTestResult("");
@@ -550,328 +588,371 @@ export function SearchSection({
         scroll
         list={
           <div className="space-y-1">
-          <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />
-          {settings.searchServices.map((service, index) => (
-            <SettingsListRow
-              key={String(service.id ?? index)}
-              id={String(service.id ?? index)}
-              index={index}
-              active={String(service.id) === String(draft.id)}
-              onSelect={() => setSelectedId(String(service.id ?? ""))}
-              onMove={moveSearchService}
-              actions={[
-                copyRowAction(() => copyServiceById(String(service.id ?? ""))),
-                deleteRowAction(() => removeById(String(service.id ?? ""))),
-              ]}
-            >
-              <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
-                <AIIcon
-                  name={searchServiceLabelForType(textValue(service.type))}
-                  size={30}
-                  className="justify-self-start"
-                />
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5 truncate font-medium">
-                    {(() => {
-                      const type = String(service.type ?? "").toLowerCase();
-                      const isPreset = type === "bing_local" || type === "rikkahub";
-                      const passed =
-                        isPreset || (service as Record<string, unknown>).testPassed === true;
-                      return (
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "size-2 shrink-0 rounded-full",
-                            passed ? "bg-success" : "bg-muted-foreground/40",
-                          )}
-                          title={
-                            passed
-                              ? isPreset
-                                ? t("settings:search.preset_ok")
-                                : t("settings:search.passed")
-                              : t("settings:search.not_passed")
-                          }
-                        />
-                      );
-                    })()}
-                    <span className="truncate">
-                      {textValue(service.name) ||
-                        searchServiceLabelForType(textValue(service.type))}
-                    </span>
-                    {hasCustomServiceEndpoint(service as Record<string, unknown>) ? (
-                      // 中转标识:该行配置了自定义请求地址(换根 ≠ 官方地址)。一屏扫过即可
-                      // 辨认哪些服务在走中转——多服务配置了中转的用户排障时是刚需可读性。
-                      <span title={t("settings:search.relay_badge")}>
-                        <Link2 aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+            <SettingsListAddButton label={t("settings:search.add")} onClick={addService} />
+            {settings.searchServices.map((service, index) => (
+              <SettingsListRow
+                key={String(service.id ?? index)}
+                id={String(service.id ?? index)}
+                active={String(service.id) === String(draft.id)}
+                onSelect={() => setSelectedId(String(service.id ?? ""))}
+                onMove={moveSearchService}
+                actions={[
+                  copyRowAction(() => copyServiceById(String(service.id ?? ""))),
+                  deleteRowAction(() => removeById(String(service.id ?? ""))),
+                ]}
+              >
+                <span className="grid min-w-0 grid-cols-[34px_minmax(0,1fr)] items-center gap-3 text-left">
+                  <AIIcon
+                    name={searchServiceLabelForType(textValue(service.type))}
+                    size={30}
+                    className="justify-self-start"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 truncate font-medium">
+                      {(() => {
+                        const type = String(service.type ?? "").toLowerCase();
+                        const isPreset = type === "bing_local" || type === "rikkahub";
+                        const passed =
+                          isPreset || (service as Record<string, unknown>).testPassed === true;
+                        return (
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "size-2 shrink-0 rounded-full",
+                              passed ? "bg-success" : "bg-muted-foreground/40",
+                            )}
+                            title={
+                              passed
+                                ? isPreset
+                                  ? t("settings:search.preset_ok")
+                                  : t("settings:search.passed")
+                                : t("settings:search.not_passed")
+                            }
+                          />
+                        );
+                      })()}
+                      <span className="truncate">
+                        {textValue(service.name) ||
+                          searchServiceLabelForType(textValue(service.type))}
                       </span>
-                    ) : null}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {/* 缺 type 时绝不能回退成整条 JSON——里面有明文 apiKey。 */}
-                    {textValue(service.type) || t("settings:search.field.custom")}
+                      {hasCustomServiceEndpoint(service as Record<string, unknown>) ? (
+                        // 中转标识:该行配置了自定义请求地址(换根 ≠ 官方地址)。一屏扫过即可
+                        // 辨认哪些服务在走中转——多服务配置了中转的用户排障时是刚需可读性。
+                        <span title={t("settings:search.relay_badge")}>
+                          <Link2 aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {/* 缺 type 时绝不能回退成整条 JSON——里面有明文 apiKey。 */}
+                      {textValue(service.type) || t("settings:search.field.custom")}
+                    </span>
                   </span>
                 </span>
-              </span>
-            </SettingsListRow>
-          ))}
+              </SettingsListRow>
+            ))}
           </div>
         }
       >
         <div className="@container">
-        <SettingsStack>
-          <SettingsDetailHeader
-            leading={<AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />}
-            title={textValue(draft.name)}
-            titlePlaceholder={searchServiceLabelForType(textValue(draft.type)) || t("settings:search.service_default")}
-            titleLabel={t("settings:search.name")}
-            onTitleCommit={(name) => patchDraft({ name })}
-            description={textValue(draft.type) || t("settings:search.field.custom")}
-            action={
-              <Button variant="tertiary" size="compact" onClick={() => void test()} disabled={testing}>
-                {testing ? <Loader2 className="animate-spin" /> : <Database />}
-                {t("settings:search.test")}
-              </Button>
-            }
-          />
-          <section>
-          <div className="grid gap-4 @xl:grid-cols-2">
-            <SettingsField label={t("settings:search.type")} htmlFor={`${fieldId}-type`} className="@xl:col-span-2">
-              <Select
-                value={textValue(draft.type) || "tavily"}
-                onValueChange={(type) => {
-                  // Re-sync `name` whenever it was still the previous type's default label —
-                  // that way the row icon and detail-pane logo follow the chosen type. Manual
-                  // names (anything not matching the canonical label) are preserved.
-                  const previousType = textValue(draft.type);
-                  const previousLabel = searchServiceLabelForType(previousType);
-                  const currentName = textValue(draft.name);
-                  const isDefaultName =
-                    !currentName || currentName === previousLabel || currentName === previousType;
-                  patchDraft({
-                    type,
-                    name: isDefaultName ? searchServiceLabelForType(type) : currentName,
-                    ...(type === "custom_js" && !textValue(draft.searchScript)
-                      ? {
-                          searchScript: DEFAULT_CUSTOM_JS_SEARCH_SCRIPT,
-                          scrapeScript: DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT,
-                        }
-                      : {}),
-                  });
-                  // 切到 searxng 时请求地址是必填项且藏在折叠区里——自动展开,别让用户对着
-                  // 收起的「高级设置」找不到该填哪儿。
-                  if (type === "searxng") setAdvancedOpen(true);
-                }}
-              >
-                <SelectTrigger id={`${fieldId}-type`} className="w-60 max-w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SEARCH_SERVICE_CREATABLE_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      <span className="flex items-center gap-2">
-                        <AIIcon
-                          name={searchServiceLabelForType(type)}
-                          size={16}
-                          className="bg-transparent"
-                        />
-                        {searchServiceLabelForType(type)}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </SettingsField>
-            {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
-              <SettingsField label="API Key" hint={t("settings:search.api_key_hint")} className="@xl:col-span-2">
-                <SearchApiKeyList
-                  value={textValue(draft.apiKey)}
-                  onChange={(apiKey) => patchDraft({ apiKey })}
-                  testEntries={keyTestEntries}
-                />
-              </SettingsField>
-            ) : null}
-            {textValue(draft.type) === "doubao" ? (
-              // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
-              // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
-              <SettingsField label={t("settings:search.field.mode")} htmlFor={`${fieldId}-mode`}>
-                <Select
-                  value={textValue(draft.mode) || "custom"}
-                  onValueChange={(mode) => patchDraft({ mode })}
-                >
-                  <SelectTrigger id={`${fieldId}-mode`} className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="global">{t("settings:search.field.global")}</SelectItem>
-                    <SelectItem value="custom">{t("settings:search.field.custom")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </SettingsField>
-            ) : null}
-            {textValue(draft.type) === "searxng" ? (
-              <>
-                <SettingsField label={t("settings:search.field.engines")} htmlFor={`${fieldId}-engines`}>
-                  <Input
-                    id={`${fieldId}-engines`}
-                    value={textValue(draft.engines)}
-                    onChange={(event) => patchDraft({ engines: event.target.value })}
-                    placeholder="google,bing"
-                  />
-                </SettingsField>
-                <SettingsField label={t("settings:search.field.language")} htmlFor={`${fieldId}-language`}>
-                  <Input
-                    id={`${fieldId}-language`}
-                    value={textValue(draft.language)}
-                    onChange={(event) => patchDraft({ language: event.target.value })}
-                    placeholder="zh-CN"
-                  />
-                </SettingsField>
-                <SettingsField label={t("settings:search.field.username")} htmlFor={`${fieldId}-username`}>
-                  <Input
-                    id={`${fieldId}-username`}
-                    value={textValue(draft.username)}
-                    onChange={(event) => patchDraft({ username: event.target.value })}
-                  />
-                </SettingsField>
-                <SettingsField label={t("settings:search.field.password")} htmlFor={`${fieldId}-password`}>
-                  <PasswordInput
-                    id={`${fieldId}-password`}
-                    value={textValue(draft.password)}
-                    onChange={(password) => patchDraft({ password })}
-                  />
-                </SettingsField>
-              </>
-            ) : null}
-            {textValue(draft.type) === "custom_js" ? (
-              <>
-                <SettingsField
-                  label={t("settings:search.field.search_script")}
-                  htmlFor={`${fieldId}-search-script`}
-                  className="@xl:col-span-2"
-                >
-                  <Textarea
-                    id={`${fieldId}-search-script`}
-                    value={textValue(draft.searchScript)}
-                    onChange={(event) => patchDraft({ searchScript: event.target.value })}
-                    className="min-h-56 font-mono text-xs"
-                    placeholder={
-                      "async function search(query, resultSize) {\n  const res = await fetch('https://example.com/search?q=' + encodeURIComponent(query));\n  const data = await res.json();\n  return { items: data.results.map((r) => ({ title: r.title, url: r.url, text: r.snippet })) };\n}"
-                    }
-                  />
-                </SettingsField>
-                <SettingsField
-                  label={t("settings:search.field.scrape_script")}
-                  htmlFor={`${fieldId}-scrape-script`}
-                  className="@xl:col-span-2"
-                >
-                  <Textarea
-                    id={`${fieldId}-scrape-script`}
-                    value={textValue(draft.scrapeScript)}
-                    onChange={(event) => patchDraft({ scrapeScript: event.target.value })}
-                    className="min-h-40 font-mono text-xs"
-                    placeholder={
-                      "async function scrape(urls) {\n  return { urls: await Promise.all(urls.map(async (url) => {\n    const res = await fetch(url);\n    return { url, content: await res.text() };\n  })) };\n}"
-                    }
-                  />
-                </SettingsField>
-              </>
-            ) : null}
-            {textValue(draft.type) === "custom_js" ? (
-              // Custom JS 用户只可能是高级用户,结果数量不折叠直示(该类型也没有请求地址框)。
-              // 不给深度:脚本入参只有 (query, resultSize),深度传不进去。
-              resultCountField
-            ) : null}
-          </div>
-          {testPanel}
-          {textValue(draft.type) !== "custom_js" ? (
-            <SettingsAdvancedSection
-              open={advancedOpen}
-              onOpenChange={setAdvancedOpen}
-              attention={
-                // 折叠藏配置的两类风险都要亮点:配了中转(用户自己的定制)+ searxng 必填地址还空着。
-                hasCustomServiceEndpoint(draft) ||
-                (textValue(draft.type) === "searxng" && !textValue(draft[customUrlFieldOf("searxng")]).trim())
+          <SettingsStack>
+            <SettingsDetailHeader
+              leading={<AIIcon name={searchServiceLabelForType(textValue(draft.type))} size={40} />}
+              title={textValue(draft.name)}
+              titlePlaceholder={
+                searchServiceLabelForType(textValue(draft.type)) ||
+                t("settings:search.service_default")
               }
-              className="mt-4"
-            >
-              <div className="grid gap-4 pt-2 @xl:grid-cols-2">
-                {(() => {
-                  // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
-                  // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
-                  // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
-                  const type = textValue(draft.type);
-                  if (!hasServiceEndpoint(type)) return null;
-                  const field = customUrlFieldOf(type);
-                  const raw = textValue(draft[field]).trim();
-                  const official = serviceEndpointBase(type);
-                  const preview = raw ? resolveServiceEndpoint(draft as Record<string, unknown>) : "";
-                  const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
-                  return (
+              titleLabel={t("settings:search.name")}
+              onTitleCommit={(name) => patchDraft({ name })}
+              description={textValue(draft.type) || t("settings:search.field.custom")}
+              action={
+                <Button
+                  variant="tertiary"
+                  size="compact"
+                  onClick={() => void test()}
+                  disabled={testing}
+                >
+                  {testing ? <Loader2 className="animate-spin" /> : <Database />}
+                  {t("settings:search.test")}
+                </Button>
+              }
+            />
+            <section>
+              <div className="grid gap-4 @xl:grid-cols-2">
+                <SettingsField
+                  label={t("settings:search.type")}
+                  htmlFor={`${fieldId}-type`}
+                  className="@xl:col-span-2"
+                >
+                  <Select
+                    value={textValue(draft.type) || "tavily"}
+                    onValueChange={(type) => {
+                      // Re-sync `name` whenever it was still the previous type's default label —
+                      // that way the row icon and detail-pane logo follow the chosen type. Manual
+                      // names (anything not matching the canonical label) are preserved.
+                      const previousType = textValue(draft.type);
+                      const previousLabel = searchServiceLabelForType(previousType);
+                      const currentName = textValue(draft.name);
+                      const isDefaultName =
+                        !currentName ||
+                        currentName === previousLabel ||
+                        currentName === previousType;
+                      patchDraft({
+                        type,
+                        name: isDefaultName ? searchServiceLabelForType(type) : currentName,
+                        ...(type === "custom_js" && !textValue(draft.searchScript)
+                          ? {
+                              searchScript: DEFAULT_CUSTOM_JS_SEARCH_SCRIPT,
+                              scrapeScript: DEFAULT_CUSTOM_JS_SCRAPE_SCRIPT,
+                            }
+                          : {}),
+                      });
+                      // 切到 searxng 时请求地址是必填项且藏在折叠区里——自动展开,别让用户对着
+                      // 收起的「高级设置」找不到该填哪儿。
+                      if (type === "searxng") setAdvancedOpen(true);
+                    }}
+                  >
+                    <SelectTrigger id={`${fieldId}-type`} className="w-60 max-w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEARCH_SERVICE_CREATABLE_TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          <span className="flex items-center gap-2">
+                            <AIIcon
+                              name={searchServiceLabelForType(type)}
+                              size={16}
+                              className="bg-transparent"
+                            />
+                            {searchServiceLabelForType(type)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </SettingsField>
+                {textValue(draft.type) !== "searxng" && textValue(draft.type) !== "custom_js" ? (
+                  <SettingsField
+                    label="API Key"
+                    hint={t("settings:search.api_key_hint")}
+                    className="@xl:col-span-2"
+                  >
+                    <SearchApiKeyList
+                      value={textValue(draft.apiKey)}
+                      onChange={(apiKey) => patchDraft({ apiKey })}
+                      testEntries={keyTestEntries}
+                    />
+                  </SettingsField>
+                ) : null}
+                {textValue(draft.type) === "doubao" ? (
+                  // 豆包(火山 Search-Infinity)两模:global=综合搜索(带图),custom=网页搜索。
+                  // 对齐 APP DoubaoOptions 的 Mode 分段选择器。
+                  <SettingsField
+                    label={t("settings:search.field.mode")}
+                    htmlFor={`${fieldId}-mode`}
+                  >
+                    <Select
+                      value={textValue(draft.mode) || "custom"}
+                      onValueChange={(mode) => patchDraft({ mode })}
+                    >
+                      <SelectTrigger id={`${fieldId}-mode`} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="global">{t("settings:search.field.global")}</SelectItem>
+                        <SelectItem value="custom">{t("settings:search.field.custom")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </SettingsField>
+                ) : null}
+                {textValue(draft.type) === "searxng" ? (
+                  <>
                     <SettingsField
-                      label={
-                        type === "searxng"
-                          ? `${t("settings:search.request_url")} — ${t("settings:search.request_url_required")}`
-                          : t("settings:search.request_url")
-                      }
-                      htmlFor={`${fieldId}-request-url`}
-                      className="@xl:col-span-2"
+                      label={t("settings:search.field.engines")}
+                      htmlFor={`${fieldId}-engines`}
                     >
                       <Input
-                        id={`${fieldId}-request-url`}
-                        value={raw}
-                        onChange={(event) => patchDraft({ [field]: event.target.value })}
-                        placeholder={official || "https://search.example.com"}
+                        id={`${fieldId}-engines`}
+                        value={textValue(draft.engines)}
+                        onChange={(event) => patchDraft({ engines: event.target.value })}
+                        placeholder="google,bing"
                       />
-                      <span
-                        className={cn(
-                          "block break-all text-xs",
-                          badScheme ? "text-destructive" : "text-muted-foreground",
-                        )}
-                      >
-                        {badScheme
-                          ? t("settings:search.request_url_bad_scheme")
-                          : preview
-                            ? t("settings:search.request_url_preview", { endpoint: preview })
-                            : official
-                              ? t("settings:search.request_url_hint", { official })
-                              : t("settings:search.request_url_hint_selfhost")}
-                      </span>
                     </SettingsField>
-                  );
-                })()}
-                {(() => {
-                  // 深度只对登记了的服务显示,选项与显示值都按后端实际发送的口径解析(所见即所发)。
-                  const depthSpec = searchDepthSpecOf(textValue(draft.type));
-                  if (!depthSpec) return null;
-                  return (
-                    <SettingsField label={t("settings:search.depth")} htmlFor={`${fieldId}-depth`}>
-                      <Select
-                        value={resolveSearchDepth(draft) ?? depthSpec.fallback}
-                        onValueChange={(depth) => patchDraft({ depth })}
-                      >
-                        <SelectTrigger id={`${fieldId}-depth`} className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {depthSpec.values.map((value) => (
-                            <SelectItem key={value} value={value}>
-                              {t(`settings:search.field.depth_${value}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <SettingsField
+                      label={t("settings:search.field.language")}
+                      htmlFor={`${fieldId}-language`}
+                    >
+                      <Input
+                        id={`${fieldId}-language`}
+                        value={textValue(draft.language)}
+                        onChange={(event) => patchDraft({ language: event.target.value })}
+                        placeholder="zh-CN"
+                      />
                     </SettingsField>
-                  );
-                })()}
-                {resultCountField}
+                    <SettingsField
+                      label={t("settings:search.field.username")}
+                      htmlFor={`${fieldId}-username`}
+                    >
+                      <Input
+                        id={`${fieldId}-username`}
+                        value={textValue(draft.username)}
+                        onChange={(event) => patchDraft({ username: event.target.value })}
+                      />
+                    </SettingsField>
+                    <SettingsField
+                      label={t("settings:search.field.password")}
+                      htmlFor={`${fieldId}-password`}
+                    >
+                      <PasswordInput
+                        id={`${fieldId}-password`}
+                        value={textValue(draft.password)}
+                        onChange={(password) => patchDraft({ password })}
+                      />
+                    </SettingsField>
+                  </>
+                ) : null}
+                {textValue(draft.type) === "custom_js" ? (
+                  <>
+                    <SettingsField
+                      label={t("settings:search.field.search_script")}
+                      htmlFor={`${fieldId}-search-script`}
+                      className="@xl:col-span-2"
+                    >
+                      <Textarea
+                        id={`${fieldId}-search-script`}
+                        value={textValue(draft.searchScript)}
+                        onChange={(event) => patchDraft({ searchScript: event.target.value })}
+                        className="min-h-56 font-mono text-xs"
+                        placeholder={
+                          "async function search(query, resultSize) {\n  const res = await fetch('https://example.com/search?q=' + encodeURIComponent(query));\n  const data = await res.json();\n  return { items: data.results.map((r) => ({ title: r.title, url: r.url, text: r.snippet })) };\n}"
+                        }
+                      />
+                    </SettingsField>
+                    <SettingsField
+                      label={t("settings:search.field.scrape_script")}
+                      htmlFor={`${fieldId}-scrape-script`}
+                      className="@xl:col-span-2"
+                    >
+                      <Textarea
+                        id={`${fieldId}-scrape-script`}
+                        value={textValue(draft.scrapeScript)}
+                        onChange={(event) => patchDraft({ scrapeScript: event.target.value })}
+                        className="min-h-40 font-mono text-xs"
+                        placeholder={
+                          "async function scrape(urls) {\n  return { urls: await Promise.all(urls.map(async (url) => {\n    const res = await fetch(url);\n    return { url, content: await res.text() };\n  })) };\n}"
+                        }
+                      />
+                    </SettingsField>
+                  </>
+                ) : null}
+                {textValue(draft.type) === "custom_js"
+                  ? // Custom JS 用户只可能是高级用户,结果数量不折叠直示(该类型也没有请求地址框)。
+                    // 不给深度:脚本入参只有 (query, resultSize),深度传不进去。
+                    resultCountField
+                  : null}
               </div>
-            </SettingsAdvancedSection>
-          ) : null}
-          </section>
-          <SettingsDetailFooter
-            status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
-          />
-        </SettingsStack>
+              {testPanel}
+              {textValue(draft.type) !== "custom_js" ? (
+                <SettingsAdvancedSection
+                  open={advancedOpen}
+                  onOpenChange={setAdvancedOpen}
+                  attention={
+                    // 折叠藏配置的两类风险都要亮点:配了中转(用户自己的定制)+ searxng 必填地址还空着。
+                    hasCustomServiceEndpoint(draft) ||
+                    (textValue(draft.type) === "searxng" &&
+                      !textValue(draft[customUrlFieldOf("searxng")]).trim())
+                  }
+                  className="mt-4"
+                >
+                  <div className="grid gap-4 pt-2 @xl:grid-cols-2">
+                    {(() => {
+                      // 统一「请求地址」:凡登记了端点的服务皆可换址(searxng 必填、其余可选),落点
+                      // 字段/placeholder/预览全部由端点注册表裁决——与请求时 resolveServiceEndpoint
+                      // 同一单源,所见即所发。bing_local/custom_js 不登记,不显示。
+                      const type = textValue(draft.type);
+                      if (!hasServiceEndpoint(type)) return null;
+                      const field = customUrlFieldOf(type);
+                      const raw = textValue(draft[field]).trim();
+                      const official = serviceEndpointBase(type);
+                      const preview = raw
+                        ? resolveServiceEndpoint(draft as Record<string, unknown>)
+                        : "";
+                      const badScheme = raw.length > 0 && !/^https?:\/\//i.test(raw);
+                      return (
+                        <SettingsField
+                          label={
+                            type === "searxng"
+                              ? `${t("settings:search.request_url")} — ${t("settings:search.request_url_required")}`
+                              : t("settings:search.request_url")
+                          }
+                          htmlFor={`${fieldId}-request-url`}
+                          className="@xl:col-span-2"
+                        >
+                          <Input
+                            id={`${fieldId}-request-url`}
+                            value={raw}
+                            onChange={(event) => patchDraft({ [field]: event.target.value })}
+                            placeholder={official || "https://search.example.com"}
+                          />
+                          <span
+                            className={cn(
+                              "block break-all text-xs",
+                              badScheme ? "text-destructive" : "text-muted-foreground",
+                            )}
+                          >
+                            {badScheme
+                              ? t("settings:search.request_url_bad_scheme")
+                              : preview
+                                ? t("settings:search.request_url_preview", { endpoint: preview })
+                                : official
+                                  ? t("settings:search.request_url_hint", { official })
+                                  : t("settings:search.request_url_hint_selfhost")}
+                          </span>
+                        </SettingsField>
+                      );
+                    })()}
+                    {(() => {
+                      // 深度只对登记了的服务显示,选项与显示值都按后端实际发送的口径解析(所见即所发)。
+                      const depthSpec = searchDepthSpecOf(textValue(draft.type));
+                      if (!depthSpec) return null;
+                      return (
+                        <SettingsField
+                          label={t("settings:search.depth")}
+                          htmlFor={`${fieldId}-depth`}
+                        >
+                          <Select
+                            value={resolveSearchDepth(draft) ?? depthSpec.fallback}
+                            onValueChange={(depth) => patchDraft({ depth })}
+                          >
+                            <SelectTrigger id={`${fieldId}-depth`} className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {depthSpec.values.map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {t(`settings:search.field.depth_${value}`)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </SettingsField>
+                      );
+                    })()}
+                    {resultCountField}
+                  </div>
+                </SettingsAdvancedSection>
+              ) : null}
+            </section>
+            <SettingsDetailFooter
+              status={
+                <AutosaveStatusRow
+                  status={autosave.status}
+                  onRetry={() => void autosave.saveNow()}
+                />
+              }
+            />
+          </SettingsStack>
         </div>
       </SettingsSplit>
     </>

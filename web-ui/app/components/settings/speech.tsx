@@ -14,7 +14,13 @@ import { createId } from "~/lib/id";
 import { patchDisplay } from "~/lib/settings-patch";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
-import type { AsrProviderProfile, AsrProviderType, Settings, TtsProviderProfile, TtsProviderType } from "~/types";
+import type {
+  AsrProviderProfile,
+  AsrProviderType,
+  Settings,
+  TtsProviderProfile,
+  TtsProviderType,
+} from "~/types";
 import {
   clone,
   copyRowAction,
@@ -64,7 +70,15 @@ function asrTypeLabel(type: string) {
 }
 
 /** 服务列表的一行:名称 + 类型,当前使用中的打勾。 */
-function ProviderListItem({ name, typeLabel, current }: { name: string; typeLabel: string; current: boolean }) {
+function ProviderListItem({
+  name,
+  typeLabel,
+  current,
+}: {
+  name: string;
+  typeLabel: string;
+  current: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <span className="flex min-w-0 items-center justify-between gap-3 text-left">
@@ -73,7 +87,10 @@ function ProviderListItem({ name, typeLabel, current }: { name: string; typeLabe
         <span className="block truncate text-xs text-[var(--ds-text-secondary)]">{typeLabel}</span>
       </span>
       {current ? (
-        <Check className="size-4 shrink-0 text-primary" aria-label={t("settings:speech.selected")} />
+        <Check
+          className="size-4 shrink-0 text-primary"
+          aria-label={t("settings:speech.selected")}
+        />
       ) : null}
     </span>
   );
@@ -92,11 +109,7 @@ function SetCurrentButton({ current, onSelect }: { current: boolean; onSelect: (
 }
 
 function EmptyDetail({ text }: { text: string }) {
-  return (
-    <SettingsEmpty size="md">
-      {text}
-    </SettingsEmpty>
-  );
+  return <SettingsEmpty size="md">{text}</SettingsEmpty>;
 }
 
 /** 语音 › 文字转语音:语音合成服务列表/详情 + 朗读过滤。 */
@@ -134,7 +147,9 @@ export function TtsSection({
   const providersRef = React.useRef(providers);
   providersRef.current = providers;
   React.useEffect(() => {
-    const next = providersRef.current.find((provider) => provider.id === selectedId) ?? providersRef.current[0];
+    const next =
+      providersRef.current.find((provider) => provider.id === selectedId) ??
+      providersRef.current[0];
     setDraft(next ? clone(next) : null);
     autosave.reset();
   }, [selectedId]);
@@ -199,27 +214,36 @@ export function TtsSection({
   );
 
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。系统语音不可删。
-  const removeProviderById = React.useCallback(async (targetId: string) => {
-    const target = providers.find((provider) => provider.id === targetId);
-    if (!target || target.type === "system") return;
-    // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
-    if (!(await confirmDialog({ title: t("settings:speech.tts_delete_confirm", { name: String(target.name ?? "") }), danger: true }))) return;
-    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
-    const removingActive = draft?.id === targetId;
-    if (removingActive) await autosave.discard();
-    await api.delete(`settings/tts-provider/${encodeURIComponent(targetId)}`);
-    const ttsProviders = providers.filter((provider) => provider.id !== targetId);
-    onSettings({
-      ...settings,
-      ttsProviders,
-      selectedTTSProviderId:
-        settings.selectedTTSProviderId === targetId
-          ? (ttsProviders[0]?.id ?? null)
-          : settings.selectedTTSProviderId,
-    });
-    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
-    if (removingActive) setSelectedId(ttsProviders[0]?.id ?? "");
-  }, [draft?.id, onSettings, providers, settings, t, autosave]);
+  const removeProviderById = React.useCallback(
+    async (targetId: string) => {
+      const target = providers.find((provider) => provider.id === targetId);
+      if (!target || target.type === "system") return;
+      // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
+      if (
+        !(await confirmDialog({
+          title: t("settings:speech.tts_delete_confirm", { name: String(target.name ?? "") }),
+          danger: true,
+        }))
+      )
+        return;
+      // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+      const removingActive = draft?.id === targetId;
+      if (removingActive) await autosave.discard();
+      await api.delete(`settings/tts-provider/${encodeURIComponent(targetId)}`);
+      const ttsProviders = providers.filter((provider) => provider.id !== targetId);
+      onSettings({
+        ...settings,
+        ttsProviders,
+        selectedTTSProviderId:
+          settings.selectedTTSProviderId === targetId
+            ? (ttsProviders[0]?.id ?? null)
+            : settings.selectedTTSProviderId,
+      });
+      // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+      if (removingActive) setSelectedId(ttsProviders[0]?.id ?? "");
+    },
+    [draft?.id, onSettings, providers, settings, t, autosave],
+  );
 
   // Test playback uses the global audio singleton with a synthetic key so the test button
   // can toggle (play vs stop) and so that starting the test stops any in-progress chat
@@ -286,17 +310,25 @@ export function TtsSection({
 
   const typeLabel = useTtsTypeLabel();
   // 复制语音服务:克隆配置(新 id、「原名 (N)」)。系统语音是设备能力不是配置,不可复制。
-  const copyProviderById = React.useCallback(async (targetId: string) => {
-    const target = providers.find((provider) => provider.id === targetId);
-    if (!target || target.type === "system") return;
-    const next: TtsProviderProfile = {
-      ...clone(target),
-      id: createId(),
-      name: copyItemName(String(target.name ?? "") || typeLabel(target.type), new Set(providers.map((provider) => String(provider.name ?? "") || typeLabel(provider.type)))),
-    };
-    await saveProvider(next);
-    toast.success(t("settings:speech.copied", { name: next.name }));
-  }, [providers, saveProvider, t, typeLabel]);
+  const copyProviderById = React.useCallback(
+    async (targetId: string) => {
+      const target = providers.find((provider) => provider.id === targetId);
+      if (!target || target.type === "system") return;
+      const next: TtsProviderProfile = {
+        ...clone(target),
+        id: createId(),
+        name: copyItemName(
+          String(target.name ?? "") || typeLabel(target.type),
+          new Set(
+            providers.map((provider) => String(provider.name ?? "") || typeLabel(provider.type)),
+          ),
+        ),
+      };
+      await saveProvider(next);
+      toast.success(t("settings:speech.copied", { name: next.name }));
+    },
+    [providers, saveProvider, t, typeLabel],
+  );
   // 「高级设置」展开态:切换服务不收起,离开本页(重挂载)复位为收起。
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const fields = draft ? ttsFields(draft.type) : [];
@@ -305,7 +337,10 @@ export function TtsSection({
   return (
     <SettingsStack>
       {/* 朗读过滤对所有服务生效,是朗读偏好而非某个服务的配置;放在双栏之上,不被长详情栏埋到页尾。 */}
-      <SettingsGroup title={t("settings:speech.read_filter_title")} description={t("settings:speech.read_filter_desc")}>
+      <SettingsGroup
+        title={t("settings:speech.read_filter_title")}
+        description={t("settings:speech.read_filter_desc")}
+      >
         <SettingsRows>
           <SettingsSwitchRow
             label={t("settings:speech.only_read_quoted")}
@@ -332,20 +367,21 @@ export function TtsSection({
                 onSelect: () => void addProvider(type),
               }))}
             />
-            {providers.map((provider, index) => (
+            {providers.map((provider) => (
               <SettingsListRow
                 key={provider.id}
                 id={provider.id}
-                index={index}
                 active={provider.id === selectedId}
                 onSelect={() => setSelectedId(provider.id)}
                 onMove={reorderProviders}
-                actions={(provider.type === "system"
+                actions={
+                  provider.type === "system"
                     ? []
                     : [
                         copyRowAction(() => copyProviderById(provider.id)),
                         deleteRowAction(() => removeProviderById(provider.id)),
-                      ])}
+                      ]
+                }
               >
                 <ProviderListItem
                   name={provider.name}
@@ -355,7 +391,9 @@ export function TtsSection({
               </SettingsListRow>
             ))}
             {providers.length === 0 ? (
-              <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.tts_empty")}</div>
+              <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">
+                {t("settings:speech.tts_empty")}
+              </div>
             ) : null}
           </div>
         }
@@ -371,8 +409,17 @@ export function TtsSection({
                 description={t("settings:speech.tts_detail_desc", { type: typeLabel(draft.type) })}
                 action={
                   <>
-                    <Button size="compact" variant="tertiary" onClick={() => void handleTest()} title={t("settings:speech.test_title")}>
-                      {isTestPlaying ? <Square className="size-4" /> : <Volume2 className="size-4" />}
+                    <Button
+                      size="compact"
+                      variant="tertiary"
+                      onClick={() => void handleTest()}
+                      title={t("settings:speech.test_title")}
+                    >
+                      {isTestPlaying ? (
+                        <Square className="size-4" />
+                      ) : (
+                        <Volume2 className="size-4" />
+                      )}
                       {isTestPlaying ? t("settings:speech.stop") : t("settings:speech.test")}
                     </Button>
                     <SetCurrentButton
@@ -394,13 +441,23 @@ export function TtsSection({
                   attention={hasCustomizedAdvanced(draft, fields, ttsSpec(draft.type)?.template())}
                 >
                   <div className="space-y-5 pt-2">
-                    <SpeechFields fields={fields} section="advanced" draft={draft} onPatch={patchFields} />
+                    <SpeechFields
+                      fields={fields}
+                      section="advanced"
+                      draft={draft}
+                      onPatch={patchFields}
+                    />
                   </div>
                 </SettingsAdvancedSection>
               ) : null}
 
               <SettingsDetailFooter
-                status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
+                status={
+                  <AutosaveStatusRow
+                    status={autosave.status}
+                    onRetry={() => void autosave.saveNow()}
+                  />
+                }
               />
             </SettingsStack>
           </div>
@@ -408,7 +465,6 @@ export function TtsSection({
           <EmptyDetail text={t("settings:speech.select_tts")} />
         )}
       </SettingsSplit>
-
     </SettingsStack>
   );
 }
@@ -445,7 +501,9 @@ export function AsrSection({
   const providersRef = React.useRef(providers);
   providersRef.current = providers;
   React.useEffect(() => {
-    const next = providersRef.current.find((provider) => provider.id === selectedId) ?? providersRef.current[0];
+    const next =
+      providersRef.current.find((provider) => provider.id === selectedId) ??
+      providersRef.current[0];
     setDraft(next ? clone(next) : null);
     autosave.reset();
   }, [selectedId]);
@@ -517,40 +575,57 @@ export function AsrSection({
   );
 
   // 复制语音识别服务:克隆配置(新 id、「原名 (N)」)。
-  const copyProviderById = React.useCallback(async (targetId: string) => {
-    const target = providers.find((provider) => provider.id === targetId);
-    if (!target) return;
-    const next: AsrProviderProfile = {
-      ...clone(target),
-      id: createId(),
-      name: copyItemName(String(target.name ?? "") || asrTypeLabel(target.type), new Set(providers.map((provider) => String(provider.name ?? "") || asrTypeLabel(provider.type)))),
-    };
-    await saveProvider(next);
-    toast.success(t("settings:speech.copied", { name: next.name }));
-  }, [providers, saveProvider, t]);
+  const copyProviderById = React.useCallback(
+    async (targetId: string) => {
+      const target = providers.find((provider) => provider.id === targetId);
+      if (!target) return;
+      const next: AsrProviderProfile = {
+        ...clone(target),
+        id: createId(),
+        name: copyItemName(
+          String(target.name ?? "") || asrTypeLabel(target.type),
+          new Set(
+            providers.map((provider) => String(provider.name ?? "") || asrTypeLabel(provider.type)),
+          ),
+        ),
+      };
+      await saveProvider(next);
+      toast.success(t("settings:speech.copied", { name: next.name }));
+    },
+    [providers, saveProvider, t],
+  );
 
   // 删除收口到列表行(右键/悬停「⋯」):按目标行 id 删,不再依赖右侧草稿。
-  const removeProviderById = React.useCallback(async (targetId: string) => {
-    const target = providers.find((provider) => provider.id === targetId);
-    if (!target) return;
-    // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
-    if (!(await confirmDialog({ title: t("settings:speech.asr_delete_confirm", { name: String(target.name ?? "") }), danger: true }))) return;
-    // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
-    const removingActive = draft?.id === targetId;
-    if (removingActive) await autosave.discard();
-    await api.delete(`settings/asr-provider/${encodeURIComponent(targetId)}`);
-    const asrProviders = providers.filter((provider) => provider.id !== targetId);
-    onSettings({
-      ...settings,
-      asrProviders,
-      selectedASRProviderId:
-        settings.selectedASRProviderId === targetId
-          ? (asrProviders[0]?.id ?? null)
-          : settings.selectedASRProviderId,
-    });
-    // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
-    if (removingActive) setSelectedId(asrProviders[0]?.id ?? "");
-  }, [draft?.id, onSettings, providers, settings, t, autosave]);
+  const removeProviderById = React.useCallback(
+    async (targetId: string) => {
+      const target = providers.find((provider) => provider.id === targetId);
+      if (!target) return;
+      // R8-1:破坏性删除必须确认(与供应商/助手/MCP 删除同规)
+      if (
+        !(await confirmDialog({
+          title: t("settings:speech.asr_delete_confirm", { name: String(target.name ?? "") }),
+          danger: true,
+        }))
+      )
+        return;
+      // 防复活:仅当删的是正在编辑的那条才 discard(丢脏编辑+等在飞保存,DELETE 不与迟到 POST 乱序,复审 F1)
+      const removingActive = draft?.id === targetId;
+      if (removingActive) await autosave.discard();
+      await api.delete(`settings/asr-provider/${encodeURIComponent(targetId)}`);
+      const asrProviders = providers.filter((provider) => provider.id !== targetId);
+      onSettings({
+        ...settings,
+        asrProviders,
+        selectedASRProviderId:
+          settings.selectedASRProviderId === targetId
+            ? (asrProviders[0]?.id ?? null)
+            : settings.selectedASRProviderId,
+      });
+      // 删的是当前编辑行:选中下一个;删的是别的行:选中保持不动。
+      if (removingActive) setSelectedId(asrProviders[0]?.id ?? "");
+    },
+    [draft?.id, onSettings, providers, settings, t, autosave],
+  );
 
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const fields = draft ? asrFields(draft.type) : [];
@@ -569,11 +644,10 @@ export function AsrSection({
               onSelect: () => void addProvider(type),
             }))}
           />
-          {providers.map((provider, index) => (
+          {providers.map((provider) => (
             <SettingsListRow
               key={provider.id}
               id={provider.id}
-              index={index}
               active={provider.id === selectedId}
               onSelect={() => setSelectedId(provider.id)}
               onMove={reorderProviders}
@@ -590,7 +664,9 @@ export function AsrSection({
             </SettingsListRow>
           ))}
           {providers.length === 0 ? (
-            <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">{t("settings:speech.asr_empty")}</div>
+            <div className="p-6 text-center text-sm text-[var(--ds-text-secondary)]">
+              {t("settings:speech.asr_empty")}
+            </div>
           ) : null}
         </div>
       }
@@ -623,13 +699,23 @@ export function AsrSection({
                 attention={hasCustomizedAdvanced(draft, fields, asrSpec(draft.type)?.template())}
               >
                 <div className="space-y-5 pt-2">
-                  <SpeechFields fields={fields} section="advanced" draft={draft} onPatch={patchFields} />
+                  <SpeechFields
+                    fields={fields}
+                    section="advanced"
+                    draft={draft}
+                    onPatch={patchFields}
+                  />
                 </div>
               </SettingsAdvancedSection>
             ) : null}
 
             <SettingsDetailFooter
-              status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
+              status={
+                <AutosaveStatusRow
+                  status={autosave.status}
+                  onRetry={() => void autosave.saveNow()}
+                />
+              }
             />
           </SettingsStack>
         </div>

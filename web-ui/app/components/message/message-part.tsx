@@ -21,22 +21,33 @@ import { applyAssistantRegexes } from "~/lib/assistant-regex";
 import { groupMessageParts, thinkingBlockKey, type ThinkingStep } from "~/lib/message-grouping";
 import { isWorkspaceActionTool } from "~/lib/workspace-tool-model";
 import { useChainExpandStore } from "~/stores/chain-expand-store";
+import { useSettingsStore } from "~/stores";
 
 // 展开态主权(用户 2026-09-05 拍板):大卡的展开/折叠一旦由用户表态即归用户所有,
 // 系统自动行为(新事件到达/块弹出切链/虚拟化卸载重建)无权重置。状态存会话级
 // store(键=消息id:块稳定身份),组件重建后照常读回;订阅按 key 精确到本块,
 // 其它链的开合不牵连重渲染。
+//
+// 「折叠全部工作步骤」(displaySetting.collapseAllSteps)只改默认收起深度,不改主权:
+// 用户展开过的卡照常全展开;开开关后收起深度 2 → 0(整卡只留一行),流式中留 1 条
+// 让进度可见。
 function ThinkingChainBlock({
   expandKey,
+  streaming,
   ...chainProps
 }: Omit<ChainOfThoughtProps<ThinkingStep>, "expanded" | "onExpandedChange"> & {
   expandKey: string;
+  streaming: boolean;
 }) {
   const expanded = useChainExpandStore((state) => state.expandedByKey[expandKey] ?? false);
   const setExpanded = useChainExpandStore((state) => state.setExpanded);
+  const collapseAll = useSettingsStore(
+    (state) => state.settings?.displaySetting?.collapseAllSteps === true,
+  );
   return (
     <ChainOfThought
       {...chainProps}
+      collapsedVisibleCount={collapseAll ? (streaming ? 1 : 0) : 2}
       expanded={expanded}
       onExpandedChange={(next) => setExpanded(expandKey, next)}
     />
@@ -191,13 +202,14 @@ export const MessageParts = React.memo(
               <ThinkingChainBlock
                 key={`thinking-${blockKey}`}
                 expandKey={`${messageId ?? "msg"}:${blockKey}`}
+                streaming={loading}
                 className="my-1"
                 collapseLabel={t("message_parts.collapse_work_steps")}
                 showMoreLabel={(hiddenCount) =>
                   t("message_parts.expand_work_steps", { count: hiddenCount })
                 }
                 steps={block.steps}
-                renderStep={(step, stepIndex, { isFirst, isLast }) => {
+                renderStep={(step, _stepIndex, { isFirst, isLast }) => {
                   if (step.type === "reasoning") {
                     const stepKey = step.reasoning.createdAt ?? `part-${step.partIndex}`;
                     return (

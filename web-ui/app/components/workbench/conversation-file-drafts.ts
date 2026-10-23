@@ -34,7 +34,7 @@ export function clearFileDraft(scope: string, path: string): void {
 export function clearFileDraftsUnder(scope: string, path: string): void {
   const exact = storeKey(scope, path);
   const prefix = `${storeKey(scope, path)}/`;
-  for (const key of [...drafts.keys()]) {
+  for (const key of drafts.keys()) {
     if (key === exact || key.startsWith(prefix)) drafts.delete(key);
   }
 }

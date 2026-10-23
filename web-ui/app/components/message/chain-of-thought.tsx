@@ -63,7 +63,9 @@ function ChainOfThought<T>({
     if (controlledExpanded === undefined) setInnerExpanded(next);
   };
   const canCollapse = steps.length > collapsedVisibleCount;
-  const visibleSteps = expanded || !canCollapse ? steps : steps.slice(-collapsedVisibleCount);
+  // collapsedVisibleCount = 0 是「一键折叠全部」:slice(-0) 会退回整个数组,必须显式清空。
+  const visibleSteps =
+    expanded || !canCollapse ? steps : collapsedVisibleCount <= 0 ? [] : steps.slice(-collapsedVisibleCount);
   const hiddenCount = Math.max(steps.length - collapsedVisibleCount, 0);
 
   return (

@@ -92,8 +92,10 @@ function prepareSyntheticState() {
   state.settings.searchServices.push({ id: "search-test", type: "tavily", apiKey: "tvly-test", depth: "advanced" });
   state.settings.enableWebSearch = true;
   state.settings.exportKelivoBackup = true;
+  // Kelivo 兼容备份开启即锁定为逐项导出，不能让「全部数据」并行开启。
+  state.settings.backupAllData = false;
   // 可选：用统一同步选项裁剪导出（KELIVO_EXPORT_SCOPE=assistants,memories）。
-  // 未设置时保持默认全开，老用例语义不变。
+  // 未设置时 12 项保持默认全开。
   const scopeEnv = process.env.KELIVO_EXPORT_SCOPE;
   if (scopeEnv) {
     const enabled = new Set(scopeEnv.split(",").map((key) => key.trim()).filter(Boolean));

@@ -9,6 +9,7 @@ import { handleDataRoutes } from "./handlers/data";
 import { handleErrorRoutes } from "./handlers/errors";
 import { handleFileRoutes } from "./handlers/files";
 import { handleMediaRoutes } from "./handlers/media";
+import { handleMediaGenerationRoutes } from "./handlers/media-generation";
 import { handleMemoryRoutes } from "./handlers/memory";
 import { handleSettingsRoutes } from "./handlers/settings";
 import { handleSkillRoutes } from "./handlers/skills";
@@ -29,6 +30,7 @@ const handlers = [
   handleSkillRoutes,
   handleDataRoutes,
   handleUpdateRoutes,
+  handleMediaGenerationRoutes,
   handleMediaRoutes,
   handleErrorRoutes,
 ] as const;

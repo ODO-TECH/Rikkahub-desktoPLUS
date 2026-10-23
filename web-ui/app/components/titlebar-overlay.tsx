@@ -1,7 +1,8 @@
 // 设置模态打开时的「顶带替身」:一条常驻挂载的 fixed 层。设置模态的本体遮罩
 // (Radix Overlay,z-50)以 z-index 压住真实顶带,其 backdrop-filter 让顶带随内容一起
-// 毛玻璃;本替身在更高层复刻一遍品牌行与 [-口×](走共享的 SidebarBrandRow /
-// WindowControlsBar,与真实顶带逐字同源),保持清晰、可点。
+// 毛玻璃;本替身在更高层复刻一遍 [-口×](走共享的 WindowControlsBar,与真实顶带
+// 逐字同源),保持清晰、可点。品牌行不复刻:设置模态左上角不显示 Logo/品牌名
+// (真实品牌行本就被隐去,替身不画副本即等于消失)。
 //
 // 消「暗影环」:真实顶带的 chrome(品牌行/窗控条)带 data-titlebar-chrome 标记,
 // 模态打开时被 app.css 的 body:has([data-settings-overlay]) 规则隐去(visibility:hidden),
@@ -19,9 +20,6 @@
 // (命中对整层透明、不挡视口点击),只把「拖拽区 + 按钮」点亮可见——拖拽区是 div
 // (非交互选择器覆盖对象),它的拖拽靠 mousedown 自己收,借替身壳豁免遮罩即可。
 // 见 app.css 的 [data-titlebar-overlay] 规则组。
-import * as React from "react";
-
-import { SidebarBrandRow } from "~/components/sidebar-brand";
 import { WindowControlsBar, titlebarOverlayDragRegionProps } from "~/components/window-controls";
 import { useSettingsDialogStore } from "~/stores/settings-dialog-store";
 
@@ -34,15 +32,14 @@ export function TitleBarOverlay() {
       data-titlebar-overlay=""
       className="pointer-events-none invisible fixed inset-x-0 top-0 h-[var(--app-band-h)] z-[90]"
     >
-      {/* 三页同源坐标与主界面顶带逐字对齐(conversations.tsx):外层 items-start,
-          品牌行 ml-4 mt-1(左 16px / 距顶 4px),窗控 ml-auto mt-1.5 mr-2(右 8px)。
-          替身与真实顶带共用 SidebarBrandRow / WindowControlsBar,坐标也复刻同一组
-          工具类——主界面顶带坐标若调,这里跟着改,不出现第二份魔法数。 */}
+      {/* 两页同源坐标与主界面顶带逐字对齐(conversations.tsx):外层 items-start,
+          窗控 ml-auto mt-1.5 mr-2(右 8px)。替身与真实顶带共用 WindowControlsBar,
+          坐标也复刻同一组工具类——主界面顶带坐标若调,这里跟着改,不出现第二份魔法数。
+          品牌行不复刻:设置模态左上角不显示 Logo。 */}
       <div
         className="pointer-events-auto flex h-full items-start"
         {...titlebarOverlayDragRegionProps()}
       >
-        <SidebarBrandRow className="ml-4 mt-1" />
         <WindowControlsBar className="ml-auto mt-1.5 mr-2" alwaysVisible />
       </div>
     </div>

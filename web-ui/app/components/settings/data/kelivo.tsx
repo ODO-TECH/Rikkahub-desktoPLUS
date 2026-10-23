@@ -1,7 +1,7 @@
 // components/settings/data/kelivo.tsx — Kelivo 双向同步（云同步区的一张卡）。
-// 同步范围不在这里选：统一由数据管理首卡「同步选项」(settings.backupScope) 决定，
-// 导入时取其中的 8 个实体类别拼 ?kelivo= 参数；「导出 Kelivo 兼容备份」开关也在那张卡里。
-// 本卡只保留导入动作，避免同一组开关在两处各存一份。
+// 同步范围不在这里选：统一由数据管理首卡「同步选项」决定——「全部数据」开启时取全部 8 类，
+// 关闭时取 settings.backupScope 的 8 个实体类别，拼 ?kelivo= 参数；「导出 Kelivo 兼容备份」
+// 开关也在那张卡里。本卡只保留导入动作，避免同一组开关在两处各存一份。
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -37,7 +37,11 @@ export function KelivoSyncCard({ settings }: { settings: Settings }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const { exporting, importing, importPhase, importProgress } = useBackupTaskStore();
   const scope = settings.backupScope;
-  const selectedCount = KELIVO_SCOPE_KEYS.filter((key) => scope[key]).length;
+  // 「全部数据」模式下 Kelivo 导入同样按完整范围执行，逐项开关只在关闭模式后生效。
+  const allData = settings.backupAllData !== false;
+  const selectedCount = allData
+    ? KELIVO_SCOPE_KEYS.length
+    : KELIVO_SCOPE_KEYS.filter((key) => scope[key]).length;
 
   const importKelivo = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -59,7 +63,7 @@ export function KelivoSyncCard({ settings }: { settings: Settings }) {
         settings: Settings;
       }>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        const query = `kelivo=${encodeURIComponent(optionsToParam(scope))}`;
+        const query = `kelivo=${encodeURIComponent(allData ? KELIVO_SCOPE_KEYS.join(",") : optionsToParam(scope))}`;
         xhr.open("POST", appendWebAuthQuery(`/api/data/import?${query}`));
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
         xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));

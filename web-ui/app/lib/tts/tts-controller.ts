@@ -196,7 +196,7 @@ class TtsControllerImpl {
 
         // Play audio (suspends until ended, like Android's audio.play(response))
         try {
-          await this.playBlob(blob, sessionId);
+          await this.playBlob(blob);
         } catch (err) {
           if (sessionId !== this.currentSessionId) break;
           const msg = err instanceof Error ? err.message : String(err);
@@ -310,7 +310,7 @@ class TtsControllerImpl {
     }
   }
 
-  private playBlob(blob: Blob, sessionId: string): Promise<void> {
+  private playBlob(blob: Blob): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);

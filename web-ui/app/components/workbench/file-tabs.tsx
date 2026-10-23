@@ -1,4 +1,3 @@
-import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, X } from "lucide-react";
 
@@ -45,7 +44,9 @@ export function FileTabs({ tabs, activeKey, onSelect, onClose, onBack }: FileTab
               key={tab.key}
               className={cn(
                 "group flex min-w-0 max-w-44 shrink-0 items-center border-r text-xs",
-                active ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/60",
+                active
+                  ? "bg-background text-foreground"
+                  : "text-muted-foreground hover:bg-accent/60",
               )}
             >
               <button
@@ -55,7 +56,9 @@ export function FileTabs({ tabs, activeKey, onSelect, onClose, onBack }: FileTab
                 title={tab.key}
               >
                 <span className="min-w-0 truncate">{tab.title}</span>
-                {tab.dirty ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--ds-brand-primary)]" /> : null}
+                {tab.dirty ? (
+                  <span className="size-1.5 shrink-0 rounded-full bg-[var(--ds-brand-primary)]" />
+                ) : null}
               </button>
               <button
                 type="button"

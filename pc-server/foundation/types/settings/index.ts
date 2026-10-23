@@ -1,4 +1,5 @@
 import type { AppConfig } from "./app-config";
+import type { MediaGenerationConfig } from "./media-generation-config";
 import type { MemoryConfig } from "./memory-config";
 import type { ModelConfig } from "./model-config";
 import type { ModelLayerConfig } from "./model-layer";
@@ -22,9 +23,11 @@ export interface Settings
     StorageConfig,
     NetworkConfig,
     MemoryConfig,
-    SshConfig {}
+    SshConfig,
+    MediaGenerationConfig {}
 
 export type * from "./app-config";
+export type * from "./media-generation-config";
 export type * from "./memory-config";
 export type * from "./model-config";
 export type * from "./model-layer";

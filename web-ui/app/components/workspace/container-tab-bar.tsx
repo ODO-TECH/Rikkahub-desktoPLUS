@@ -576,7 +576,9 @@ function ContainerTab({
     >
       <div
         className={cn(
-          "group relative flex h-7 w-full items-center gap-1.5 pl-2.5 pr-1.5 text-compact font-medium transition-colors duration-150",
+          // 不加 transition-colors:切换主题色时 CSS 变量瞬时换值,若这里带颜色过渡,
+          // 标签会落后工作区 150ms(慢半拍);hover 着色即时,与工作区其余表面一致。
+          "group relative flex h-7 w-full items-center gap-1.5 pl-2.5 pr-1.5 text-compact font-medium",
           active
             ? "rounded-t-[10px] bg-[var(--ds-surface-200)] text-[var(--ds-text-primary)]"
             : "rounded-[10px] text-[var(--ds-text-secondary)] hover:bg-[var(--ds-on-surface)]",

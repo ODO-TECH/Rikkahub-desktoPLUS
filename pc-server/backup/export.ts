@@ -97,6 +97,8 @@ export function backupPayloadMetadataOnly(
     state: {
       settings,
       generatedImages: state.generatedImages,
+      // 特性 B 产出账本:随全部数据导出;fileId 与 generatedImages 同属数字引用,恢复端一并改写。
+      generatedMedia: state.generatedMedia,
       // backupName = zip 内 upload/ 实际文件名(去重/重名规避后),恢复端据此回链原 id(批5)。
       files: state.files.map((file) =>
         backupNameById?.has(file.id) ? { ...file, backupName: backupNameById.get(file.id) } : file,
@@ -116,6 +118,9 @@ export function backupPayloadMetadataOnly(
  *  如实剪空;绝不改动运行时 state.settings(调用方传入的是导出专用副本)。 */
 export function applyBackupScopeToSettings(settings: Settings, scope: BackupScope): Settings {
   const copy: Settings = { ...settings };
+  // 备份自述生效范围：恢复端凭它区分「本包不含」与「目标机该清空」。全部数据模式会
+  // 覆盖本机残留的逐项选择，避免包内数据齐全、恢复端却按旧开关少恢复。
+  copy.backupScope = scope;
   if (!scope.assistants) {
     copy.assistants = [];
     copy.assistantTags = [];
@@ -236,7 +241,7 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
       //   (从 localStorage 迁来,防端口变更导致 origin 隔离丢失)
       const pcOnlyDisplayFields = [
         "chatFontFamilyCss", "uiFontSize", "chatFontSize", "chatInputHeight",
-        "themeMode", "colorTheme", "userThemes", "language",
+        "themeMode", "colorTheme", "userThemes", "language", "collapseAllSteps",
       ];
       for (const field of pcOnlyDisplayFields) {
         if (field in displaySetting) delete displaySetting[field];
@@ -265,6 +270,7 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     delete copy.kelivoSyncOptions;
     // 备份内容选择同样是桌面侧概念:安卓导出固定全量结构,带过去只会被无视。
     delete copy.backupScope;
+    delete copy.backupAllData;
     // shellPath 是机器级 bash 绝对路径,PC→APP/跨机恢复无意义;带到目标机反而因路径不存在
     // 锁死 bash(getShellConfig 对不存在的 customShellPath 抛错),故剥离,目标机走自动探测。
     delete copy.shellPath;
@@ -801,6 +807,9 @@ export function collectReferencedFileIds(): Set<number> {
   for (const img of state.generatedImages ?? []) {
     if (typeof img.fileId === "number") ids.add(img.fileId);
   }
+  for (const media of state.generatedMedia ?? []) {
+    if (typeof media.fileId === "number") ids.add(media.fileId);
+  }
   const db = getConversationsDb();
   if (db) {
     // B1:消息节点引用收集经 SQL LIKE 预筛(只把含 /api/files/ 的节点搬进 JS 抽取),
@@ -925,6 +934,15 @@ export const FULL_BACKUP_SCOPE: BackupScope = {
   fonts: true,
   globalAgents: true,
 };
+
+/** 本次备份真正生效的范围。「全部数据」是独立模式（默认开，旧 state 缺字段也按开）：
+ *  开启时与上游桌面端的完整备份一致，忽略逐项开关；关闭后才按 backupScope 执行。 */
+export function resolveBackupScope(settings: {
+  backupAllData?: boolean;
+  backupScope: BackupScope;
+}): BackupScope {
+  return settings.backupAllData === false ? settings.backupScope : FULL_BACKUP_SCOPE;
+}
 
 export function createSettingsBackupZipToPath(
   targetZipPath: string,

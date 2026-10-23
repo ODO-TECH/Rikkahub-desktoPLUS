@@ -21,7 +21,7 @@ import type { BackupScope } from "../../foundation/types/settings/storage-config
 import { isRecord } from "../../foundation/utils";
 import { tempDir } from "../../foundation/platform";
 import { state } from "../../persistence/json-store";
-import { FULL_BACKUP_SCOPE, applyBackupScopeToSettings } from "../export";
+import { applyBackupScopeToSettings, resolveBackupScope } from "../export";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../../memory/index";
 import { flushConvDirtyNow, getConversationsDb, loadConversationNodesFromDb } from "../../conversations";
 import { listAllConversationMetas } from "../../conversations/read-queries";
@@ -637,9 +637,10 @@ export function createKelivoBackupZipToPath(targetZipPath: string): KelivoExport
   const dbDir = join(stageDir, "database");
   mkdirSync(dbDir, { recursive: true });
   try {
-    // 统一「同步选项」：Kelivo 包与桌面端备份包共用一份 backupScope。先算裁剪后的
-    // 设置副本，外层 settings.json 与内层 kelivo.db 都只写这份，避免两层数据不一致。
-    const scope: BackupScope = state.settings.backupScope ?? FULL_BACKUP_SCOPE;
+    // 统一「同步选项」：Kelivo 包与桌面端备份包共用一份 backupScope，并同样服从
+    //「全部数据」模式；先算裁剪后的设置副本，外层 settings.json 与内层 kelivo.db
+    // 都只写这份，避免两层数据不一致。
+    const scope: BackupScope = resolveBackupScope(state.settings);
     const settings = applyBackupScopeToSettings(state.settings, scope);
     const dbPath = join(dbDir, "kelivo.db");
     const refs = mapModelRefs(settings);

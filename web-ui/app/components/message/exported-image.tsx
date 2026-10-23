@@ -143,7 +143,10 @@ function ToolIcon({ toolName }: { toolName: string }) {
 
 // 工具卡片的简短标签:与主界面 ToolStepPart 同源语义,但导出图只展示标题不展开参数/结果,
 // 保持长图紧凑。search_web 带上 query,其它只显示本地化工具名。
-function toolCardLabel(tool: ToolPart, t: (k: string, p?: Record<string, unknown>) => string): string {
+function toolCardLabel(
+  tool: ToolPart,
+  t: (k: string, p?: Record<string, unknown>) => string,
+): string {
   // 工作区工具(M2-3):导出图必须有可读形态——$ 命令 / 路径 + diff 摘要(§9.8)。
   const workspaceLabel = workspaceToolExportLabel(tool, t as never);
   if (workspaceLabel) return workspaceLabel;
@@ -156,9 +159,7 @@ function toolCardLabel(tool: ToolPart, t: (k: string, p?: Record<string, unknown
       } catch {
         // ignore
       }
-      return query
-        ? t("tool_part.search_web_with_query", { query })
-        : t("tool_part.search_web");
+      return query ? t("tool_part.search_web_with_query", { query }) : t("tool_part.search_web");
     }
     case "scrape_web":
       return t("tool_part.scrape_web");
@@ -188,8 +189,7 @@ export const ExportedImage = React.forwardRef<HTMLDivElement, ExportedImageProps
     // 挂载时读一次当前主题变量。分享对话框是模态的,用户不会同时切主题,单次读取足够。
     const themeVars = React.useMemo(() => readThemeVars(), []);
 
-    const userName =
-      displaySetting?.userNickname?.trim() || t("chat_message.md_role_user");
+    const userName = displaySetting?.userNickname?.trim() || t("chat_message.md_role_user");
     const userAvatar: AssistantAvatar | undefined = displaySetting?.userAvatar;
     const showAssistantBubble = displaySetting?.showAssistantBubble === true;
     const fontFamily =
@@ -328,7 +328,8 @@ function ExportedMessage({
     .filter((part) => includeReasoning || part.type !== "reasoning");
   // 助手在"紧跟用户提问"时显示模型名(对齐 APP showModelIcon 逻辑),连续多条助手回复只在第一条带名。
   const showModelHeader = !isUser && (!prevMessage || prevMessage.role === "USER");
-  const modelName = getModelDisplayName(model?.displayName, model?.modelId) || t("chat_message.md_role_assistant");
+  const modelName =
+    getModelDisplayName(model?.displayName, model?.modelId) || t("chat_message.md_role_assistant");
 
   const bubbleStyle: React.CSSProperties = isUser
     ? {
@@ -391,13 +392,7 @@ function ExportedMessage({
           }}
         >
           {parts.map((part, i) => (
-            <PartView
-              key={i}
-              part={part}
-              expandReasoning={expandReasoning}
-              isUser={isUser}
-              t={t}
-            />
+            <PartView key={i} part={part} expandReasoning={expandReasoning} t={t} />
           ))}
         </div>
       </div>
@@ -408,12 +403,10 @@ function ExportedMessage({
 function PartView({
   part,
   expandReasoning,
-  isUser,
   t,
 }: {
   part: UIMessagePart;
   expandReasoning: boolean;
-  isUser: boolean;
   t: (k: string, p?: Record<string, unknown>) => string;
 }) {
   if (part.type === "text") {

@@ -92,7 +92,10 @@ interface SkillProfile {
   description?: string;
 }
 
-export function ExtensionPickerButtonImpl({ disabled = false, className }: ExtensionPickerButtonProps) {
+export function ExtensionPickerButtonImpl({
+  disabled = false,
+  className,
+}: ExtensionPickerButtonProps) {
   const { t } = useTranslation("input");
   const { settings, currentAssistant } = useCurrentAssistant();
 
@@ -279,10 +282,10 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
     mutationFn: ({
       assistantId,
       enabledSkills,
-      key,
     }: {
       assistantId: string;
       enabledSkills: string[];
+      /** 仅用于 updateSkillsMutation.variables 的按行 pending 标识。 */
       key: string;
     }) => api.post<{ status: string }>("settings/assistant/skills", { assistantId, enabledSkills }),
     onError: (updateError) => {
@@ -541,138 +544,184 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
           {activeTab === "mcp" ? (
             <McpPanel disabled={disabled} />
           ) : (
-          <ScrollArea className="h-[16rem] pr-3">
-            {activeTab === "quickmessages" ? (
-              quickMessages.length > 0 ? (
-                <div className="space-y-2">
-                  {quickMessages.map((item) => {
-                    const checked = selectedQuickMessageIds.includes(item.id);
-                    const switching =
-                      extensionsPending && pendingExtensionKey === `quickmessage:${item.id}`;
+            <ScrollArea className="h-[16rem] pr-3">
+              {activeTab === "quickmessages" ? (
+                quickMessages.length > 0 ? (
+                  <div className="space-y-2">
+                    {quickMessages.map((item) => {
+                      const checked = selectedQuickMessageIds.includes(item.id);
+                      const switching =
+                        extensionsPending && pendingExtensionKey === `quickmessage:${item.id}`;
 
-                    return (
-                      <label
-                        key={item.id}
-                        className={cn(
-                          "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
-                          checked && "border-primary bg-primary/5",
-                        )}
-                      >
-                        {switching ? (
-                          <LoaderCircle className="size-4 animate-spin" />
-                        ) : (
-                          <Checkbox
-                            checked={checked}
-                            disabled={disabled || extensionsPending}
-                            onCheckedChange={(nextChecked) => {
-                              handleToggleQuickMessage(item.id, Boolean(nextChecked));
-                            }}
-                          />
-                        )}
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">
-                            {getDisplayName(item.title, t("injection.unnamed_quickmessage"))}
-                          </div>
-                          <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
-                            {item.content}
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                  {t("injection.empty_quickmessages")}
-                </div>
-              )
-            ) : activeTab === "mode" ? (
-              modeInjections.length > 0 ? (
-                <div className="space-y-2">
-                  {modeInjections.map((item) => {
-                    const checked = selectedModeInjectionIds.includes(item.id);
-                    const switching = extensionsPending && pendingExtensionKey === `mode:${item.id}`;
-
-                    return (
-                      <label
-                        key={item.id}
-                        className={cn(
-                          "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
-                          checked && "border-primary bg-primary/5",
-                        )}
-                      >
-                        {switching ? (
-                          <LoaderCircle className="size-4 animate-spin" />
-                        ) : (
-                          <Checkbox
-                            checked={checked}
-                            disabled={disabled || extensionsPending}
-                            onCheckedChange={(nextChecked) => {
-                              handleToggleModeInjection(item.id, Boolean(nextChecked));
-                            }}
-                          />
-                        )}
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">
-                            {getDisplayName(item.name, t("injection.unnamed_mode"))}
-                          </div>
-                          {item.enabled === false ? (
-                            <div className="text-muted-foreground mt-0.5 text-xs">
-                              {t("injection.disabled")}
+                      return (
+                        <label
+                          key={item.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
+                            checked && "border-primary bg-primary/5",
+                          )}
+                        >
+                          {switching ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Checkbox
+                              checked={checked}
+                              disabled={disabled || extensionsPending}
+                              onCheckedChange={(nextChecked) => {
+                                handleToggleQuickMessage(item.id, Boolean(nextChecked));
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                              {getDisplayName(item.title, t("injection.unnamed_quickmessage"))}
                             </div>
-                          ) : null}
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                  {t("injection.empty_mode")}
-                </div>
-              )
-            ) : activeTab === "lorebook" ? (
-              lorebooks.length > 0 ? (
+                            <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
+                              {item.content}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    {t("injection.empty_quickmessages")}
+                  </div>
+                )
+              ) : activeTab === "mode" ? (
+                modeInjections.length > 0 ? (
+                  <div className="space-y-2">
+                    {modeInjections.map((item) => {
+                      const checked = selectedModeInjectionIds.includes(item.id);
+                      const switching =
+                        extensionsPending && pendingExtensionKey === `mode:${item.id}`;
+
+                      return (
+                        <label
+                          key={item.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
+                            checked && "border-primary bg-primary/5",
+                          )}
+                        >
+                          {switching ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Checkbox
+                              checked={checked}
+                              disabled={disabled || extensionsPending}
+                              onCheckedChange={(nextChecked) => {
+                                handleToggleModeInjection(item.id, Boolean(nextChecked));
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                              {getDisplayName(item.name, t("injection.unnamed_mode"))}
+                            </div>
+                            {item.enabled === false ? (
+                              <div className="text-muted-foreground mt-0.5 text-xs">
+                                {t("injection.disabled")}
+                              </div>
+                            ) : null}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    {t("injection.empty_mode")}
+                  </div>
+                )
+              ) : activeTab === "lorebook" ? (
+                lorebooks.length > 0 ? (
+                  <div className="space-y-2">
+                    {lorebooks.map((item) => {
+                      const checked = selectedLorebookIds.includes(item.id);
+                      const switching =
+                        extensionsPending && pendingExtensionKey === `lorebook:${item.id}`;
+
+                      return (
+                        <label
+                          key={item.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
+                            checked && "border-primary bg-primary/5",
+                          )}
+                        >
+                          {switching ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <Checkbox
+                              checked={checked}
+                              disabled={disabled || extensionsPending}
+                              onCheckedChange={(nextChecked) => {
+                                handleToggleLorebook(item.id, Boolean(nextChecked));
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                              {getDisplayName(item.name, t("injection.unnamed_lorebook"))}
+                            </div>
+                            {typeof item.description === "string" &&
+                            item.description.trim().length > 0 ? (
+                              <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
+                                {item.description}
+                              </div>
+                            ) : null}
+                            {item.enabled === false ? (
+                              <div className="text-muted-foreground mt-0.5 text-xs">
+                                {t("injection.disabled")}
+                              </div>
+                            ) : null}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    {t("injection.empty_lorebook")}
+                  </div>
+                )
+              ) : skills.length > 0 ? (
                 <div className="space-y-2">
-                  {lorebooks.map((item) => {
-                    const checked = selectedLorebookIds.includes(item.id);
+                  {skills.map((item) => {
+                    const checked = selectedSkillNames.includes(item.name);
                     const switching =
-                      extensionsPending && pendingExtensionKey === `lorebook:${item.id}`;
+                      updateSkillsMutation.isPending &&
+                      updateSkillsMutation.variables?.key === `skill:${item.name}`;
 
                     return (
                       <label
-                        key={item.id}
+                        key={item.name}
                         className={cn(
-                          "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition",
+                          "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 transition",
                           checked && "border-primary bg-primary/5",
                         )}
                       >
                         {switching ? (
-                          <LoaderCircle className="size-4 animate-spin" />
+                          <LoaderCircle className="mt-0.5 size-4 animate-spin" />
                         ) : (
                           <Checkbox
+                            className="mt-0.5"
                             checked={checked}
-                            disabled={disabled || extensionsPending}
+                            disabled={disabled || updateSkillsMutation.isPending}
                             onCheckedChange={(nextChecked) => {
-                              handleToggleLorebook(item.id, Boolean(nextChecked));
+                              handleToggleSkill(item.name, Boolean(nextChecked));
                             }}
                           />
                         )}
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">
-                            {getDisplayName(item.name, t("injection.unnamed_lorebook"))}
-                          </div>
-                          {typeof item.description === "string" &&
-                          item.description.trim().length > 0 ? (
+                          <div className="truncate text-sm font-medium">{item.name}</div>
+                          {item.description ? (
                             <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
                               {item.description}
                             </div>
                           ) : null}
-                          {item.enabled === false ? (
-                            <div className="text-muted-foreground mt-0.5 text-xs">
-                              {t("injection.disabled")}
-                            </div>
-                          ) : null}
                         </div>
                       </label>
                     );
@@ -680,55 +729,10 @@ export function ExtensionPickerButtonImpl({ disabled = false, className }: Exten
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                  {t("injection.empty_lorebook")}
+                  {t("injection.empty_skills")}
                 </div>
-              )
-            ) : skills.length > 0 ? (
-              <div className="space-y-2">
-                {skills.map((item) => {
-                  const checked = selectedSkillNames.includes(item.name);
-                  const switching =
-                    updateSkillsMutation.isPending &&
-                    updateSkillsMutation.variables?.key === `skill:${item.name}`;
-
-                  return (
-                    <label
-                      key={item.name}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 transition",
-                        checked && "border-primary bg-primary/5",
-                      )}
-                    >
-                      {switching ? (
-                        <LoaderCircle className="mt-0.5 size-4 animate-spin" />
-                      ) : (
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={checked}
-                          disabled={disabled || updateSkillsMutation.isPending}
-                          onCheckedChange={(nextChecked) => {
-                            handleToggleSkill(item.name, Boolean(nextChecked));
-                          }}
-                        />
-                      )}
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{item.name}</div>
-                        {item.description ? (
-                          <div className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">
-                            {item.description}
-                          </div>
-                        ) : null}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                {t("injection.empty_skills")}
-              </div>
-            )}
-          </ScrollArea>
+              )}
+            </ScrollArea>
           )}
         </div>
       </PopoverContent>

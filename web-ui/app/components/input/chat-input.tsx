@@ -10,6 +10,7 @@ import { ModelList } from "~/components/input/model-list";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { MemoryBadge } from "~/components/memory/memory-badge";
 import { ExtensionPickerButton } from "~/components/input/extension-picker";
+import { MediaStudioButton } from "~/components/media-studio/media-studio-button";
 import { CommandHighlightOverlay, SlashCommandMenu, TEXTAREA_METRICS } from "~/components/input/slash-command-menu";
 import { WorkspacePermissionPicker } from "~/components/input/workspace-permission-picker";
 import { WorkspaceFilesButton } from "~/components/input/workspace-files-button";
@@ -64,6 +65,8 @@ export interface ChatInputProps {
    *  → 后端兜底全局默认聊天模型)。与 getOptimizeContext 同属"点击时才消费"的会话
    *  上下文,传静态值即可,不参与渲染。 */
   conversationId?: string | null;
+  /** 当前草稿 key(新会话页也有):媒体侧栏把产出插入草稿时用。 */
+  draftKey?: string | null;
   /** 消息发送队列预览(生成中补发的排队项)。队空/无会话时父级传 null,不渲染贴片。
    *  刻意作为 children 式插槽由父级构造:队列面板渲染在输入卡上沿外侧的贴片层里
    *  (见下方渲染处注释),但它的数据源与 API 调用属于会话层,不该穿透进纯输入组件。 */
@@ -265,6 +268,7 @@ function ChatInputInner({
   onSlashCommand,
   getOptimizeContext,
   conversationId,
+  draftKey,
   queueSlot,
   className,
 }: ChatInputProps) {
@@ -1082,6 +1086,12 @@ function ChatInputInner({
               ) : null}
               <SearchPickerButton disabled={!canSwitchModel} />
               <ExtensionPickerButton disabled={!canSwitchModel} />
+              <MediaStudioButton
+                prompt={value}
+                conversationId={conversationId}
+                draftKey={draftKey}
+                disabled={!ready || disabled}
+              />
               <WorkspaceFilesButton conversationId={conversationId} />
               <WorkspacePermissionPicker />
             </div>

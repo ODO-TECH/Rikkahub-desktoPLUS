@@ -8,7 +8,16 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Copy, Eye, EyeOff, GripVertical, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  Eye,
+  EyeOff,
+  GripVertical,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
@@ -82,8 +91,16 @@ export function PasswordInput({
         size="icon-xs"
         className="absolute top-1/2 right-1 -translate-y-1/2"
         onClick={() => setVisible((current) => !current)}
-        aria-label={visible ? (hideLabel ?? t("settings:common.hide_key")) : (showLabel ?? t("settings:common.show_key"))}
-        title={visible ? (hideLabel ?? t("settings:common.hide_key")) : (showLabel ?? t("settings:common.show_key"))}
+        aria-label={
+          visible
+            ? (hideLabel ?? t("settings:common.hide_key"))
+            : (showLabel ?? t("settings:common.show_key"))
+        }
+        title={
+          visible
+            ? (hideLabel ?? t("settings:common.hide_key"))
+            : (showLabel ?? t("settings:common.show_key"))
+        }
       >
         {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       </Button>
@@ -126,7 +143,9 @@ export function SettingsAdvancedToggle({
       )}
       onClick={() => onOpenChange(!open)}
     >
-      {showDot ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-brand-primary)]" /> : null}
+      {showDot ? (
+        <span aria-hidden className="size-1.5 rounded-full bg-[var(--ds-brand-primary)]" />
+      ) : null}
       {t("settings:common.advanced")}
       <ChevronDown
         aria-hidden
@@ -270,7 +289,13 @@ export function InlineEditText({
 
 /** 页面内容的纵向骨架:各 SettingsGroup 之间统一节奏。详情页首行是名称/头像的标题行,
  *  分组间距过宽会让正文显得离标题很远(1.5rem:标题行与首个分组也走同一节奏)。 */
-export function SettingsStack({ children, className }: { children: React.ReactNode; className?: string }) {
+export function SettingsStack({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return <div className={cn("space-y-6", className)}>{children}</div>;
 }
 
@@ -297,7 +322,9 @@ export function SettingsEmpty({
         className,
       )}
     >
-      {icon != null ? <span className="text-[var(--ds-icon)] opacity-60 [&>svg]:size-8">{icon}</span> : null}
+      {icon != null ? (
+        <span className="text-[var(--ds-icon)] opacity-60 [&>svg]:size-8">{icon}</span>
+      ) : null}
       {children}
     </div>
   );
@@ -368,7 +395,12 @@ export function SettingsListAddButton({
   const pickedRef = React.useRef(false);
   if (!items) {
     return (
-      <Button className="mb-1 w-full justify-start" variant="tertiary" onClick={onClick} disabled={disabled}>
+      <Button
+        className="mb-1 w-full justify-start"
+        variant="tertiary"
+        onClick={onClick}
+        disabled={disabled}
+      >
         {leading}
         {label}
       </Button>
@@ -441,11 +473,23 @@ function filterHeaderSuggestions(input: string): string[] {
   return matched.length > 0 ? [...matched] : [...COMMON_HEADER_NAMES];
 }
 
-function HeaderNameSuggestions({ input, onPick }: { input: string; onPick: (name: string) => void }) {
+function HeaderNameSuggestions({
+  input,
+  onPick,
+}: {
+  input: string;
+  onPick: (name: string) => void;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" size="icon-xs" variant="ghost" aria-label="header suggestions" title="header suggestions">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="header suggestions"
+          title="header suggestions"
+        >
           <ChevronDown className="size-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -490,20 +534,26 @@ export function SettingsKeyValueList({
       label={label}
       description={description}
       trailing={
-        <Button type="button" size="compact" variant="tertiary" onClick={() => onChange([...items, { key: "", value: "" }])}>
+        <Button
+          type="button"
+          size="compact"
+          variant="tertiary"
+          onClick={() => onChange([...items, { key: "", value: "" }])}
+        >
           <Plus className="size-4" />
           {t("settings:common.add")}
         </Button>
       }
     >
       {items.length === 0 ? (
-        <SettingsEmpty>
-          {emptyText}
-        </SettingsEmpty>
+        <SettingsEmpty>{emptyText}</SettingsEmpty>
       ) : (
         <div className="space-y-2">
           {items.map((item, index) => (
-            <div key={index} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2">
+            <div
+              key={index}
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] items-center gap-2"
+            >
               <div className="flex min-w-0 items-center">
                 <Input
                   value={item.key}
@@ -513,7 +563,10 @@ export function SettingsKeyValueList({
                   className="min-w-0"
                 />
                 {keySuggestions ? (
-                  <HeaderNameSuggestions input={item.key} onPick={(name) => update(index, { key: name })} />
+                  <HeaderNameSuggestions
+                    input={item.key}
+                    onPick={(name) => update(index, { key: name })}
+                  />
                 ) : null}
               </div>
               <Input
@@ -569,7 +622,12 @@ export function SettingsGroup({
         <div data-settings-item="" className="flex min-h-7 items-start justify-between gap-4">
           <div className="min-w-0">
             {title != null ? (
-              <h2 data-settings-label="" className="text-xs font-semibold leading-7 text-[var(--ds-text-secondary)]">{title}</h2>
+              <h2
+                data-settings-label=""
+                className="text-xs font-semibold leading-7 text-[var(--ds-text-secondary)]"
+              >
+                {title}
+              </h2>
             ) : null}
             {description != null ? (
               <p className="text-xs text-[var(--ds-text-tertiary)]">{description}</p>
@@ -584,7 +642,13 @@ export function SettingsGroup({
 }
 
 /** 行列表:相邻行之间一条 --ds-divider 细线(条件渲染为 null 的行不占线)。 */
-export function SettingsRows({ children, className }: { children: React.ReactNode; className?: string }) {
+export function SettingsRows({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return <div className={cn("divide-y divide-[var(--ds-divider)]", className)}>{children}</div>;
 }
 
@@ -626,7 +690,10 @@ export function SettingsFold({
           open ? "rounded-t-[var(--ds-radius-md)]" : "rounded-[var(--ds-radius-md)]",
         )}
       >
-        <span data-settings-label="" className={cn("text-xs font-medium text-[var(--ds-text-secondary)]", titleClassName)}>
+        <span
+          data-settings-label=""
+          className={cn("text-xs font-medium text-[var(--ds-text-secondary)]", titleClassName)}
+        >
           {title}
         </span>
         <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--ds-text-tertiary)]">
@@ -640,7 +707,9 @@ export function SettingsFold({
           />
         </span>
       </button>
-      {description ? <p className="px-4 pb-3 text-xs text-[var(--ds-text-tertiary)]">{description}</p> : null}
+      {description ? (
+        <p className="px-4 pb-3 text-xs text-[var(--ds-text-tertiary)]">{description}</p>
+      ) : null}
       {open ? (
         <div
           id={id}
@@ -719,7 +788,9 @@ export function SettingsSwitchRow({
       label={label}
       description={description}
       htmlFor={id}
-      control={<Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />}
+      control={
+        <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+      }
     >
       {children}
     </SettingsRow>
@@ -753,14 +824,20 @@ export function SettingsField({
     <div data-settings-item="" className={cn("space-y-2", className)}>
       <div className="flex min-h-5 items-center justify-between gap-3">
         <div className="min-w-0">
-          <Label data-settings-label="" htmlFor={htmlFor} className="block text-sm font-medium text-[var(--ds-text-primary)]">
+          <Label
+            data-settings-label=""
+            htmlFor={htmlFor}
+            className="block text-sm font-medium text-[var(--ds-text-primary)]"
+          >
             {label}
           </Label>
           {description != null ? (
             <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
           ) : null}
         </div>
-        {trailing != null ? <div className="flex shrink-0 items-center gap-2">{trailing}</div> : null}
+        {trailing != null ? (
+          <div className="flex shrink-0 items-center gap-2">{trailing}</div>
+        ) : null}
       </div>
       {children}
       {hint != null ? <p className="text-xs text-[var(--ds-text-secondary)]">{hint}</p> : null}
@@ -831,7 +908,13 @@ export function SettingsSplit({
  * 详情栏收尾行:左侧自动保存状态,右侧收尾动作。不画分隔线——删除已进列表行「⋯」菜单、
  * 自动保存 idle 态不渲染,多数时候这一行是空的,常驻细线会在页尾留下一条孤线。
  */
-export function SettingsDetailFooter({ status, children }: { status?: React.ReactNode; children?: React.ReactNode }) {
+export function SettingsDetailFooter({
+  status,
+  children,
+}: {
+  status?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="min-w-0">{status}</div>
@@ -880,7 +963,9 @@ export function SettingsDetailHeader({
               />
             </h2>
           ) : (
-            <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">{title}</h2>
+            <h2 className="truncate text-base font-semibold text-[var(--ds-text-primary)]">
+              {title}
+            </h2>
           )}
           {description != null ? (
             <p className="mt-0.5 text-xs text-[var(--ds-text-secondary)]">{description}</p>
@@ -944,7 +1029,6 @@ export function deleteRowAction(onDelete: () => void | Promise<void>): SettingsR
  */
 export function SettingsListRow({
   id,
-  index,
   active,
   children,
   onSelect,
@@ -953,7 +1037,6 @@ export function SettingsListRow({
   badge,
 }: {
   id: string;
-  index: number;
   active?: boolean;
   children: React.ReactNode;
   onSelect?: () => void;
@@ -1034,7 +1117,8 @@ export function SettingsListRow({
                   // 不加 pointer-events-none 时订阅行的「⋯」点不到就是它。
                   "col-start-1 row-start-1 inline-flex items-center transition-opacity pointer-events-none",
                   // 有删除钮时:常态让位给「⋯」(悬停/键盘聚焦),打开态靠行根的数据标志(见下)。
-                  showTrigger && "group-focus-visible-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
+                  showTrigger &&
+                    "group-focus-visible-within/settings-row:opacity-0 group-hover/settings-row:opacity-0 group-data-[menu=open]/settings-row:opacity-0",
                 )}
               >
                 {badge}

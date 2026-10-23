@@ -22,12 +22,23 @@ export type {
   MemorySettings,
   MemorySnapshot,
   PendingEntry,
+  GeneratedMediaOutputRecord,
+  GeneratedMediaRecord,
   ProxyConfig,
   ProxyMode,
   S3Config,
   WebDavConfig,
   WriteStrategy,
 } from "@server/foundation/types";
+
+// 媒体供应商/模型设置与安卓 3.1.0 同构,前端直接复用服务端类型。
+export type {
+  MediaGenerationModel,
+  MediaGenerationProviderConfig,
+  MediaGenerationProviderType,
+  MediaKind,
+  MediaModelRef,
+} from "@server/foundation/types/settings";
 
 /**
  * Display settings — user nickname, avatar, theme, fonts and other purely visual preferences.
@@ -80,6 +91,9 @@ export interface DisplaySetting {
   colorTheme?: string;
   userThemes?: { id: string; name: string; css: { light: string; dark: string } }[];
   language?: string;
+  /** 一键折叠思考与工具调用:开=工作步骤卡默认收成一行「展开 N 条」,流式中仍显示最新一条。
+   *  PC-only,已在 pc-server pcOnlyDisplayFields 剥离清单,导出安卓不可见。 */
+  collapseAllSteps?: boolean;
   [key: string]: unknown;
 }
 

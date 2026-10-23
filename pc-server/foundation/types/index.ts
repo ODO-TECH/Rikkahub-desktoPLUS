@@ -1,7 +1,7 @@
 // foundation/types.ts — 共享类型（从 server.ts 迁出）
 // 纪律：本文件只放类型，不放运行时值，不引入副作用。
 
-import type { Settings } from "./settings";
+import type { MediaGenerationProviderType, Settings } from "./settings";
 import type { MessagePart } from "./parts";
 
 export * from "./parts";
@@ -446,6 +446,36 @@ export interface GeneratedImage {
   createdAt: number;
 }
 
+/** 媒体工作台的一次产出文件（一次请求可出多张图）。 */
+export interface GeneratedMediaOutputRecord {
+  fileId: number;
+  url: string;
+  mime: string;
+}
+
+// 媒体工作台的产出账本。与 generatedImages(旧生图账本)并存、互不合并。
+export interface GeneratedMediaRecord {
+  id: string;
+  kind: "image" | "video";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+  providerId: string;
+  providerType: MediaGenerationProviderType;
+  modelId: string;
+  prompt: string;
+  params: Record<string, JsonValue>;
+  /** 首个产出，旧客户端/旧记录兼容用；完整清单见 outputs。 */
+  fileId: number | null;
+  url: string | null;
+  outputs?: GeneratedMediaOutputRecord[];
+  providerTaskId: string | null;
+  conversationId: string | null;
+  nodeId: string | null;
+  toolCallId: string | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface State {
   settings: Settings;
   // DB-first:会话运行时权威 = SQLite 活库 + working set,state 不持有会话。此字段仅两种
@@ -457,6 +487,7 @@ export interface State {
   pcWorkspaces?: PcWorkspaceRow[];
   files: StoredFile[];
   generatedImages: GeneratedImage[];
+  generatedMedia: GeneratedMediaRecord[];
   logs: RequestLog[];
   stats: RequestStats;
   // 1.3.2 起,记忆由 memoryStore 管理(memory/ 目录),不再落进 state.json。这两个字段

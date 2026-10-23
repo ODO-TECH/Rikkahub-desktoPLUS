@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 
-import { Code2, Folder, FolderTree, PanelRight } from "lucide-react";
+import { Code2, Folder, FolderTree, ImagePlus, PanelRight } from "lucide-react";
 
 import Markdown from "~/components/markdown/markdown";
+import { MediaStudioPanel } from "~/components/media-studio/media-studio-panel";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
@@ -245,18 +246,26 @@ const PANEL_RENDERERS: Record<string, WorkbenchPanelRenderer> = {
   "workspace-files": {
     render: (panel) => <WorkspaceFilesPanel workspaceId={readStringField(panel.payload, "workspaceId")} />,
   },
+  // 媒体工作台:输入框入口导入提示词,生成图片/视频后可插入当前会话。
+  "media-studio": {
+    render: (panel, activeConversationId) => (
+      <MediaStudioPanel panel={panel} activeConversationId={activeConversationId} />
+    ),
+  },
 };
 
 const TYPE_LABEL_KEYS: Record<string, string> = {
   "conversation-files": "workbench.type_labels.conversation_files",
   "workspace-files": "workbench.type_labels.workspace_files",
   "code-preview": "workbench.type_labels.code_preview",
+  "media-studio": "workbench.type_labels.media_studio",
 };
 
 const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   "conversation-files": FolderTree,
   "workspace-files": Folder,
   "code-preview": Code2,
+  "media-studio": ImagePlus,
 };
 
 export function WorkbenchHost({ panel, onClose, className, activeConversationId }: WorkbenchHostProps) {

@@ -18,7 +18,7 @@ import { memoryStore } from "../../memory/index";
 import { recentAppErrors } from "../../observability/app-errors";
 import { computeStats } from "../../conversations/stats";
 import { getConversation } from "../../conversations";
-import { DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
+import { DEFAULT_MEDIA_PROMPT_OPTIMIZE_PROMPT, DEFAULT_PROMPT_OPTIMIZE_PROMPT, PROMPT_OPTIMIZE_OUTPUT_TOKENS } from "../../app-config/prompts";
 import { markUiActivity } from "../../app-config/analytics";
 import { conversationModelIdFor, fetchAuxiliaryText, modelExists } from "../../conversations/auxiliary";
 import { readGlobalAgentsFile, writeGlobalAgentsFile } from "../../agents/global-agents";
@@ -232,24 +232,55 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
     // 上下文让优化模型能理解"那个""上次的"等指代——首条消息或无对话时省略。
     // 未配置时回退当前会话的模型(与翻译/压缩同口径,用户拍板);仅在既没配又没有
     // 会话上下文(新对话页,无会话可回退)时 400 引导去设置。
-    const body = await readJson<{ text: string; context?: string; conversationId?: string }>(request);
+    const body = await readJson<{
+      text: string;
+      context?: string;
+      conversationId?: string;
+      modelId?: string;
+      purpose?: string;
+      mediaKind?: string;
+      useConversationModel?: boolean;
+    }>(request);
     const text = String(body.text ?? "").trim();
     if (!text) return error("没有可优化的文本", 400);
     const conversationId = String(body.conversationId ?? "").trim();
     const conversation = conversationId ? getConversation(conversationId) : undefined;
-    if (!modelExists(state.settings.promptOptimizeModelId) && !conversation) {
+    const purpose = String(body.purpose ?? "").trim();
+    const isMedia = purpose === "media" || purpose === "media-image" || purpose === "media-video";
+    // 媒体工作台明确要求用对话模型改写画面描述,不受全局「提示词优化模型」影响。
+    const useConversationModel = isMedia || body.useConversationModel === true;
+    const configuredOptimize = modelExists(state.settings.promptOptimizeModelId);
+    if (!useConversationModel && !configuredOptimize && !conversation) {
       return error("未配置提示词优化模型,请在「设置 → 模型 → 场景模型」中指定一个模型", 400);
     }
     // 配置的模型存在用之;不存在回退会话模型;会话也拿不到(已被删/未传)时兜底全局
     // chatModelId(conversationModelIdFor 对无助手覆盖的会话返回的就是它,最后一段只是
     // 把"连会话都没有"的情况也归一到同一兜底,不再报错——新对话页也能用优化按钮)。
-    const modelId = modelExists(state.settings.promptOptimizeModelId)
-      ? state.settings.promptOptimizeModelId
-      : conversation
-        ? conversationModelIdFor(conversation)
-        : state.settings.chatModelId;
+    // 前端可显式传 modelId(输入框/媒体工作台显示的那个模型):全局 chatModelId 在
+    // 多助手下并不代表当前选中的模型,新对话页没有会话可回退时必须由前端点名。
+    const requestedModelId = String(body.modelId ?? "").trim();
+    const modelId = useConversationModel
+      ? requestedModelId && modelExists(requestedModelId)
+        ? requestedModelId
+        : conversation
+          ? conversationModelIdFor(conversation)
+          : state.settings.chatModelId
+      : configuredOptimize
+        ? state.settings.promptOptimizeModelId
+        : conversation
+          ? conversationModelIdFor(conversation)
+          : state.settings.chatModelId;
+    if (!modelExists(modelId)) {
+      return error("没有可用于优化提示词的对话模型,请先在设置中选择聊天模型", 400);
+    }
+    const mediaKind = body.mediaKind === "video" || purpose === "media-video" ? "视频" : "图片";
     const context = String(body.context ?? "").trim();
-    let prompt = String(state.settings.promptOptimizePrompt ?? "").trim() || DEFAULT_PROMPT_OPTIMIZE_PROMPT;
+    let prompt = isMedia
+      ? DEFAULT_MEDIA_PROMPT_OPTIMIZE_PROMPT
+      : String(state.settings.promptOptimizePrompt ?? "").trim() || DEFAULT_PROMPT_OPTIMIZE_PROMPT;
+    if (isMedia) {
+      prompt += `\n\n本次生成目标:${mediaKind}。`;
+    }
     if (context) {
       // 条件式上下文:明确告诉模型"只在提示词承接对话时才用,否则忽略",防止无关背景
       // 污染独立提示词。同时禁止把背景内容写进优化结果(防止泄漏/跑题)。

@@ -64,6 +64,8 @@ function literal(page: SettingsPageKey, label: string, options: RowOptions = {})
 const PAGE_KEYWORDS: Partial<Record<SettingsPageKey, string>> = {
   assistants: "assistants",
   "models/providers": "providers",
+  "media/providers": "media_providers",
+  "media/storage": "media_storage",
   "network": "web_search",
   "connectivity/proxy": "proxy",
   "extensions/mcp": "mcp",
@@ -111,6 +113,7 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("general/app", "general.opt.show_assistant_bubble"),
   row("general/app", "general.opt.show_token_usage"),
   row("general/app", "general.opt.auto_scroll"),
+  row("general/app", "general.opt.collapse_all_steps"),
   row("general/app", "general.shell_title", { keywords: "shell" }),
   row("general/app", "general.shell_path"),
   row("general/app", "general.tray_title"),
@@ -172,9 +175,31 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("models/scenes", "models.feature.translate.title"),
   row("models/scenes", "models.feature.compress.title"),
   row("models/scenes", "models.feature.ocr.title"),
-  row("models/scenes", "models.feature.image.title"),
   row("models/scenes", "models.feature.embedding.title", { keywords: "embedding" }),
   row("models/scenes", "models.feature.rerank.title", { keywords: "rerank" }),
+
+  // 媒体 › 生成服务
+  literal("media/providers", "Base URL", { keywords: "base_url" }),
+  literal("media/providers", "API Key", { keywords: "api_key" }),
+  row("media/providers", "media.connection_title"),
+  row("media/providers", "media.type"),
+  row("media/providers", "media.workspace_id"),
+  row("media/providers", "media.models_title"),
+  row("media/providers", "media.model_list"),
+  row("media/providers", "providers.fetch_models"),
+  row("media/providers", "media.fetched_title"),
+
+  // 媒体 › 上传与存储
+  row("media/storage", "media.storage_title"),
+  row("media/storage", "media.endpoint_label"),
+  row("media/storage", "media.region", { keywords: "s3" }),
+  row("media/storage", "media.bucket", { keywords: "s3" }),
+  row("media/storage", "media.access_key_id", { keywords: "s3" }),
+  row("media/storage", "media.secret_access_key", { keywords: "s3" }),
+  row("media/storage", "media.path_style", { keywords: "s3" }),
+  row("media/storage", "media.defaults_title"),
+  row("media/storage", "media.default_image"),
+  row("media/storage", "media.default_video"),
 
   // 网络
   row("network", "search.type"),

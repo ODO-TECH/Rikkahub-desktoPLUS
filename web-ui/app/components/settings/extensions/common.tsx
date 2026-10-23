@@ -4,7 +4,13 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import api from "~/services/api";
@@ -65,7 +71,9 @@ export function BindingAssistantSelect({
         )}
       >
         <span className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 text-[var(--ds-text-secondary)]">{t("settings:mcp.binding_assistant")}</span>
+          <span className="shrink-0 text-[var(--ds-text-secondary)]">
+            {t("settings:mcp.binding_assistant")}
+          </span>
           <span className="min-w-0 truncate">
             <SelectValue />
           </span>
@@ -102,11 +110,7 @@ export function BindingAssistantToolbar({
 
 export function NoAssistantsState() {
   const { t } = useTranslation();
-  return (
-    <SettingsEmpty size="md">
-      {t("settings:mcp.no_assistants")}
-    </SettingsEmpty>
-  );
+  return <SettingsEmpty size="md">{t("settings:mcp.no_assistants")}</SettingsEmpty>;
 }
 
 /** 详情页头右侧的带标签开关(条目「启用」、「对此助手启用」):标签可点击切换。 */
@@ -209,41 +213,39 @@ export function EditorShell({
     <SettingsSplit
       scroll
       list={
-      <div>
-        {createMenu ? (
-          <SettingsListAddButton label={t("settings:mcp.add_new")} items={createMenu} />
-        ) : (
-          <SettingsListAddButton label={t("settings:mcp.add_new")} onClick={() => void onCreate?.()} />
-        )}
-        {listHeader}
-        <div className="space-y-1">
-          {items.length === 0 ? (
-            <SettingsEmpty size="md">
-              {emptyLabel}
-            </SettingsEmpty>
-          ) : null}
-          {items.map((item, index) => {
-            const rowKey = String(item.id ?? item.name);
-            return (
-              <SettingsListRow
-                key={rowKey}
-                id={rowKey}
-                index={index}
-                active={rowKey === selectedId}
-                onSelect={() => onSelect(rowKey)}
-                onMove={onMove ? (from, to) => void onMove(from, to) : undefined}
-                actions={rowMenuOf?.(item)}
-              >
-                {renderItem ? (
-                  renderItem(item)
-                ) : (
-                  <div className="truncate text-left">{titleOf(item)}</div>
-                )}
-              </SettingsListRow>
-            );
-          })}
+        <div>
+          {createMenu ? (
+            <SettingsListAddButton label={t("settings:mcp.add_new")} items={createMenu} />
+          ) : (
+            <SettingsListAddButton
+              label={t("settings:mcp.add_new")}
+              onClick={() => void onCreate?.()}
+            />
+          )}
+          {listHeader}
+          <div className="space-y-1">
+            {items.length === 0 ? <SettingsEmpty size="md">{emptyLabel}</SettingsEmpty> : null}
+            {items.map((item) => {
+              const rowKey = String(item.id ?? item.name);
+              return (
+                <SettingsListRow
+                  key={rowKey}
+                  id={rowKey}
+                  active={rowKey === selectedId}
+                  onSelect={() => onSelect(rowKey)}
+                  onMove={onMove ? (from, to) => void onMove(from, to) : undefined}
+                  actions={rowMenuOf?.(item)}
+                >
+                  {renderItem ? (
+                    renderItem(item)
+                  ) : (
+                    <div className="truncate text-left">{titleOf(item)}</div>
+                  )}
+                </SettingsListRow>
+              );
+            })}
+          </div>
         </div>
-      </div>
       }
     >
       {children}

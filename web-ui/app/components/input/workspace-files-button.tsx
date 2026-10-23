@@ -1,4 +1,3 @@
-import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { FolderTree } from "lucide-react";
 
@@ -25,7 +24,7 @@ export function WorkspaceFilesButton({
   // 普通对话:工作区归属在会话详情里(标题/图标用);工作区容器:容器 id 即工作区 id。
   const conversationWorkspaceId = useConversationStore((state) =>
     container === CHAT_CONTAINER && conversationId
-      ? state.entries[conversationId]?.detail?.workspaceId ?? null
+      ? (state.entries[conversationId]?.detail?.workspaceId ?? null)
       : null,
   );
   const workspaceId = container === CHAT_CONTAINER ? conversationWorkspaceId : container;
@@ -37,10 +36,12 @@ export function WorkspaceFilesButton({
 
   // 会话面板只带 conversationId:面板每次渲染按“当前焦点会话”解析工作区,
   // 换会话/换工作区后不会沿用旧工作区的树。
-  const isOpen = workbench.panel?.type === "conversation-files"
-    && (conversationId
+  const isOpen =
+    workbench.panel?.type === "conversation-files" &&
+    (conversationId
       ? workbench.panel.payload.conversationId === conversationId
-      : !workbench.panel.payload.conversationId && workbench.panel.payload.workspaceId === workspace?.id);
+      : !workbench.panel.payload.conversationId &&
+        workbench.panel.payload.workspaceId === workspace?.id);
 
   return (
     <Button
@@ -62,9 +63,7 @@ export function WorkspaceFilesButton({
         workbench.openPanel({
           type: "conversation-files",
           title: workspace?.name ?? t("workbench.files.title"),
-          payload: conversationId
-            ? { conversationId }
-            : { workspaceId: workspace?.id },
+          payload: conversationId ? { conversationId } : { workspaceId: workspace?.id },
         });
       }}
     >

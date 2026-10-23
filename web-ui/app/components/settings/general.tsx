@@ -166,6 +166,12 @@ export function AppSection({ settings }: PageProps) {
               onCheckedChange={(checked) => patchDisplay({ [key]: checked })}
             />
           ))}
+          {/* 默认关:上排开关是「不写即开」(!== false),此项是「不写即关」,不能进表。 */}
+          <SettingsSwitchRow
+            label={t("settings:general.opt.collapse_all_steps")}
+            checked={display.collapseAllSteps === true}
+            onCheckedChange={(checked) => patchDisplay({ collapseAllSteps: checked })}
+          />
         </SettingsRows>
       </SettingsGroup>
 

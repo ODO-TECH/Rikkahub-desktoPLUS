@@ -13,6 +13,7 @@ import {
   Database,
   Globe,
   Heart,
+  ImagePlus,
   Info,
   Mic,
   Network,
@@ -54,6 +55,15 @@ export const SETTINGS_NAV = [
     children: [
       { id: "providers", labelKey: "settings:subnav.models.providers" },
       { id: "scenes", labelKey: "settings:subnav.models.scenes" },
+    ],
+  },
+  {
+    id: "media",
+    labelKey: "settings:nav.media",
+    icon: ImagePlus,
+    children: [
+      { id: "providers", labelKey: "settings:subnav.media.providers" },
+      { id: "storage", labelKey: "settings:subnav.media.storage" },
     ],
   },
   // 搜索服务单独成页;代理与 Web 服务归到「网络」一级页(见下方 connectivity)。

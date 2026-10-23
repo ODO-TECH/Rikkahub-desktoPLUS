@@ -50,6 +50,9 @@ export interface StorageConfig {
   exportKelivoBackup: boolean;
   /** Kelivo 导入/云端恢复的同步范围。 */
   kelivoSyncOptions: KelivoSyncOptions;
-  /** 桌面端备份包的内容选择（本地导出 + WebDAV/S3 云备份共用）。 */
+  /** 「全部数据」备份模式：true = 与上游桌面端一致的完整备份，忽略 backupScope、
+   *  把全部数据一次备齐；false = 按 backupScope 逐项备份。默认 true。 */
+  backupAllData: boolean;
+  /** 逐项备份的内容选择；只在 backupAllData=false 时生效（关闭后会保留上次选择）。 */
   backupScope: BackupScope;
 }

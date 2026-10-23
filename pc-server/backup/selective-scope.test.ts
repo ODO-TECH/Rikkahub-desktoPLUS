@@ -13,7 +13,7 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-scope-bak-"))
 const jsonStore = await import("../persistence/json-store");
 const { defaultState } = await import("../app-config/defaults");
 const { dataDir, skillsDir } = await import("../foundation/paths");
-const { createSettingsBackupZipToPath, FULL_BACKUP_SCOPE } = await import("./export");
+const { createSettingsBackupZipToPath, FULL_BACKUP_SCOPE, resolveBackupScope } = await import("./export");
 const { readZipEntries } = await import("../files/index");
 const { openConversationsDb } = await import("../conversations");
 const { memoryStore } = await import("../memory/index");
@@ -151,7 +151,23 @@ describe("选择性备份的内容门控", () => {
     expect(JSON.parse(entryText(scope, "settings.json"))).toBeDefined();
   });
 
-  test("备份包不携带 backupScope 本身(它是本机偏好,不参与跨机迁移)", () => {
+  test("安卓 settings.json 不携带 backupScope(PC 包只在 pc-backup.json 自述)", () => {
     expect(JSON.parse(entryText(FULL_BACKUP_SCOPE, "settings.json")).backupScope).toBeUndefined();
+  });
+
+  test("「全部数据」模式解析为完整范围,与逐项开关互不影响", () => {
+    const selective: BackupScope = { ...FULL_BACKUP_SCOPE, attachments: false, skills: false };
+    expect(resolveBackupScope({ backupAllData: true, backupScope: selective })).toEqual(FULL_BACKUP_SCOPE);
+    expect(resolveBackupScope({ backupAllData: false, backupScope: selective })).toEqual(selective);
+    // 旧 state 没有该字段 → 按上游式完整备份处理
+    expect(resolveBackupScope({ backupScope: selective })).toEqual(FULL_BACKUP_SCOPE);
+  });
+
+  test("备份包自述生效范围:全部数据模式不会因本机残留开关而少恢复", () => {
+    const full = JSON.parse(entryText(FULL_BACKUP_SCOPE, "pc-backup.json")).state.settings.backupScope;
+    expect(full).toEqual(FULL_BACKUP_SCOPE);
+    const scoped = JSON.parse(entryText({ ...FULL_BACKUP_SCOPE, skills: false }, "pc-backup.json")).state.settings.backupScope as BackupScope;
+    expect(scoped.skills).toBe(false);
+    expect(scoped.attachments).toBe(true);
   });
 });

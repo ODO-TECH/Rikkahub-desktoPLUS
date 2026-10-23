@@ -3,10 +3,10 @@
 //
 // 不变量(见 titlebar-overlay.tsx 与 app.css 头注):
 //   1. 模态打开时,真实顶带(品牌行 + [-口×])随内容一起 backdrop-blur(遮罩全屏覆盖);
-//      替身层在更高 z-index 复刻同一组 chrome 保持清晰。
+//      替身层在更高 z-index 复刻窗控条保持清晰;品牌行不复刻(设置模态不显示 Logo)。
 //   2. 替身自身命中透明(不挡住视口点击);只有其中的拖拽区与按钮可见命中。
-//   3. 替身的品牌行/窗控钮与真实顶带逐字同源(共享 SidebarBrandRow / WindowControlsBar),
-//      不得在替身里另写一套 brand/window-controls 复制品(那会随主源漂移)。
+//   3. 替身的窗控钮与真实顶带逐字同源(共享 WindowControlsBar),
+//      不得在替身里另写一套 window-controls 复制品(那会随主源漂移)。
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -53,22 +53,21 @@ describe("设置模态顶带替身", () => {
     expect(OVERLAY).toContain("pointer-events-auto");
   });
 
-  test("替身复用真实顶带的 brand/window-controls(不另写复制品)", () => {
-    // 替身必须 import 共享实现,而不是内联另一份 Logo/窗控钮。
-    expect(OVERLAY).toContain('from "~/components/sidebar-brand"');
+  test("替身复用真实顶带的 window-controls(不另写复制品),品牌行不复刻", () => {
+    // 替身必须 import 共享实现,而不是内联另一份窗控钮。
     expect(OVERLAY).toContain('from "~/components/window-controls"');
-    expect(OVERLAY).toContain("<SidebarBrandRow");
     expect(OVERLAY).toContain("<WindowControlsBar");
+    // 品牌行不复刻:设置模态左上角不显示 Logo/品牌名(用户要求)。
+    expect(OVERLAY).not.toContain("SidebarBrandRow");
     // 替身自身命中透明:容器始终是 invisible(靠 visibility 让子元素可见命中,
     // 替身壳自身不抢视口点击)。
     expect(OVERLAY).toContain("invisible");
   });
 
-  test("替身坐标与主界面顶带逐字对齐(三页同源,不出现第二份魔法数)", () => {
-    // 与 conversations.tsx 的顶带坐标同源:品牌行 ml-4 mt-1(左 16px / 距顶 4px),
-    // 窗控 ml-auto mt-1.5 mr-2(右 8px)。替身与真实顶带共用组件,坐标也复刻同一组
-    // 工具类——漂移风险点就在「替身的 Logo / [-口×] 与主界面错位」,这里锁住。
-    expect(OVERLAY).toContain('className="ml-4 mt-1"');
+  test("替身坐标与主界面顶带逐字对齐(不出现第二份魔法数)", () => {
+    // 与 conversations.tsx 的顶带坐标同源:窗控 ml-auto mt-1.5 mr-2(右 8px)。
+    // 替身与真实顶带共用组件,坐标也复刻同一组工具类——漂移风险点就在
+    // 「替身的 [-口×] 与主界面错位」,这里锁住。
     expect(OVERLAY).toContain('className="ml-auto mt-1.5 mr-2"');
     // 外层容器与主界面顶带同向(items-start:品牌行/窗控各带 mt-*,纵向对齐),
     // 不得回退成 items-center(那会让品牌行/窗控纵向居中带,与主界面错半个带高)。
@@ -90,19 +89,31 @@ describe("设置模态顶带替身", () => {
     expect(CSS).not.toContain("body:has([data-settings-overlay]) [data-app-titlebar]");
   });
 
-  test("设置模态打开时隐去真实顶带 chrome(消暗影环),替身副本豁免保持可见", () => {
-    // 真实 chrome(品牌行/窗控条)若留着,其像素会被本体遮罩的 backdrop-filter 糊成鬼影,
-    // 替身清晰版盖上去后鬼影向外晕开、在 Logo/品牌名外围裹出一圈暗影。故模态打开时
-    // 隐去真实 chrome,让遮罩只采样顶带背景;替身副本经 [data-titlebar-overlay] 豁免保持可见。
+  test("设置模态打开时只隐去真实窗控条(消暗影环),品牌行留原地被遮罩盖住", () => {
+    // 真实窗控条若留着,其像素会被本体遮罩的 backdrop-filter 糊成鬼影,替身清晰副本
+    // 盖上去后鬼影向外晕开、形成一圈暗影——故模态打开时隐去真实窗控条,让遮罩只采样
+    // 顶带背景;替身副本经 [data-titlebar-overlay] 豁免保持可见。
+    // 品牌行走另一条路:不画替身副本,真实行留在原地被遮罩盖住(模糊可见)——
+    // 清晰副本 + 糊鬼影叠在同一坐标才是暗影环的成因,没有副本就没有环;
+    // 且关模态时品牌行无需重现,零延迟(用户要求)。
     // ①两个共享组件根都带 chrome 标记(替身复用同组件,副本也带标记、走豁免)。
     expect(SIDEBAR_BRAND).toContain('data-titlebar-chrome=""');
     expect(WINDOW_CONTROLS).toContain('data-titlebar-chrome=""');
-    // ②隐藏规则:模态打开时隐去所有 chrome。
+    // 品牌行带专属标记:隐藏规则靠它把品牌行排除在外。
+    expect(SIDEBAR_BRAND).toContain('data-titlebar-brand=""');
+    expect(WINDOW_CONTROLS).not.toContain("data-titlebar-brand");
+    // ②隐藏规则:模态打开时隐去窗控条,但不命中品牌行。
     const hideBlock =
-      /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-chrome\]\s*\{([^}]*)\}/.exec(CSS);
-    expect(hideBlock, "CSS 需有「隐去真实 chrome」规则").not.toBeNull();
+      /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-chrome\]:not\(\[data-titlebar-brand\]\)\s*\{([^}]*)\}/.exec(
+        CSS,
+      );
+    expect(hideBlock, "CSS 需有「隐去真实窗控条」规则").not.toBeNull();
     expect(hideBlock![1]).toContain("visibility: hidden");
-    // ③替身豁免:替身作用域内的 chrome 副本保持可见。
+    // 不得存在会把品牌行一并隐去的选择器(旧规则不带 :not 排除)。
+    expect(CSS).not.toMatch(
+      /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-chrome\]\s*\{/,
+    );
+    // ③替身豁免:替身作用域内的窗控条副本保持可见。
     const exemptBlock =
       /body:has\(\[data-settings-overlay\]\)\s+\[data-titlebar-overlay\]\s+\[data-titlebar-chrome\]\s*\{([^}]*)\}/.exec(
         CSS,

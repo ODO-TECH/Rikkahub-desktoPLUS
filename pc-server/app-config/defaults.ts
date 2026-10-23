@@ -71,6 +71,9 @@ export function defaultSettings(): Settings {
       // 本默认值只影响新装机与缺省字段回填。前端 chat-input 的 ?? true 兜底同向。
       sendOnEnter: true,
       enableAutoScroll: true,
+      // 一键折叠工作步骤:开=思考链卡默认只留一行「展开 N 条工作步骤」,流式中仍露最新
+      // 一条(进度可见)。PC-only 显示项,导出安卓前剥离;用户手动展开过的卡不受影响。
+      collapseAllSteps: false,
       fontSizeRatio: 1,
       // 界面字号缩放(建议 0.85–1.20)。null = 不缩放,根字号保持浏览器默认 16px。PC-only,
       // 已在 pcOnlyDisplayFields 清单里,导出备份时剥离,Android 不可见。
@@ -113,6 +116,13 @@ export function defaultSettings(): Settings {
     selectedASRProviderId: null,
     ttsProviders: defaultTtsProviders(),
     selectedTTSProviderId: DEFAULT_SYSTEM_TTS_ID,
+    // 特性 B：外挂媒体生成。默认空供应商、无上传桶、无默认模型——功能整体处于关闭态。
+    mediaGenerationProviders: [],
+    uploadS3Config: null,
+    defaultMediaImageModel: null,
+    defaultMediaVideoModel: null,
+    // 媒体提示词改写模型:默认未配置(空串),由用户在 /images 工作台顶栏选择。
+    mediaPromptRewriteModelId: "",
     assistantId: assistant.id,
     providers: defaultProviders(),
     // 预置项删除墓碑(R1-12 同款,见 model-layer.ts 字段注释):老 state 无此字段 → 空墓碑,
@@ -186,8 +196,9 @@ export function defaultSettings(): Settings {
       pathStyle: true,
       items: ["DATABASE", "FILES"],
     },
-    // Kelivo 双向同步：默认每次导出都附带一份 Kelivo 兼容备份；导入默认全选。
-    exportKelivoBackup: true,
+    // Kelivo 兼容包按细项生成，和「全部数据」完整备份不对齐，故默认关闭；开启后会锁定
+    // 为细项导出（见 state-load 与 settings/kelivo-sync）。导入默认全选。
+    exportKelivoBackup: false,
     kelivoSyncOptions: {
       conversations: true,
       assistants: true,
@@ -198,7 +209,9 @@ export function defaultSettings(): Settings {
       quickMessages: true,
       searchServices: true,
     },
-    // 桌面端同步选项默认全开（= 与旧版无选择性备份逐字节等价）
+    // 「全部数据」默认开启：与上游桌面端的完整备份一致，忽略下面的逐项开关。
+    backupAllData: true,
+    // 关闭「全部数据」后才生效的逐项选择；默认全开（= 与旧版无选择性备份逐字节等价）
     backupScope: {
       conversations: true,
       assistants: true,
@@ -252,6 +265,7 @@ export function defaultState(): State {
     conversations: [],
     files: [],
     generatedImages: [],
+    generatedMedia: [],
     logs: [],
     stats: defaultRequestStats(),
     nextFileId: 1,

@@ -19,6 +19,7 @@ import { repairForkNodeTheft } from "./conversations/fork-repair";
 import { initSseWiring } from "./api/sse";
 import { initMcpHealthBroadcast } from "./api/sse";
 import { startMcpHealthSupervisor } from "./tools/mcp-health";
+import { resumePendingMediaTasks } from "./media-generation/resume";
 
 export async function bootstrap(): Promise<void> {
   // 1) 状态装载 + 一次性迁移链(SQLite 灌库、记忆拆分、附件去重、.tmp 清扫都在 loadState 内)。
@@ -55,6 +56,10 @@ export async function bootstrap(): Promise<void> {
   } catch (err) {
     console.error("[fork-repair] 修复失败(不影响启动):", err);
   }
+
+  // 3c) 特性 B:恢复未完成的媒体任务(有 providerTaskId 的继续轮询;没有的标失败)。
+  //     后台异步执行,不阻塞启动;24h 上限仍在 service 内判定。
+  resumePendingMediaTasks();
 
   // 4) SSE 接线:working set 的"界面正开着"判据 + 错误中心 SSE 广播。
   initSseWiring();
