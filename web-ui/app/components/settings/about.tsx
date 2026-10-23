@@ -34,42 +34,38 @@ function AfdianIcon({ className }: { className?: string }) {
 const STATIC_ROW = "flex w-full items-center px-3 py-3.5";
 const LINK_ROW = `${STATIC_ROW} rounded-[var(--ds-radius-md)] text-left transition-colors hover:bg-[var(--ds-on-surface)]`;
 
-// 赞助者数据结构(预留)。赞助用户列表上线后由 /api/sponsors 返回此结构;
-// 接入方案见后端该接口注释。
-interface Sponsor {
-  userName: string;
-  avatar: string;
-  amount?: string;
-}
-
 export function DonateSection() {
   const { t } = useTranslation();
   return (
     <>
-      <p className="mb-4 text-sm text-[var(--ds-text-secondary)]">{t("settings:donate.subtitle")}</p>
+      <p className="mb-4 text-sm text-[var(--ds-text-secondary)]">
+        {t("settings:donate.subtitle")}
+      </p>
       <SettingsRows>
-          <button
-            type="button"
-            className={cn(LINK_ROW, "gap-3")}
-            onClick={() => void openExternal("https://afdian.com/a/mirsky")}
-          >
-            <AfdianIcon className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t("settings:donate.afdian")}</div>
-              <div className="text-sm text-muted-foreground">{t("settings:donate.afdian_desc")}</div>
-            </div>
-            <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
-          </button>
-          <div className={cn(STATIC_ROW, "gap-3")}>
-            <Globe className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">{t("settings:donate.international")}</div>
-              <div className="text-sm text-muted-foreground">{t("settings:donate.international_desc")}</div>
-            </div>
-            <span className="shrink-0 rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground">
-              {t("settings:donate.coming_soon")}
-            </span>
+        <button
+          type="button"
+          className={cn(LINK_ROW, "gap-3")}
+          onClick={() => void openExternal("https://afdian.com/a/odo-official")}
+        >
+          <AfdianIcon className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{t("settings:donate.afdian")}</div>
+            <div className="text-sm text-muted-foreground">{t("settings:donate.afdian_desc")}</div>
           </div>
+          <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
+        </button>
+        <div className={cn(STATIC_ROW, "gap-3")}>
+          <Globe className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{t("settings:donate.international")}</div>
+            <div className="text-sm text-muted-foreground">
+              {t("settings:donate.international_desc")}
+            </div>
+          </div>
+          <span className="shrink-0 rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground">
+            {t("settings:donate.coming_soon")}
+          </span>
+        </div>
       </SettingsRows>
       {/* 赞助用户列表暂未上线;数据源就绪后在此恢复,结构见 Sponsor 类型与后端 /api/sponsors 注释。 */}
     </>
@@ -80,7 +76,7 @@ export function AboutSection() {
   const { t } = useTranslation();
   // 版本号由 pc-server/scripts/bump-version.ts 统一改写(四处之一),
   // 勿手改;CI 的 check-version-sync.ts 校验四处一致。
-  const APP_VERSION = "0.0.4";
+  const APP_VERSION = "0.0.5";
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
@@ -142,7 +138,11 @@ export function AboutSection() {
     <>
       <SettingsStack>
         <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <img src="/app-icon.png" alt="RikkaHub Desktop PLUS" className="size-24 rounded-[18%] shadow-sm" />
+          <img
+            src="/app-icon.png"
+            alt="RikkaHub Desktop PLUS"
+            className="size-24 rounded-[18%] shadow-sm"
+          />
           <div className="text-2xl font-semibold tracking-normal">RikkaHub Desktop PLUS</div>
         </div>
         <SettingsRows>
@@ -152,7 +152,9 @@ export function AboutSection() {
               <>
                 <div className="flex min-w-0 items-center gap-3">
                   <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  <div data-settings-label="" className="font-medium">{row.label}</div>
+                  <div data-settings-label="" className="font-medium">
+                    {row.label}
+                  </div>
                 </div>
                 <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                   <span className="truncate">{row.value}</span>
@@ -181,22 +183,24 @@ export function AboutSection() {
                 </div>
               </>
             );
-            return (
-              row.onClick ? (
-                <button
-                  key={row.key}
-                  type="button"
-                  data-settings-item=""
-                  className={cn(LINK_ROW, "justify-between gap-4")}
-                  onClick={row.onClick}
-                >
-                  {content}
-                </button>
-              ) : (
-                <div key={row.key} data-settings-item="" className={cn(STATIC_ROW, "justify-between gap-4")}>
-                  {content}
-                </div>
-              )
+            return row.onClick ? (
+              <button
+                key={row.key}
+                type="button"
+                data-settings-item=""
+                className={cn(LINK_ROW, "justify-between gap-4")}
+                onClick={row.onClick}
+              >
+                {content}
+              </button>
+            ) : (
+              <div
+                key={row.key}
+                data-settings-item=""
+                className={cn(STATIC_ROW, "justify-between gap-4")}
+              >
+                {content}
+              </div>
             );
           })}
         </SettingsRows>

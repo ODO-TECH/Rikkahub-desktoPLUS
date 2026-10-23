@@ -24,13 +24,13 @@ docker compose logs -f
 只构建镜像、不用 compose：
 
 ```bash
-docker build -t rikkahub-desktop-plus:0.0.3 .
+docker build -t rikkahub-desktop-plus:0.0.5 .
 docker run -d --name rikkahub-plus \
   --restart unless-stopped \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.0.3
+  rikkahub-desktop-plus:0.0.5
 ```
 
 首次启动需要克隆 pi 引擎并编译前端与后端，耗时取决于网络与机器，通常数分钟到十几分钟；之后 `docker compose up -d` 会复用构建缓存。启动完成后打开 `http://<NAS 地址>:11451`。
