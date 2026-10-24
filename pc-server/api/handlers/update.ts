@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { GithubRelease } from "../../foundation/types";
 import { updatesCacheDir } from "../../foundation/paths";
 import { readWithIdleTimeout } from "../../foundation/net";
+import { fetchWithSystemRoots, isCertificateError } from "../../foundation/tls-trust";
 import { RUNNING_IN_CONTAINER, RUNTIME_PLATFORM } from "../../foundation/platform";
 import { compareSemver } from "../../foundation/utils";
 import {
@@ -22,6 +23,9 @@ import {
   writeSkippedVersion,
 } from "../../updates/index";
 import { error, json, readJson, sseHeaders } from "../request";
+
+const CERT_INTERCEPT_HINT =
+  "本机有程序替换了 GitHub 的 HTTPS 证书，无法校验连接安全。常见于 Steam++ / Watt Toolkit 等加速工具，请在它的加速列表中关闭 GitHub 后重试。";
 
 export async function handleUpdateRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
   // -- Update check / download ---------------------------------------------------
@@ -133,8 +137,13 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
           source: "redirect",
         });
       }
-    } catch {
+    } catch (err) {
       // Both redirect and API failed — very rare (network down, DNS failure, etc.)
+      // 证书类失败单独说明:本机有 HTTPS 拦截工具时 Bun 不认它的根证书,用户需要知道该关谁,
+      // 而不是去排查网络。
+      if (isCertificateError(err)) {
+        return error(`检查更新失败：${CERT_INTERCEPT_HINT}`, 502);
+      }
       return error("检查更新失败：无法连接 GitHub，请检查网络连接", 502);
     }
   }
@@ -202,8 +211,16 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
           // 专题7:下载流空闲看门狗。CDN 静默挂死(TCP 通但不回字节)时,若无上限,
           // 响应头等待或 reader.read() 永久悬挂,前端进度条永久卡住且无错误提示。
           // 超时抛错后走下方 catch:推 error 事件、abort 掉底层连接、finally 删半截文件。
+          // 与更新检查同源的证书兜底:下载域名同样会被 HTTPS 加速工具接管。
+          const fetchAsset = (tls?: { ca: string }) =>
+            fetch(url, {
+              redirect: "follow",
+              headers: { "User-Agent": "RikkaHub-PC" },
+              signal: abort.signal,
+              ...(tls ? { tls } : {}),
+            });
           const res = await readWithIdleTimeout(
-            () => fetch(url, { redirect: "follow", headers: { "User-Agent": "RikkaHub-PC" }, signal: abort.signal }),
+            () => fetchWithSystemRoots(fetchAsset),
             30_000,
             "下载连接超时：30s 内未收到服务器响应",
           );
@@ -263,7 +280,12 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
         } catch (err) {
           // 看门狗超时后底层 fetch 仍挂着(race 无法取消 promise),显式 abort 释放连接。
           try { abort.abort(); } catch { /* 已 abort 或未发起 */ }
-          send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+          send({
+            type: "error",
+            message: isCertificateError(err)
+              ? `下载失败：${CERT_INTERCEPT_HINT}`
+              : err instanceof Error ? err.message : String(err),
+          });
         } finally {
           if (writer) {
             try { await writer.end(); } catch { /* 尽力关句柄 */ }

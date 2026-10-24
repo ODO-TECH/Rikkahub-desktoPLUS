@@ -252,12 +252,12 @@ docker compose logs -f
 不用 compose 时：
 
 ```bash
-docker build -t rikkahub-desktop-plus:0.0.5 .
+docker build -t rikkahub-desktop-plus:0.0.6 .
 docker run -d --name rikkahub-plus --restart unless-stopped \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.0.5
+  rikkahub-desktop-plus:0.0.6
 ```
 
 ### 容器内目录

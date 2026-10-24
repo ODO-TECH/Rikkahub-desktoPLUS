@@ -2,7 +2,8 @@
 // 纪律：负责版本检查、下载源、缓存扫描，不依赖业务状态。
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { fetchWithTimeout } from "../foundation/net";
+import { fetchWithTimeout, type FetchWithTimeoutInit } from "../foundation/net";
+import { fetchWithSystemRoots } from "../foundation/tls-trust";
 import { join } from "node:path";
 import { skipVersionPath, updatesCacheDir } from "../foundation/paths";
 import type { GithubRelease } from "../foundation/types";
@@ -64,10 +65,16 @@ export function writeSkippedVersion(version: string) {
 // 一次同步本处 + tauri.conf.json + Cargo.toml 三处；请勿手改单处（CI 的
 // check-version-sync.ts 会红灯）。更新检查用本值对比 GitHub release tag，
 // 关于页也原样展示。
-export const APP_VERSION = "0.0.5";
+export const APP_VERSION = "0.0.6";
+
+// GitHub 出站统一入口:证书校验失败(本机 HTTPS 被加速 / 代理工具接管)时改用系统根证书
+// 重试一次。见 foundation/tls-trust.ts。
+async function fetchGithub(url: string, init: FetchWithTimeoutInit): Promise<Response> {
+  return fetchWithSystemRoots((tls) => fetchWithTimeout(url, tls ? { ...init, tls } : init));
+}
 
 export async function fetchGithubLatestRelease(repo: string): Promise<GithubRelease> {
-  const res = await fetchWithTimeout(`https://api.github.com/repos/${repo}/releases/latest`, {
+  const res = await fetchGithub(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "RikkaHub-PC" },
   });
   if (!res.ok) {
@@ -82,7 +89,7 @@ export async function fetchGithubLatestRelease(repo: string): Promise<GithubRele
 // manually and pull the tag out of the Location header. No API, no rate limit, no token.
 export async function fetchLatestReleaseFromHtmlRedirect(repo: string): Promise<{ tag: string; htmlUrl: string }> {
   const url = `https://github.com/${repo}/releases/latest`;
-  const res = await fetchWithTimeout(url, {
+  const res = await fetchGithub(url, {
     method: "HEAD",
     redirect: "manual",
     headers: { "User-Agent": "RikkaHub-PC" },

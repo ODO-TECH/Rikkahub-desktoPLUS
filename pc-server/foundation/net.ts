@@ -543,6 +543,8 @@ export const DEFAULT_OUTBOUND_TIMEOUT_MS = 30_000;
 export interface FetchWithTimeoutInit extends RequestInit {
   /** 总时长上限;默认 DEFAULT_OUTBOUND_TIMEOUT_MS。注意覆盖响应体读取全程,慢任务给足余量。 */
   timeoutMs?: number;
+  /** Bun 的 TLS 选项(原样透传给 fetch)。更新检查的证书兜底重试会带 ca,见 foundation/tls-trust.ts。 */
+  tls?: { ca?: string; rejectUnauthorized?: boolean };
 }
 
 export function fetchWithTimeout(url: string | URL, init: FetchWithTimeoutInit = {}): Promise<Response> {
