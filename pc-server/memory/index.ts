@@ -18,6 +18,12 @@ import {
   type MemorySqlRow,
   type MemorySqlSnapshot,
 } from "./sqlite";
+import { clearMemoryVectors, deleteMemoryVector, openVectorDb, pruneMemoryVectors } from "./vector-store";
+import { notifyMemoryVectorChanged } from "./vector-hooks";
+import { getRecallSelection } from "./recall-cache";
+import { resolveEmbeddingModel } from "./scene-models";
+import { normalizeMemoryFacets, normalizeMemoryKind, normalizeMemoryStatus, isHistoryVisibleStatus, isRecallableStatus, isVisibleStatus, mentionScoreOf } from "./experiment/entry";
+import { memoryExperimentFeature } from "./experiment/gate";
 import type {
   AddMemoryInput,
   Assistant,
@@ -26,6 +32,9 @@ import type {
   AssistantMemoryGroup,
   GlobalMemoryFile,
   MemoryEntry,
+  MemoryFacets,
+  MemoryKind,
+  MemoryStatus,
   MemorySnapshot,
   PendingEntry,
   PendingMemoryFile,
@@ -178,6 +187,19 @@ export const memoryStore = {
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         source: row.source,
+        kind: row.kind,
+        status: row.status,
+        rawContent: row.rawContent,
+        facets: row.facets,
+        explicitRemember: row.explicitRemember,
+        mentionCount: row.mentionCount,
+        lastMentionedAt: row.lastMentionedAt,
+        mentionScore: row.mentionScore,
+        generation: row.generation,
+        distilledAt: row.distilledAt,
+        purgeAfter: row.purgeAfter,
+        sourceConversationId: row.sourceConversationId,
+        sourceCutMessageId: row.sourceCutMessageId,
       };
       if (row.assistantId === GLOBAL_MEMORY_ID) {
         this.globalMemories.push(entry);
@@ -312,6 +334,50 @@ export const memoryStore = {
     return flat;
   },
 
+  /** PC→PC 完整备份：在契约字段之外携带实验扩展（含状态、墓碑、原文宽限期）。
+   *  安卓 / Kelivo 导出仍走 exportFlat / exportFlatActive，不带这些字段。 */
+  exportFlatWithExperiment(): AssistantMemory[] {
+    const flat: AssistantMemory[] = [];
+    const push = (m: MemoryEntry, assistantId: string) => {
+      flat.push({
+        id: m.id,
+        assistantId,
+        content: m.content,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        kind: m.kind,
+        status: m.status,
+        rawContent: m.rawContent,
+        facets: m.facets,
+        explicitRemember: m.explicitRemember,
+        mentionCount: m.mentionCount,
+        lastMentionedAt: m.lastMentionedAt,
+        mentionScore: m.mentionScore,
+        generation: m.generation,
+        distilledAt: m.distilledAt,
+        purgeAfter: m.purgeAfter,
+        sourceConversationId: m.sourceConversationId,
+        sourceCutMessageId: m.sourceCutMessageId,
+      });
+    };
+    for (const m of this.globalMemories) push(m, GLOBAL_MEMORY_ID);
+    for (const g of this.assistantGroups) for (const m of g.memories) push(m, g.assistantId);
+    return flat;
+  },
+
+  /** 安卓 / Kelivo 方向：只导出当前有效的记忆（active），不暴露实验状态与墓碑。
+   *  老数据全部是 active，输出与引入实验前一致。 */
+  exportFlatActive(): AssistantMemory[] {
+    const flat: AssistantMemory[] = [];
+    const push = (m: MemoryEntry, assistantId: string) => {
+      if (normalizeMemoryStatus(m.status) !== "active") return;
+      flat.push({ id: m.id, assistantId, content: m.content, createdAt: m.createdAt, updatedAt: m.updatedAt });
+    };
+    for (const m of this.globalMemories) push(m, GLOBAL_MEMORY_ID);
+    for (const g of this.assistantGroups) for (const m of g.memories) push(m, g.assistantId);
+    return flat;
+  },
+
   // ---------- 写入（运行时；全局 state 已就绪） ----------
 
   /** 新增记忆。S1：内存层面先自增 nextMemoryId 再入队；persistAll 先写 global（计数器）
@@ -328,6 +394,19 @@ export const memoryStore = {
       createdAt: input.createdAt ?? now,
       updatedAt: input.updatedAt ?? now,
       source: input.source ?? "manual",
+      kind: input.kind ?? "unclassified",
+      status: input.status ?? "active",
+      rawContent: input.rawContent ?? null,
+      facets: input.facets ?? null,
+      explicitRemember: input.explicitRemember === true,
+      mentionCount: 0,
+      lastMentionedAt: null,
+      mentionScore: 0,
+      generation: 0,
+      distilledAt: null,
+      purgeAfter: null,
+      sourceConversationId: input.sourceConversationId ?? null,
+      sourceCutMessageId: input.sourceCutMessageId ?? null,
     };
     this.nextMemoryId += 1;
     if (input.scope === "global") {
@@ -347,21 +426,162 @@ export const memoryStore = {
       group.memories.push(entry);
     }
     if (persist) void this.persistAll();
+    notifyMemoryVectorChanged("add");
     return entry;
   },
 
+  /** 批量改状态（合并 / 失真 / 墓碑）；非 active 状态同步删向量。一次落盘。
+   *  状态回到 active（撤销/恢复）时由变更通知触发按 memory_id 重嵌。 */
+  setMemoryStatuses(entries: Array<{ id: number; status: MemoryStatus }>, persist = true): number {
+    let changed = 0;
+    for (const item of entries) {
+      const entry = this.findEntryById(item.id);
+      if (!entry) continue;
+      const next = normalizeMemoryStatus(item.status);
+      if (entry.status === next) continue;
+      entry.status = next;
+      entry.updatedAt = Date.now();
+      // 生命周期纪律：离开 active 的记忆不保留向量，避免归档/取代/墓碑内容
+      // 在索引重建或模型切换后被重新召回。
+      if (next !== "active") this.deleteVectorForMemory(entry.id);
+      changed += 1;
+    }
+    if (changed > 0) {
+      notifyMemoryVectorChanged("update");
+      if (persist) void this.persistAll();
+    }
+    return changed;
+  },
+
   /** 全局唯一 id 定位 + 改内容。updatedAt 刷新 + source 置 manual（M2：用户手动编辑过的记忆
-   *  不再挂 AI 来源标签——前端 MemoryItem 据此决定是否显示"AI 来源"）。 */
-  updateMemory(memoryId: number, content: string): MemoryEntry {
+   *  不再挂 AI 来源标签——前端 MemoryItem 据此决定是否显示"AI 来源"）。
+   *  experimentPatch：合并去重时同步继承分类/标签/原文豁免，随同一次落盘生效。 */
+  updateMemory(
+    memoryId: number,
+    content: string,
+    source: "ai" | "manual" = "manual",
+    experimentPatch?: {
+      kind?: MemoryKind;
+      explicitRemember?: boolean;
+      facets?: MemoryFacets | null;
+      rawContent?: string | null;
+    },
+  ): MemoryEntry {
     const trimmed = String(content ?? "").trim();
     if (!trimmed) throw new Error("content is required");
     const entry = this.findEntryById(memoryId);
     if (!entry) throw new Error(`Memory record #${memoryId} not found`);
     entry.content = trimmed;
+    if (experimentPatch) {
+      if (experimentPatch.kind !== undefined) entry.kind = normalizeMemoryKind(experimentPatch.kind);
+      if (experimentPatch.explicitRemember !== undefined) entry.explicitRemember = experimentPatch.explicitRemember === true;
+      if (experimentPatch.facets !== undefined) {
+        entry.facets = experimentPatch.facets == null ? null : normalizeMemoryFacets(experimentPatch.facets);
+      }
+      if (experimentPatch.rawContent !== undefined) entry.rawContent = experimentPatch.rawContent;
+    }
     entry.updatedAt = Date.now();
-    entry.source = "manual";
+    entry.source = source;
+    // 实验生命周期：内容一变，旧向量立即作废（contentHash 已失配），随后 autoIndex
+    // 按 memory_id 重嵌覆盖。总开关/状态召回关闭时保持旧行为（只通知，不预删）。
+    if (memoryExperimentFeature("statusRecall")) this.deleteVectorForMemory(memoryId);
     void this.persistAll();
+    notifyMemoryVectorChanged("update");
     return entry;
+  },
+
+  /** 失真执行 / 撤销专用：只写实验元数据（代数、失真时间、原文清除时间、原文、标签），
+   *  不刷新 source / updatedAt——内容是否改写由调用方走 updateMemory 决定。
+   *  撤销时用它对回 generation / distilledAt / purgeAfter。 */
+  patchMemoryExperimentFields(
+    memoryId: number,
+    patch: {
+      rawContent?: string | null;
+      facets?: MemoryFacets | null;
+      generation?: number;
+      distilledAt?: number | null;
+      purgeAfter?: number | null;
+    },
+    persist = true,
+  ): MemoryEntry | null {
+    const entry = this.findEntryById(memoryId);
+    if (!entry) return null;
+    if (patch.rawContent !== undefined) {
+      entry.rawContent = typeof patch.rawContent === "string" && patch.rawContent.trim() ? patch.rawContent : null;
+    }
+    if (patch.facets !== undefined) {
+      entry.facets = patch.facets == null ? null : normalizeMemoryFacets(patch.facets);
+    }
+    if (patch.generation !== undefined) {
+      entry.generation = Math.max(0, Math.round(Number(patch.generation) || 0));
+    }
+    if (patch.distilledAt !== undefined) {
+      entry.distilledAt = Number(patch.distilledAt) > 0 ? Number(patch.distilledAt) : null;
+    }
+    if (patch.purgeAfter !== undefined) {
+      entry.purgeAfter = Number(patch.purgeAfter) > 0 ? Number(patch.purgeAfter) : null;
+    }
+    if (persist) void this.persistAll();
+    return entry;
+  },
+
+  /** L4：删除正文留墓碑。内容 / 标签 / 原文全部清空，状态置 tombstone；
+   *  向量立即删除，审计与关系边保留（由调用方先写好审计）。 */
+  tombstoneMemory(memoryId: number, persist = true): MemoryEntry | null {
+    const entry = this.findEntryById(memoryId);
+    if (!entry) return null;
+    entry.status = "tombstone";
+    entry.content = "";
+    entry.rawContent = null;
+    entry.facets = null;
+    entry.purgeAfter = null;
+    entry.updatedAt = Date.now();
+    this.deleteVectorForMemory(memoryId);
+    if (persist) void this.persistAll();
+    notifyMemoryVectorChanged("update");
+    return entry;
+  },
+
+  /** 第二轮提及计分：只更新计数字段，不动内容 / 状态 / updatedAt（提及不是内容变更）。
+   *  跨重启的「同一会话只计一次」由审计幂等键保证，这里只负责落值。 */
+  recordMemoryMention(
+    memoryId: number,
+    patch: { mentionCount: number; lastMentionedAt: number; mentionScore: number },
+    persist = true,
+  ): MemoryEntry | null {
+    const entry = this.findEntryById(memoryId);
+    if (!entry) return null;
+    entry.mentionCount = Math.max(0, Math.round(Number(patch.mentionCount) || 0));
+    entry.lastMentionedAt = Number(patch.lastMentionedAt) > 0
+      ? Math.round(Number(patch.lastMentionedAt))
+      : (entry.lastMentionedAt ?? null);
+    entry.mentionScore = mentionScoreOf({ mentionScore: patch.mentionScore });
+    if (persist) void this.persistAll();
+    return entry;
+  },
+
+  /** 类型晋升（事件 → 习惯）：只改分类并刷新 updatedAt，内容/向量保持不变。
+   *  调用方必须先做保护与状态校验；这里不做业务拒绝，避免两种校验口径分叉。 */
+  promoteMemoryKind(memoryId: number, kind: MemoryKind, persist = true): MemoryEntry | null {
+    const entry = this.findEntryById(memoryId);
+    if (!entry) return null;
+    const next = normalizeMemoryKind(kind);
+    if (entry.kind === next) return entry;
+    entry.kind = next;
+    entry.updatedAt = Date.now();
+    if (persist) void this.persistAll();
+    return entry;
+  },
+
+  /** 删除单条记忆时同步删向量行（单条 SQL，不等索引队列）；队列里的旧任务随后按 hash 跳过。 */
+  deleteVectorForMemory(memoryId: number) {
+    const db = openVectorDb();
+    if (!db) return;
+    try {
+      deleteMemoryVector(db, memoryId);
+    } catch (err) {
+      console.warn("[memory] 删除记忆向量失败:", err);
+    }
   },
 
   /** 全局唯一 id 定位 + 删除。返回是否命中。 */
@@ -369,6 +589,7 @@ export const memoryStore = {
     const gbefore = this.globalMemories.length;
     this.globalMemories = this.globalMemories.filter((m: MemoryEntry) => m.id !== memoryId);
     if (this.globalMemories.length < gbefore) {
+      this.deleteVectorForMemory(memoryId);
       void this.persistAll();
       return true;
     }
@@ -376,11 +597,113 @@ export const memoryStore = {
       const before = group.memories.length;
       group.memories = group.memories.filter((m: MemoryEntry) => m.id !== memoryId);
       if (group.memories.length < before) {
+        this.deleteVectorForMemory(memoryId);
         void this.persistAll();
         return true;
       }
     }
     return false;
+  },
+
+  /** 记忆归属（全局 or 某助手）。仅供整理 / 去重做跨层保护。 */
+  scopeOfMemory(memoryId: number): { scope: "global" } | { scope: "assistant"; assistantId: string } | null {
+    if (this.globalMemories.some((m: MemoryEntry) => m.id === memoryId)) return { scope: "global" };
+    for (const group of this.assistantGroups) {
+      if (group.memories.some((m: MemoryEntry) => m.id === memoryId)) {
+        return { scope: "assistant", assistantId: group.assistantId };
+      }
+    }
+    return null;
+  },
+
+  /** 应用整理模型给出的合并 / 删除方案：一次内存变更、一次落盘。
+   *  跨层合并（全局 ↔ 助手）一律跳过，删除目标与合并源先校验存在性。 */
+  applyConsolidation(operations: Array<{
+    op: "merge" | "delete";
+    targetId: number;
+    sourceIds?: number[];
+    content?: string;
+  }>): { merged: number; deleted: number; removedIds: number[] } {
+    const removed = new Set<number>();
+    const removedIds: number[] = [];
+    let merged = 0;
+    let deleted = 0;
+    const removeEntry = (id: number) => {
+      const beforeGlobal = this.globalMemories.length;
+      this.globalMemories = this.globalMemories.filter((m: MemoryEntry) => m.id !== id);
+      if (this.globalMemories.length < beforeGlobal) {
+        removed.add(id);
+        return true;
+      }
+      for (const group of this.assistantGroups) {
+        const before = group.memories.length;
+        group.memories = group.memories.filter((m: MemoryEntry) => m.id !== id);
+        if (group.memories.length < before) {
+          removed.add(id);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (const op of operations) {
+      if (op.op !== "merge") continue;
+      const content = String(op.content ?? "").trim();
+      const target = this.findEntryById(op.targetId);
+      if (!target || !content || removed.has(target.id)) continue;
+      const targetScope = this.scopeOfMemory(target.id);
+      if (!targetScope) continue;
+      let applied = false;
+      for (const sourceId of op.sourceIds ?? []) {
+        if (!Number.isInteger(sourceId) || sourceId === target.id || removed.has(sourceId)) continue;
+        const sourceScope = this.scopeOfMemory(sourceId);
+        if (!sourceScope || JSON.stringify(sourceScope) !== JSON.stringify(targetScope)) continue;
+        if (removeEntry(sourceId)) applied = true;
+      }
+      if (!applied) continue;
+      target.content = content;
+      target.updatedAt = Date.now();
+      target.source = "ai";
+      merged += 1;
+    }
+
+    for (const op of operations) {
+      if (op.op !== "delete") continue;
+      if (removed.has(op.targetId) || !this.findEntryById(op.targetId)) continue;
+      if (removeEntry(op.targetId)) deleted += 1;
+    }
+
+    if (removed.size > 0) {
+      for (const id of removed) {
+        removedIds.push(id);
+        this.deleteVectorForMemory(id);
+      }
+    }
+    if (merged > 0 || deleted > 0) {
+      void this.persistAll();
+      notifyMemoryVectorChanged("update");
+    }
+    return { merged, deleted, removedIds };
+  },
+
+  /** 按现存记忆 id 清掉孤儿向量（替换/导入/删助手后调用）。
+   *  statusRecall 开启时只保留 active 的向量：导入进来的 superseded / archived / tombstone
+   *  不应带着旧向量复活。 */
+  pruneVectorsForMemories(): void {
+    const db = openVectorDb();
+    if (!db) return;
+    try {
+      const entries: MemoryEntry[] = [
+        ...this.globalMemories,
+        ...this.assistantGroups.flatMap((group: AssistantMemoryGroup) => group.memories),
+      ];
+      const keep = memoryExperimentFeature("statusRecall")
+        ? entries.filter((memory) => isRecallableStatus(memory.status))
+        : entries;
+      pruneMemoryVectors(db, new Set(keep.map((memory) => memory.id)));
+    } catch (err) {
+      console.warn("[memory] 清理记忆向量失败:", err);
+    }
   },
 
   /** 删除某助手的所有记忆（删除助手时调用）。返回删除条数。 */
@@ -389,7 +712,10 @@ export const memoryStore = {
     if (idx < 0) return 0;
     const count = this.assistantGroups[idx].memories.length;
     this.assistantGroups.splice(idx, 1);
-    if (count > 0) void this.persistAll();
+    if (count > 0) {
+      this.pruneVectorsForMemories();
+      void this.persistAll();
+    }
     return count;
   },
 
@@ -416,12 +742,21 @@ export const memoryStore = {
 
   // ---------- 备份导入 ----------
 
-  /** 清空全部记忆（含 pending）。备份恢复 replace 语义用。 */
+  /** 清空全部记忆（含 pending）。备份恢复 replace 语义用。
+   *  向量一并清空：导入/恢复后由用户点「补齐」重建，不自动花钱（设计 C8）。 */
   clearAll() {
     this.globalMemories = [];
     this.assistantGroups = [];
     this.pending = [];
     this.nextMemoryId = 1;
+    const db = openVectorDb();
+    if (db) {
+      try {
+        clearMemoryVectors(db);
+      } catch (err) {
+        console.warn("[memory] 清空记忆向量失败:", err);
+      }
+    }
   },
 
   /** 批量导入扁平数组。
@@ -449,6 +784,20 @@ export const memoryStore = {
         createdAt: Number(item.createdAt) || now,
         updatedAt: Number(item.updatedAt) || now,
         source: "manual",  // 导入的记忆无法判断原 source，统一 manual
+        // PC→PC 备份可带实验扩展；安卓 / 旧备份没有这些键 → unclassified + active。
+        kind: normalizeMemoryKind(item.kind),
+        status: normalizeMemoryStatus(item.status),
+        rawContent: item.rawContent ?? null,
+        facets: item.facets ?? null,
+        explicitRemember: item.explicitRemember === true,
+        mentionCount: Math.max(0, Math.round(Number(item.mentionCount) || 0)),
+        lastMentionedAt: Number(item.lastMentionedAt) > 0 ? Number(item.lastMentionedAt) : null,
+        mentionScore: mentionScoreOf(item),
+        generation: Math.max(0, Math.round(Number(item.generation) || 0)),
+        distilledAt: Number(item.distilledAt) > 0 ? Number(item.distilledAt) : null,
+        purgeAfter: Number(item.purgeAfter) > 0 ? Number(item.purgeAfter) : null,
+        sourceConversationId: item.sourceConversationId ?? null,
+        sourceCutMessageId: item.sourceCutMessageId ?? null,
       };
       this.nextMemoryId += 1;
       if (assistantId === GLOBAL_MEMORY_ID) {
@@ -467,6 +816,7 @@ export const memoryStore = {
       }
     }
     this.recomputeNextId();
+    this.pruneVectorsForMemories();
     void this.persistAll();
   },
 
@@ -475,9 +825,25 @@ export const memoryStore = {
   /** 入队一条待确认记忆。M7：与现有 pending content 完全相同（忽略首尾空白）则不重复入队
    *  （返回 null）；超 PENDING_MAX 容量上限拒绝（返回 "overflow"）。
    *  落盘 await 完成——pending 是用户尚未确认的数据，丢不得（区别于 addMemory 的 fire-and-forget）。 */
-  async enqueuePending(entry: { conversationId: string; conversationTitle?: string; assistantId: string; assistantName: string; content: string; messageNodeId?: string }): Promise<PendingEntry | "overflow" | null> {
+  async enqueuePending(entry: {
+    conversationId: string;
+    conversationTitle?: string;
+    assistantId: string;
+    assistantName: string;
+    content: string;
+    messageNodeId?: string;
+    kind?: PendingEntry["kind"];
+    facets?: PendingEntry["facets"];
+    explicitRemember?: boolean;
+    rawContent?: string | null;
+    sourceCutMessageId?: string | null;
+    idempotencyKey?: string | null;
+    origin?: PendingEntry["origin"];
+  }): Promise<PendingEntry | "overflow" | null> {
     const content = String(entry.content ?? "").trim();
     if (!content) throw new Error("content is required");
+    // 幂等键优先：同一段压缩 / 同一个候选重复触发只入队一次。
+    if (entry.idempotencyKey && this.pending.some((p: PendingEntry) => p.idempotencyKey === entry.idempotencyKey)) return null;
     if (this.pending.some((p: PendingEntry) => p.content.trim() === content)) return null;       // M7 去重
     if (this.pending.length >= PENDING_MAX) return "overflow";                      // M7 容量
     const pendingEntry: PendingEntry = {
@@ -489,6 +855,13 @@ export const memoryStore = {
       content,
       proposedAt: Date.now(),
       ...(entry.messageNodeId ? { messageNodeId: entry.messageNodeId } : {}),
+      kind: entry.kind ?? "unclassified",
+      facets: entry.facets ?? null,
+      explicitRemember: entry.explicitRemember === true,
+      rawContent: entry.rawContent ?? null,
+      sourceCutMessageId: entry.sourceCutMessageId ?? null,
+      idempotencyKey: entry.idempotencyKey ?? null,
+      origin: entry.origin ?? "manual",
     };
     this.pending.push(pendingEntry);
     await this.persistAll();
@@ -506,14 +879,28 @@ export const memoryStore = {
     this.pending.splice(idx, 1);
     let memory: MemoryEntry | undefined;
     // addMemory 传 persist=false：只改内存，由末尾统一一次 persistAll 落盘（pending 移除 + 新记忆）。
+    const experimentFields = {
+      kind: entry.kind,
+      facets: entry.facets,
+      explicitRemember: entry.explicitRemember,
+      rawContent: entry.rawContent,
+      sourceConversationId: entry.conversationId || null,
+      sourceCutMessageId: entry.sourceCutMessageId,
+    };
     if (action === "global") {
-      memory = this.addMemory({ scope: "global", content, source: contentOverride ? "manual" : "ai" }, false);
+      memory = this.addMemory({
+        scope: "global",
+        content,
+        source: contentOverride ? "manual" : "ai",
+        ...experimentFields,
+      }, false);
     } else if (action === "assistant") {
       memory = this.addMemory({
         scope: "assistant",
         assistantId: entry.assistantId,
         content,
         source: contentOverride ? "manual" : "ai",
+        ...experimentFields,
       }, false);
     }
     // discard：不写记忆，仅移除 pending。
@@ -553,13 +940,32 @@ export const memoryStore = {
     const seenIds = new Set<number>();
     return entries.map((e, i) => {
       if (!isRecord(e)) throw new Error(`memory[${i}] must be an object`);
-      const content = String(e.content ?? "").trim();
-      if (!content) throw new Error(`memory[${i}].content is required`);
       const rawId = Number(e.id);
       const finalId = Number.isFinite(rawId) && rawId > 0 ? rawId : i + 1;
       if (seenIds.has(finalId)) throw new Error(`memory[${i}] has duplicate id ${finalId}`);
       seenIds.add(finalId);
+      // 实验扩展：批量编辑只改 content/时间/来源时，保留该 id 原有的分类、状态与提及计数。
+      const existing = this.findEntryById(finalId);
+      // 墓碑正文已按策略清除：允许空 content 原样保存，且不允许借批量编辑「复活」正文。
+      const isTombstone = existing != null && normalizeMemoryStatus(existing.status) === "tombstone";
+      const content = isTombstone ? "" : String(e.content ?? "").trim();
+      if (!content && !isTombstone) throw new Error(`memory[${i}].content is required`);
       return {
+        ...(existing ? {
+          kind: existing.kind,
+          status: existing.status,
+          rawContent: existing.rawContent,
+          facets: existing.facets,
+          explicitRemember: existing.explicitRemember,
+          mentionCount: existing.mentionCount,
+          lastMentionedAt: existing.lastMentionedAt,
+          mentionScore: existing.mentionScore,
+          generation: existing.generation,
+          distilledAt: existing.distilledAt,
+          purgeAfter: existing.purgeAfter,
+          sourceConversationId: existing.sourceConversationId,
+          sourceCutMessageId: existing.sourceCutMessageId,
+        } : {}),
         id: finalId,
         content,
         createdAt: Number(e.createdAt) || now,
@@ -596,6 +1002,8 @@ export const memoryStore = {
     this.writeJsonSync(globalMemoryPath + ".bak", { version: 1, nextMemoryId: this.nextMemoryId, memories: this.globalMemories });
     this.globalMemories = validated;
     this.recomputeNextId();
+    this.pruneVectorsForMemories();
+    notifyMemoryVectorChanged("replace");
     void this.persistAll();
   },
 
@@ -606,11 +1014,18 @@ export const memoryStore = {
     this.assistantGroups = validated;
     this.refreshAssistantNames(state.settings.assistants);
     this.recomputeNextId();
+    this.pruneVectorsForMemories();
+    notifyMemoryVectorChanged("replace");
     void this.persistAll();
   },
 };
 
-export function memoriesForAssistant(assistant: Assistant): MemoryEntry[] {
+export function memoriesForAssistant(
+  assistant: Assistant,
+  // inject = 常驻注入（active + stale）；recall = 当前意图的语义召回（只 active）；
+  // history = 历史提问的检索池（除 tombstone 外的所有状态，用来回答「以前……」）。
+  mode: "inject" | "recall" | "history" = "inject",
+): MemoryEntry[] {
   // 叠加注入（1.3.2）：助手层（assistant.enableMemory）+ 全局层（memorySettings.globalEnabled）。
   // enableMemory 只控制助手层、globalEnabled 只控制全局层，两者独立叠加——助手关记忆时仍可见
   // 全局层（§6.5 联动矩阵），模型侧完全不感知层级存在（产品决策核心：叠加对模型透明）。
@@ -619,16 +1034,56 @@ export function memoriesForAssistant(assistant: Assistant): MemoryEntry[] {
   const globalMems = state.settings.memorySettings.globalEnabled
     ? memoryStore.getGlobalMemories()
     : [];
-  return [...globalMems, ...assistantMems].sort((a, b) => b.updatedAt - a.updatedAt);
+  const visible = [...globalMems, ...assistantMems].sort((a, b) => b.updatedAt - a.updatedAt);
+  // 实验：状态感知可见性。总开关或 statusRecall 关闭时原样返回（逐字节一致）；
+  // 开启后注入面保留 active + stale（stale 只是摘要变粗），语义召回池只收 active，
+  // 历史提问才放宽到 superseded / archived（它们的「过去状态」正是提问要的答案）。
+  // tombstone 例外：正文已被遗忘，任何模式都不得再注入（旧数据没有该状态，仍是逐字节一致）。
+  const material = visible.filter((memory) => normalizeMemoryStatus(memory.status) !== "tombstone");
+  if (!memoryExperimentFeature("statusRecall")) return material;
+  return material.filter((memory) => {
+    if (mode === "recall") return isRecallableStatus(memory.status);
+    if (mode === "history") return isHistoryVisibleStatus(memory.status);
+    return isVisibleStatus(memory.status);
+  });
 }
 
-export function buildMemoryPrompt(assistant: Assistant) {
-  const memories = memoriesForAssistant(assistant).map((memory) => ({ id: memory.id, content: memory.content }));
-  if (memories.length === 0) return "";
+/** 全部记忆的实验可见性过滤（设置页「测试召回」用）：statusRecall 关闭时返回原数组。 */
+export function allMemoriesForRecall(): MemoryEntry[] {
+  const all: MemoryEntry[] = [];
+  for (const memory of memoryStore.globalMemories) all.push(memory);
+  for (const group of memoryStore.assistantGroups) for (const memory of group.memories) all.push(memory);
+  const material = all.filter((memory) => normalizeMemoryStatus(memory.status) !== "tombstone");
+  if (!memoryExperimentFeature("statusRecall")) return material;
+  return material.filter((memory) => isRecallableStatus(memory.status));
+}
+
+export function buildMemoryPrompt(assistant: Assistant, conversationId?: string) {
+  const visible = memoriesForAssistant(assistant);
+  if (visible.length === 0) return "";
+  let memories = visible;
+  let recallApplied = false;
+  // 特性 C：召回结果按会话冻结；功能关闭 / 无缓存时走原来的全量注入，输出逐字节不变。
+  if (conversationId && state.settings.memoryVectorSettings.enabled) {
+    const selection = getRecallSelection(conversationId);
+    const modelKey = resolveEmbeddingModel()?.modelKey;
+    // 冻结值只对「同一助手 + 同一嵌入模型」有效；不符时退回全量注入（代际已在 cache 层校验）。
+    if (selection && selection.assistantId === assistant.id && modelKey != null && selection.modelKey === modelKey) {
+      const byId = new Map(visible.map((memory) => [memory.id, memory]));
+      const selected = selection.selectedIds
+        .map((id) => byId.get(id))
+        .filter((memory): memory is MemoryEntry => memory != null);
+      if (selected.length > 0) {
+        memories = selected;
+        recallApplied = true;
+      }
+    }
+  }
+  const list = memories.map((memory) => ({ id: memory.id, content: memory.content }));
   return `
 **Memories**
 These are memories you can reference in future conversations.
-${JSON.stringify(memories, null, 2)}
+${recallApplied ? "Ordered by relevance to the current conversation.\n" : ""}${JSON.stringify(list, null, 2)}
 `.trim();
 }
 

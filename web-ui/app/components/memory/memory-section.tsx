@@ -1,10 +1,11 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, Pencil, Check, X, FileJson } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, FileJson, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 import api from "~/services/api";
-import { useMemoryStore } from "~/stores";
-import type { Settings, MemoryEntry, WriteStrategy } from "~/types";
+import { useMemoryStore, useSettingsStore } from "~/stores";
+import type { AssistantProfile, MemorySettings, Settings, MemoryEntry, WriteStrategy, MemoryWriteScope } from "~/types";
 import {
   SettingsGroup,
   SettingsRow,
@@ -21,6 +22,7 @@ import { Input } from "~/components/ui/input";
 import { confirmDialog } from "~/stores/confirm-store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "~/components/ui/dialog";
 import { GlobalAgentsCard } from "~/components/memory/global-agents-card";
+import { MemoryVectorCard } from "~/components/memory/memory-vector-card";
 
 // 新增一条记忆:单行输入,Enter 或「添加」提交(输入法组字中的 Enter 不算)。
 function MemoryAddInput({ value, onChange, onSubmit, className }: {
@@ -62,6 +64,9 @@ function MemoryItem({ entry, scope, assistantId }: {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(entry.content);
   React.useEffect(() => setDraft(entry.content), [entry.content]);
+  // 墓碑是遗忘终态：正文已按延迟清除策略删除，只保留审计元数据。
+  // 不允许行内编辑「复活」正文——重新记住只能新建一条记忆。
+  const isTombstone = entry.status === "tombstone";
 
   const save = async () => {
     const content = draft.trim();
@@ -91,14 +96,23 @@ function MemoryItem({ entry, scope, assistantId }: {
         </div>
       ) : (
         <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 whitespace-pre-wrap break-words">{entry.content}</div>
+          <div
+            className={cn(
+              "flex-1 whitespace-pre-wrap break-words",
+              isTombstone && "italic text-muted-foreground",
+            )}
+          >
+            {isTombstone ? t("settings:memory.tombstone_placeholder") : entry.content}
+          </div>
           <div className="flex shrink-0 gap-1">
-            <Button size="icon" variant="ghost" className="size-6" onClick={() => setEditing(true)}><Pencil className="size-3" /></Button>
+            {isTombstone ? null : (
+              <Button size="icon" variant="ghost" className="size-6" onClick={() => setEditing(true)}><Pencil className="size-3" /></Button>
+            )}
             <Button size="icon" variant="ghost" className="size-6" onClick={() => void remove()}><Trash2 className="size-3" /></Button>
           </div>
         </div>
       )}
-      {editing === false && entry.source === "ai" && (
+      {editing === false && !isTombstone && entry.source === "ai" && (
         <div className="mt-1 text-xs text-muted-foreground">{t("settings:memory.source_ai")}</div>
       )}
     </div>
@@ -115,12 +129,18 @@ export function MemorySection({
   const { t } = useTranslation();
   const strategyId = React.useId();
   const snapshot = useMemoryStore((s) => s.snapshot);
-  const ms = settings.memorySettings ?? { globalEnabled: false, writeStrategy: "ask" as WriteStrategy };
+  const ms: MemorySettings = settings.memorySettings ?? {
+    globalEnabled: false,
+    writeStrategy: "ask" as WriteStrategy,
+    dedupEnabled: true,
+    memoryModelThinkingEnabled: false,
+  };
   const [newGlobal, setNewGlobal] = React.useState("");
   const [newByAssistant, setNewByAssistant] = React.useState<Record<string, string>>({});
   const [assistantQuery, setAssistantQuery] = React.useState("");
+  const [organizingId, setOrganizingId] = React.useState<string | null>(null);
 
-  const updateMemorySettings = async (patch: Partial<{ globalEnabled: boolean; writeStrategy: WriteStrategy }>) => {
+  const updateMemorySettings = async (patch: Partial<MemorySettings>) => {
     const next = { ...ms, ...patch };
     onSettings({ ...settings, memorySettings: next });
     await api.post("settings/memory-settings", patch);
@@ -152,12 +172,43 @@ export function MemorySection({
     setNewByAssistant((m) => ({ ...m, [assistantId]: "" }));
   };
 
-  // 助手 enableMemory 开关:更新助手配置(POST settings/assistant/detail 触发 settings SSE)
-  const setAssistantMemory = async (assistantId: string, enabled: boolean) => {
-    const assistants = settings.assistants.map((a) => (a.id === assistantId ? { ...a, enableMemory: enabled } : a));
-    onSettings({ ...settings, assistants });
+  // 助手级记忆策略:更新助手配置(POST settings/assistant/detail 触发 settings SSE)。
+  // 从 store 取最新快照,连续修改两个控件时不会互相覆盖。
+  const patchAssistant = async (assistantId: string, patch: Partial<AssistantProfile>) => {
+    const current = useSettingsStore.getState().settings ?? settings;
+    const assistants = current.assistants.map((a) => (a.id === assistantId ? { ...a, ...patch } : a));
+    onSettings({ ...current, assistants });
     const updated = assistants.find((x) => x.id === assistantId);
     if (updated) await api.post("settings/assistant/detail", updated);
+  };
+  const setAssistantMemory = (assistantId: string, enabled: boolean) =>
+    patchAssistant(assistantId, { enableMemory: enabled });
+
+  const organizeNow = async (assistantId: string) => {
+    if (!settings.memoryModelId) {
+      toast.error(t("settings:memory.organize_need_model"));
+      return;
+    }
+    setOrganizingId(assistantId);
+    try {
+      const result = await api.post<{ ran: boolean; reason?: string; scanned: number; merged: number; deleted: number }>(
+        "memory/organize",
+        { assistantId },
+      );
+      if (!result.ran) {
+        toast.info(t(`settings:memory.organize_skipped_${result.reason ?? "unknown"}`, {
+          defaultValue: t("settings:memory.organize_skipped"),
+        }));
+      } else if (result.merged === 0 && result.deleted === 0) {
+        toast.info(t("settings:memory.organize_none"));
+      } else {
+        toast.success(t("settings:memory.organize_done", { merged: result.merged, deleted: result.deleted }));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOrganizingId(null);
+    }
   };
 
   // 批量编辑(高级用户直接编辑原始 JSON,§9.3)。实时 JSON.parse 校验;提交前二次确认;
@@ -222,7 +273,21 @@ export function MemorySection({
             </Select>
           }
         />
+        <SettingsSwitchRow
+          label={t("settings:memory.dedup_enable")}
+          description={t("settings:memory.dedup_enable_desc")}
+          checked={ms.dedupEnabled !== false}
+          onCheckedChange={(v) => void updateMemorySettings({ dedupEnabled: v })}
+        />
+        <SettingsSwitchRow
+          label={t("settings:memory.dedup_thinking")}
+          description={t("settings:memory.dedup_thinking_desc")}
+          checked={ms.memoryModelThinkingEnabled === true}
+          onCheckedChange={(v) => void updateMemorySettings({ memoryModelThinkingEnabled: v })}
+        />
       </SettingsRows>
+
+      <MemoryVectorCard settings={settings} onSettings={onSettings} />
 
       <SettingsGroup
         title={t("settings:memory.global_title")}
@@ -278,6 +343,56 @@ export function MemorySection({
                 </div>
                 {a.enableMemory === true && (
                   <div className="space-y-1.5 pl-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-[var(--ds-text-secondary)]">{t("settings:memory.write_scope")}</span>
+                      <Select
+                        value={a.memoryWriteScope ?? "tool_default_global"}
+                        onValueChange={(v) => void patchAssistant(a.id, { memoryWriteScope: v as MemoryWriteScope })}
+                      >
+                        <SelectTrigger className="w-56 max-w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="tool_default_global">{t("settings:memory.scope_tool_global")}</SelectItem>
+                          <SelectItem value="tool_default_assistant">{t("settings:memory.scope_tool_assistant")}</SelectItem>
+                          <SelectItem value="always_global" disabled={!ms.globalEnabled}>{t("settings:memory.scope_always_global")}</SelectItem>
+                          <SelectItem value="always_assistant">{t("settings:memory.scope_always_assistant")}</SelectItem>
+                          <SelectItem value="readonly">{t("settings:memory.scope_readonly")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="ml-2 text-xs text-[var(--ds-text-secondary)]">{t("settings:memory.auto_organize")}</span>
+                      <Switch
+                        checked={a.autoOrganizeMemory === true}
+                        disabled={a.memoryWriteScope === "readonly"}
+                        onCheckedChange={(v) => void patchAssistant(a.id, { autoOrganizeMemory: v })}
+                      />
+                      {a.autoOrganizeMemory === true && a.memoryWriteScope !== "readonly" && (
+                        <span className="flex items-center gap-1 text-xs text-[var(--ds-text-secondary)]">
+                          {t("settings:memory.organize_every_prefix")}
+                          <Input
+                            className="h-7 w-14 px-2 text-center"
+                            inputMode="numeric"
+                            aria-label={t("settings:memory.organize_every")}
+                            value={String(a.memoryOrganizeEveryNTurns ?? 5)}
+                            onChange={(event) => {
+                              const n = Math.round(Number(event.target.value));
+                              if (Number.isFinite(n)) {
+                                void patchAssistant(a.id, { memoryOrganizeEveryNTurns: Math.min(20, Math.max(1, n)) });
+                              }
+                            }}
+                          />
+                          {t("settings:memory.organize_every_suffix")}
+                        </span>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="compact"
+                        className="ml-auto text-[var(--ds-text-secondary)]"
+                        disabled={organizingId === a.id || a.memoryWriteScope === "readonly"}
+                        onClick={() => void organizeNow(a.id)}
+                      >
+                        <RefreshCw className={organizingId === a.id ? "animate-spin" : undefined} />
+                        {t("settings:memory.organize_now")}
+                      </Button>
+                    </div>
                     {mems.length === 0 && (
                       <div className="text-sm text-muted-foreground">{t("settings:memory.empty_assistant")}</div>
                     )}

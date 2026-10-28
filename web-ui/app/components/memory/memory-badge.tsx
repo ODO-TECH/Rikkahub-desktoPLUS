@@ -17,10 +17,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "~/components/ui/tooltip";
-import { Brain, Globe, Bot, X, Check, Loader2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
+import { Brain, Globe, Bot, X, Check, Loader2, RefreshCw } from "lucide-react";
 import { Textarea } from "~/components/ui/textarea";
 import api from "~/services/api";
 import { confirmDialog } from "~/stores/confirm-store";
+import type { RecallInfo } from "~/stores/memory-vector-store";
 import { toast } from "sonner";
 
 /** 待确认记忆徽章 + 确认弹窗。挂载在输入框卡片右上角(/api/events 通道 memory 事件推送的 snapshot)。
@@ -33,15 +40,44 @@ import { toast } from "sonner";
  *  - 任何"丢弃"操作(单条或批量)执行前都弹全局确认框二次确认(不可逆)
  *  - 保存为助手记忆时,若来源助手已被删除,按钮 disabled + tooltip
  *  - 处理成功后该条从 SSE 推送的 snapshot 中自然消失;selected 会被 useEffect 清理 */
-export function MemoryBadge() {
+export function MemoryBadge({ conversationId, refreshKey }: { conversationId?: string | null; refreshKey?: unknown }) {
   const { t } = useTranslation("message");
   const snapshot = useMemoryStore((s) => s.snapshot);
   const assistants = useSettingsStore((s) => s.settings?.assistants) ?? [];
+  // 语义索引关闭时徽章只承担「待确认记忆」,不显示召回信息。
+  const vectorEnabled = useSettingsStore((s) => s.settings?.memoryVectorSettings?.enabled) ?? false;
 
   const [isOpen, setIsOpen] = useState(false);
   // null=无操作;pendingId=正在处理的单条;"batch"=批量操作中。按钮据此 disabled + 显示 spinner。
   const [saving, setSaving] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // 召回状态按会话取;取不到就退化为只显示待确认计数,不影响主流程。
+  const [recall, setRecall] = useState<RecallInfo | null>(null);
+  const [rematching, setRematching] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const loadRecall = React.useCallback(async () => {
+    if (!conversationId || !vectorEnabled) {
+      setRecall(null);
+      return;
+    }
+    try {
+      setRecall(
+        await api.get<RecallInfo>(
+          `memory/vector/recall?conversationId=${encodeURIComponent(conversationId)}`,
+        ),
+      );
+    } catch {
+      setRecall(null);
+    }
+  }, [conversationId, vectorEnabled]);
+
+  // 记忆快照变化 = 可能有编辑/删除导致冻结召回被清;重新取一次,避免徽章停在旧计数。
+  // refreshKey(生成状态)覆盖"首轮召回刚生成、记忆没变"的窗口:生成开始/结束时各取一次,
+  // 否则徽章会一直停在「全部注入」直到下一次记忆变更。
+  React.useEffect(() => {
+    void loadRecall();
+  }, [loadRecall, snapshot, refreshKey]);
 
   // pending 列表变化时(某条被处理后消失、新提议入队),清理 selected 里已不存在的 id,避免残留。
   // 引用相等检查(size 不变则返回 prev)避免不必要的重渲染。
@@ -60,7 +96,30 @@ export function MemoryBadge() {
     });
   }, [snapshot?.pending]);
 
-  if (!snapshot || snapshot.pendingCount === 0) return null;
+  const pendingCount = snapshot?.pendingCount ?? 0;
+  const showRecall = vectorEnabled && recall?.enabled === true;
+  if (!snapshot || (pendingCount === 0 && !showRecall)) return null;
+
+  const recallLine = recall?.active
+    ? t("memory.recall_tooltip", { selected: recall.selected, total: recall.total })
+    : t("memory.recall_full");
+
+  // 设计文档 C5.1:话题切换不自动重算(保前缀缓存),这里显式清本会话的召回与冻结快照,
+  // 下一轮编码按当前对话重新匹配。
+  const rematch = async () => {
+    if (!conversationId) return;
+    setRematching(true);
+    try {
+      await api.post("memory/vector/rematch", { conversationId });
+      toast.success(t("memory.rematch_success"));
+      await loadRecall();
+    } catch (e) {
+      console.error("[MemoryBadge] Rematch failed:", e);
+      toast.error(t("memory.rematch_failed"));
+    } finally {
+      setRematching(false);
+    }
+  };
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -150,28 +209,79 @@ export function MemoryBadge() {
 
   return (
     <>
-      <TooltipProvider>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Badge
-              variant="default"
-              className="h-6 cursor-pointer items-center gap-1 rounded-full px-2 text-xs font-medium hover:bg-primary/90 transition-colors"
-              onClick={() => setIsOpen(true)}
+      {pendingCount > 0 ? (
+        <TooltipProvider>
+          <Tooltip
+            delayDuration={300}
+            onOpenChange={(open) => {
+              if (open) void loadRecall();
+            }}
+          >
+            <TooltipTrigger asChild>
+              <Badge
+                variant="default"
+                className="h-6 cursor-pointer items-center gap-1 rounded-full px-2 text-xs font-medium hover:bg-primary/90 transition-colors"
+                onClick={() => setIsOpen(true)}
+              >
+                <Brain className="h-3 w-3 shrink-0" />
+                <span>{pendingCount}</span>
+                {/* 提示文字与数字之间用细分隔点视觉分层,数字粗、文字略淡,整体呈消息提醒胶囊。 */}
+                <span className="w-px h-3 bg-primary-foreground/30" />
+                <span className="font-normal opacity-90 whitespace-nowrap">
+                  {t("memory.pending_inline")}
+                </span>
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              <div>{t("memory.pending_tooltip", { n: pendingCount })}</div>
+              {showRecall ? <div className="mt-0.5 opacity-80">{recallLine}</div> : null}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : (
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <TooltipProvider>
+            <Tooltip
+              delayDuration={300}
+              onOpenChange={(open) => {
+                if (open) void loadRecall();
+              }}
             >
-              <Brain className="h-3 w-3 shrink-0" />
-              <span>{snapshot.pendingCount}</span>
-              {/* 提示文字与数字之间用细分隔点视觉分层,数字粗、文字略淡,整体呈消息提醒胶囊。 */}
-              <span className="w-px h-3 bg-primary-foreground/30" />
-              <span className="font-normal opacity-90 whitespace-nowrap">
-                {t("memory.pending_inline")}
-              </span>
-            </Badge>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            {t("memory.pending_tooltip", { n: snapshot.pendingCount })}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-full bg-[var(--ds-on-surface)] px-2 text-xs font-medium text-[var(--ds-text-secondary)] transition-colors hover:bg-[var(--ds-on-surface-active)]"
+                  >
+                    <Brain className="h-3 w-3 shrink-0" />
+                    <span className="whitespace-nowrap">
+                      {recall?.active
+                        ? t("memory.recall_badge", { selected: recall.selected, total: recall.total })
+                        : t("memory.recall_full")}
+                    </span>
+                  </button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <div>{recallLine}</div>
+                {recall?.reranked ? (
+                  <div className="mt-0.5 opacity-80">{t("memory.recall_reranked")}</div>
+                ) : null}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <DropdownMenuContent align="end" side="top" className="w-52">
+            <DropdownMenuItem disabled={rematching} onSelect={() => void rematch()}>
+              {rematching ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              {t("memory.rematch")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -181,6 +291,27 @@ export function MemoryBadge() {
               {t("memory.pending_subtitle", { n: snapshot.pendingCount })}
             </DialogDescription>
           </DialogHeader>
+
+          {/* 召回状态与「重新匹配」:待确认列表打开时也不再把该动作藏起来。 */}
+          {showRecall ? (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs">
+              <span className="min-w-0 truncate text-muted-foreground">{recallLine}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 shrink-0 px-2 text-xs"
+                disabled={rematching}
+                onClick={() => void rematch()}
+              >
+                {rematching ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                {t("memory.rematch")}
+              </Button>
+            </div>
+          ) : null}
 
           {/* 批量操作区:独立带底色容器 + "批量处理" 标题,与下方单条卡片视觉分层。
               选中数实时显示,顺序 全局-助手-丢弃 与单条一致。 */}
