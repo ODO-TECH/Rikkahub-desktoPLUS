@@ -59,6 +59,7 @@ export function PasswordInput({
   placeholder,
   showLabel,
   hideLabel,
+  disabled,
   "aria-label": ariaLabel,
 }: {
   id?: string;
@@ -69,6 +70,8 @@ export function PasswordInput({
   /** 显隐按钮的无障碍文案(默认「显示/隐藏 API Key」;非密钥字段可覆盖)。 */
   showLabel?: string;
   hideLabel?: string;
+  /** 整字段锁定(如 SSH 主机密钥确认框打开期间:输入半改的凭据会让「信任 + 重放」用到错的值)。 */
+  disabled?: boolean;
   "aria-label"?: string;
 }) {
   const { t } = useTranslation();
@@ -83,6 +86,7 @@ export function PasswordInput({
         type={visible ? "text" : "password"}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        disabled={disabled}
         className="pr-10"
       />
       <Button
@@ -90,6 +94,7 @@ export function PasswordInput({
         variant="ghost"
         size="icon-xs"
         className="absolute top-1/2 right-1 -translate-y-1/2"
+        disabled={disabled}
         onClick={() => setVisible((current) => !current)}
         aria-label={
           visible

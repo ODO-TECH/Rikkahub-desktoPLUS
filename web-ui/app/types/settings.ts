@@ -6,14 +6,16 @@
 // re-export,不再手写镜像。视图细化字段的增删属契约变更,必须两端同评审。
 import type {
   AsrProvider,
+  MemoryWriteScope,
   Model as ServerModel,
   TtsProvider,
 } from "@server/foundation/types";
 import type { Settings as ServerSettings } from "@server/foundation/types/settings";
-import type { SshDevice } from "@server/foundation/types/settings";
+import type { SshDevice, SshHostKey, SshRemoteDir } from "@server/foundation/types/settings";
 
 // SSH 设备条目两端同形(权威在 pc-server/foundation/types/settings/ssh-config.ts)。
-export type { SshDevice };
+// 主机密钥与授权目录同样同形:确认框要逐字节比对服务器当场出示的那份 key,镜像一份必然漂移。
+export type { SshDevice, SshHostKey, SshRemoteDir };
 
 // 两端同形:直接单源 re-export(权威在 pc-server/foundation/types)。
 export type {
@@ -21,6 +23,7 @@ export type {
   MemoryEntry,
   MemorySettings,
   MemorySnapshot,
+  MemoryWriteScope,
   PendingEntry,
   GeneratedMediaOutputRecord,
   GeneratedMediaRecord,
@@ -39,6 +42,12 @@ export type {
   MediaKind,
   MediaModelRef,
 } from "@server/foundation/types/settings";
+
+// 特性 C：记忆语义索引切片（PC 独有，state.json 里 `memoryVectorSettings`）。
+export type { MemoryVectorSettings } from "@server/foundation/types/settings";
+
+// 实验：记忆与上下文的失真 / 遗忘设置切片（PC 独有，`memoryExperimentSettings`）。
+export type { MemoryExperimentSettings } from "@server/foundation/types/settings";
 
 /**
  * Display settings — user nickname, avatar, theme, fonts and other purely visual preferences.
@@ -79,6 +88,10 @@ export interface DisplaySetting {
   chatFontFamilyCjkCss?: string;
   pasteLongTextAsFile: boolean;
   pasteLongTextThreshold: number;
+  /** PC 端长文本粘贴转 txt。独立于安卓同名字段(安卓备份的默认值不应改变 PC 行为)。
+   *  PC-only,已在 pc-server pcOnlyDisplayFields 剥离清单。默认开、阈值 5000。 */
+  pcPasteLongTextAsFile?: boolean;
+  pcPasteLongTextThreshold?: number;
   /** 朗读过滤:只读引号内台词(跳过旁白/动作)。byte-match Android displaySetting。 */
   ttsOnlyReadQuoted?: boolean;
   /** 朗读过滤:跳过中英文括号内的注释/语气说明。byte-match Android displaySetting。 */
@@ -162,6 +175,11 @@ export interface AssistantProfile {
   useAssistantAvatar?: boolean;
   tags: string[];
   quickMessageIds?: string[];
+  // 记忆读取开关 + 写入范围（Kelivo 式助手级策略）。缺省由服务端 migration 补齐。
+  enableMemory?: boolean;
+  memoryWriteScope?: MemoryWriteScope;
+  autoOrganizeMemory?: boolean;
+  memoryOrganizeEveryNTurns?: number;
   [key: string]: unknown;
 }
 

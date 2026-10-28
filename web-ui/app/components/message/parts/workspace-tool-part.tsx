@@ -40,6 +40,7 @@ import {
 import type { ToolPart as UIToolPart } from "~/types";
 
 import { ControlledChainOfThoughtStep } from "../chain-of-thought";
+import { SubagentOwnerBadge } from "./subagent-badge";
 
 // 工作区工具渲染器(M2-3,方案 §4.3;2026-09-05 抽屉合并修订)。可见性分层:
 // - read(只读侦察)留在思维链折叠组(tool-part.tsx 只借本模块的标题/图标);
@@ -408,6 +409,7 @@ export function WorkspaceActionCard({
         >
           <span className="shrink-0">{statusIcon}</span>
           <TitleIcon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+          <SubagentOwnerBadge tool={tool} />
           <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {model.kind === "bash" ? (
               <>
@@ -499,14 +501,17 @@ export function WorkspaceActionStep({
           )
         }
         label={
-          model.kind === "bash" ? (
-            <span className="text-foreground line-clamp-2 text-xs font-medium">
-              {t("workspace_tool.bash_prefix")}
-              <span className="text-compact font-normal">{title}</span>
-            </span>
-          ) : (
-            <span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>
-          )
+          <span className="flex min-w-0 items-center gap-1.5">
+            <SubagentOwnerBadge tool={tool} />
+            {model.kind === "bash" ? (
+              <span className="text-foreground line-clamp-2 text-xs font-medium">
+                {t("workspace_tool.bash_prefix")}
+                <span className="text-compact font-normal">{title}</span>
+              </span>
+            ) : (
+              <span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>
+            )}
+          </span>
         }
         extra={
           <span className="flex shrink-0 items-center gap-2">
@@ -609,10 +614,11 @@ export function WorkspaceApprovalCard({
           )}
         </div>
         <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold text-foreground">
               {t(`workspace_tool.approval_${kind}`)}
             </span>
+            <SubagentOwnerBadge tool={tool} />
             <span className="size-1.5 animate-pulse rounded-full bg-warning" aria-hidden />
           </div>
           <p className="text-xs text-muted-foreground">{t("workspace_tool.approval_hint")}</p>

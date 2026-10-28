@@ -19,6 +19,7 @@ import { PromptInjectionSection } from "~/components/settings/extensions/injecti
 import { QuickMessagesSection } from "~/components/settings/extensions/quick-messages";
 import { SkillsSection } from "~/components/settings/extensions/skills";
 import { SshSection } from "~/components/settings/extensions/ssh";
+import { ImAccessSection } from "~/components/settings/im-access";
 import { AppSection, AppearanceSection, ProfileSection, ShortcutsSection } from "~/components/settings/general";
 import { LogsSection, type RequestLog } from "~/components/settings/logs";
 import { ProxySection } from "~/components/settings/proxy";
@@ -27,6 +28,7 @@ import { SearchSection } from "~/components/settings/search";
 import { AsrSection, TtsSection } from "~/components/settings/speech";
 import { StatsSection, type StatsPayload } from "~/components/settings/stats";
 import { MemorySection } from "~/components/memory/memory-section";
+import { MemoryExperimentSection } from "~/components/settings/experiments/memory";
 import api from "~/services/api";
 import type { Settings } from "~/types";
 
@@ -93,6 +95,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   network: SearchSection,
   "connectivity/proxy": ProxySection,
   "connectivity/server": WebServiceSection,
+  "connectivity/im": ImAccessSection,
   "extensions/mcp": McpSection,
   "extensions/skills": SkillsSection,
   "extensions/injection": PromptInjectionSection,
@@ -103,6 +106,7 @@ export const SETTINGS_PAGES: Record<SettingsPageKey, React.ComponentType<Setting
   "speech/tts": TtsSection,
   "speech/asr": AsrSection,
   memory: MemorySection,
+  "experiments/memory": MemoryExperimentSection,
   data: BackupSection,
   "stats/usage": StatsSectionHost,
   "stats/logs": LogsSectionHost,

@@ -8,6 +8,7 @@ import i18n from "~/i18n";
 import api from "~/services/api";
 import { useSettingsStore } from "~/stores/app-store";
 import type { DisplaySetting, Settings } from "~/types";
+import type { SubagentConfig } from "@server/foundation/types/settings/subagent-config";
 
 /**
  * 把补丁打到 store 的最新 settings 上(无快照时不动)。补丁依赖现值(如改列表里的一项)时
@@ -53,6 +54,31 @@ export async function saveDisplayPatch(patch: Partial<DisplaySetting>): Promise<
         if (current[key] === patch[key]) Object.assign(rollback, { [key]: before[key] });
       }
       patchDisplayLocal(rollback);
+    }
+    throw error;
+  }
+}
+
+/**
+ * 提交子智能体设置:先乐观写本地,成功后采纳服务端归一化结果(未知工具名已被剔除),
+ * 失败回滚本次改过、且之后没被别处再改的字段并抛出。服务端整单校验,越界 400。
+ */
+export async function saveSubagentPatch(patch: Partial<SubagentConfig>): Promise<void> {
+  const before = useSettingsStore.getState().settings?.subagent;
+  if (before) patchSettingsLocal({ subagent: { ...before, ...patch } });
+  try {
+    const response = await api.post<{ status: string; subagent: SubagentConfig }>("settings/subagent", patch);
+    if (response?.subagent) patchSettingsLocal({ subagent: response.subagent });
+  } catch (error) {
+    const current = useSettingsStore.getState().settings?.subagent;
+    if (before && current) {
+      const rollback: Partial<SubagentConfig> = {};
+      for (const key of Object.keys(patch) as (keyof SubagentConfig)[]) {
+        if (JSON.stringify(current[key]) === JSON.stringify(patch[key])) {
+          Object.assign(rollback, { [key]: before[key] });
+        }
+      }
+      if (Object.keys(rollback).length > 0) patchSettingsLocal({ subagent: { ...current, ...rollback } });
     }
     throw error;
   }

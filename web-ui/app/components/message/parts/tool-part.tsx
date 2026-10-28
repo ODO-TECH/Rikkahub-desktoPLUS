@@ -49,6 +49,8 @@ import {
   workspaceReadTitle,
   workspaceReconTitle,
 } from "./workspace-tool-part";
+import { SubagentOwnerBadge } from "./subagent-badge";
+import { SubagentDispatchPart } from "./subagent-tool-part";
 import { useToolElapsedSeconds } from "~/hooks/use-elapsed-since";
 import { AudioPart as AudioPartRenderer } from "./audio-part";
 import { ImagePart as ImagePartRenderer } from "./image-part";
@@ -82,6 +84,7 @@ const TOOL_NAMES = {
   CLIPBOARD: "clipboard_tool",
   ASK_USER: "ask_user",
   USE_SKILL: "use_skill",
+  SUBAGENT_DISPATCH: "subagent_dispatch",
 } as const;
 
 const MEMORY_ACTIONS = {
@@ -777,6 +780,21 @@ export function ToolPart({
     );
   }
 
+  // 子智能体派遣(P3):专属卡展示模式/任务清单/逐任务结果;dispatch 本身免审,
+  // 不走下方通用工具的审批/抽屉分支。
+  if (tool.toolName === TOOL_NAMES.SUBAGENT_DISPATCH) {
+    return (
+      <SubagentDispatchPart
+        tool={tool}
+        loading={loading}
+        messageCreatedAt={messageCreatedAt}
+        messageFinishedAt={messageFinishedAt}
+        isFirst={isFirst}
+        isLast={isLast}
+      />
+    );
+  }
+
   const { t } = useTranslation("message");
   const [expanded, setExpanded] = React.useState(true);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -871,7 +889,12 @@ export function ToolPart({
             <Icon className="h-4 w-4 text-primary" />
           )
         }
-        label={<span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>}
+        label={
+          <span className="flex min-w-0 items-center gap-1.5">
+            <SubagentOwnerBadge tool={tool} />
+            <span className="text-foreground line-clamp-2 text-xs font-medium">{title}</span>
+          </span>
+        }
         extra={
           <span className="flex shrink-0 items-center gap-1.5">
             {isPending && onToolApproval ? (

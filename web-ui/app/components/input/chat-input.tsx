@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, PhoneCall, Plus, Scissors, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
+import { ArrowUp, File, FileDown, Image, LoaderCircle, Mic, PhoneCall, Plus, Sparkles, Square, TriangleAlert, Undo2, Video, X, Zap } from "lucide-react";
 import { startMicCapture } from "~/lib/voice/mic-capture";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import { ModelList } from "~/components/input/model-list";
 import { SearchPickerButton } from "~/components/input/search-picker";
 import { MemoryBadge } from "~/components/memory/memory-badge";
+import { CompressContextIcon } from "~/components/icons/compress-context-icon";
 import { ExtensionPickerButton } from "~/components/input/extension-picker";
 import { MediaStudioButton } from "~/components/media-studio/media-studio-button";
 import { CommandHighlightOverlay, SlashCommandMenu, TEXTAREA_METRICS } from "~/components/input/slash-command-menu";
@@ -22,6 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Textarea } from "~/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
 import { resolveFileUrl } from "~/lib/files";
+import { normalizeLongTextThreshold, shouldConvertLongText } from "~/lib/long-text-paste";
 import { DOCUMENT_UPLOAD_ACCEPT, uploadFilesToDraft } from "~/lib/upload";
 import { cn } from "~/lib/utils";
 import api, { appendWebAuthQuery } from "~/services/api";
@@ -120,11 +122,9 @@ function getPartFileId(part: UIMessagePart): number | null {
   return typeof value === "number" ? value : null;
 }
 
-// 专题4:PC 端"长文本粘贴转文件"固定开启、阈值 5000 字(用户决策)。刻意不读
-// displaySetting.pasteLongTextAsFile/pasteLongTextThreshold——那是安卓端的设置,
-// 会随备份导入被安卓的值覆盖(安卓默认关);PC 行为不受安卓备份影响。两个字段
-// 仍照常存储并随备份透传,安卓端自用。
-const PASTE_LONG_TEXT_THRESHOLD = 5000;
+// 超长粘贴/拖入转 txt:开关与阈值来自 PC 独有设置(默认开、5000 字),见 lib/long-text-paste。
+// txt 附件只存原文,不截断;文件走常规上传与后台提取链路。
+const LONG_TEXT_FILE_NAME = "pasted_text.txt";
 
 /** 专题4:确定性进度圆圈。percent=null 转不定圈(准备阶段/无逐页进度的格式),
  *  有值时按百分比画弧——成熟应用的"小圆圈一段一段加载到闭合"。 */
@@ -277,6 +277,10 @@ function ChatInputInner({
     (state) => state.settings?.displaySetting.sendOnEnter ?? true,
   );
   const { currentAssistant, settings } = useCurrentAssistant();
+  const longTextAsFileEnabled = settings?.displaySetting?.pcPasteLongTextAsFile !== false;
+  const longTextThreshold = normalizeLongTextThreshold(
+    settings?.displaySetting?.pcPasteLongTextThreshold,
+  );
 
   const quickMessages = React.useMemo(() => {
     const ids = currentAssistant?.quickMessageIds;
@@ -772,23 +776,28 @@ function ChatInputInner({
     [onAddParts],
   );
 
+  const uploadLongTextAsFile = React.useCallback(
+    async (text: string) => {
+      const file = new globalThis.File([text], LONG_TEXT_FILE_NAME, {
+        type: "text/plain",
+      });
+      toast.info(t("chat.long_text_as_file"));
+      const result = await uploadFilesToDraft([file], onAddParts);
+      if (result.error) setError(result.error);
+    },
+    [onAddParts, t],
+  );
+
   const handlePaste = React.useCallback(
     async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
       if (!canUpload) return;
 
-      // 粘贴长文本自动转换为文件(专题4:PC 端固定开启,阈值 5000 字,见常量注释)
-      {
-        const text = event.clipboardData.getData("text/plain");
-        if (text.length > PASTE_LONG_TEXT_THRESHOLD) {
-          event.preventDefault();
-          const file = new globalThis.File([text], "pasted_text.txt", {
-            type: "text/plain",
-          });
-          toast.info(t("chat.long_text_as_file"));
-          const result = await uploadFilesToDraft([file], onAddParts);
-          if (result.error) setError(result.error);
-          return;
-        }
+      // 长文本转 txt:超阈值就不让文本进入 textarea,直接从剪贴板以文件上传。
+      const text = event.clipboardData.getData("text/plain");
+      if (shouldConvertLongText(text, longTextAsFileEnabled, longTextThreshold)) {
+        event.preventDefault();
+        await uploadLongTextAsFile(text);
+        return;
       }
 
       const files = Array.from(event.clipboardData.items)
@@ -804,7 +813,19 @@ function ChatInputInner({
       const result = await uploadFilesToDraft(files, onAddParts);
       if (result.error) setError(result.error);
     },
-    [canUpload, onAddParts, t],
+    [canUpload, longTextAsFileEnabled, longTextThreshold, onAddParts, uploadLongTextAsFile],
+  );
+
+  // 拖入纯文本与粘贴同规则;带文件的拖放交给全窗口投放区(这里不拦截)。
+  const handleDrop = React.useCallback(
+    async (event: React.DragEvent<HTMLTextAreaElement>) => {
+      if (!canUpload || event.dataTransfer.files.length > 0) return;
+      const text = event.dataTransfer.getData("text/plain");
+      if (!shouldConvertLongText(text, longTextAsFileEnabled, longTextThreshold)) return;
+      event.preventDefault();
+      await uploadLongTextAsFile(text);
+    },
+    [canUpload, longTextAsFileEnabled, longTextThreshold, uploadLongTextAsFile],
   );
 
   const sendHint = sendOnEnter ? t("chat.send_hint_enter") : t("chat.send_hint_newline");
@@ -856,7 +877,7 @@ function ChatInputInner({
           ) : null}
           {/* 待确认记忆提醒角标:浮在输入框右上角外沿,像消息提醒。仅有待确认项时渲染。 */}
           <div className="absolute -top-4 right-2 z-10">
-            <MemoryBadge />
+            <MemoryBadge conversationId={conversationId} refreshKey={isGenerating} />
           </div>
 
           {isEditing ? (
@@ -954,6 +975,9 @@ function ChatInputInner({
               onKeyDown={handleKeyDown}
               onPaste={(event) => {
                 void handlePaste(event);
+              }}
+              onDrop={(event) => {
+                void handleDrop(event);
               }}
               onScroll={(event) => {
                 const overlay = commandOverlayRef.current;
@@ -1055,7 +1079,7 @@ function ChatInputInner({
                         onCompressConversation();
                       }}
                     >
-                      <Scissors className="size-4" />
+                      <CompressContextIcon className="size-4" />
                       {t("compress_history")}
                     </DropdownMenuItem>
                   )}
@@ -1093,6 +1117,7 @@ function ChatInputInner({
                 disabled={!ready || disabled}
               />
               <WorkspaceFilesButton conversationId={conversationId} />
+              {/* 权限档位收在左组末尾、工作目录右侧(2026-10-26 定位:图标群之后,文字胶囊垫底)。 */}
               <WorkspacePermissionPicker />
             </div>
             <div className="relative flex min-w-0 shrink items-center gap-1">

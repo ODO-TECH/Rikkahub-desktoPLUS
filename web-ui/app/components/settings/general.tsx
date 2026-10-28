@@ -9,13 +9,17 @@ import { FontPickerPair } from "~/components/font-picker";
 import { CHAT_CJK_OVERRIDE_FAMILY, UI_CJK_OVERRIDE_FAMILY } from "~/lib/font-chain";
 import { KeybindingSettings } from "~/components/keybinding-settings";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { Slider } from "~/components/ui/slider";
-import { patchDisplay, patchSettingsLocal, saveDisplayPatch } from "~/lib/settings-patch";
+import { patchDisplay, patchSettingsLocal, saveDisplayPatch, saveSubagentPatch } from "~/lib/settings-patch";
+import { normalizeLongTextThreshold } from "~/lib/long-text-paste";
 import api from "~/services/api";
 import type { AssistantAvatar, Settings } from "~/types";
 import {
   InlineEditText,
+  SettingsAdvancedRegion,
+  SettingsAdvancedToggle,
   SettingsField,
   SettingsGroup,
   SettingsRows,
@@ -23,6 +27,12 @@ import {
   SettingsSwitchRow,
   textValue,
 } from "~/components/settings/shared";
+import {
+  SUBAGENT_LIMITS,
+  SUBAGENT_TOOL_WHITELIST,
+  type SubagentConfig,
+  type SubagentToolName,
+} from "@server/foundation/types/settings/subagent-config";
 import { isTauriEnvironment, isWindowsPlatform, getSystemInfo } from "~/lib/system-info";
 import { extractErrorMessage } from "~/lib/error";
 
@@ -43,6 +53,95 @@ const DISPLAY_TOGGLES = [
 ] as const;
 
 const FONT_PREVIEW_FALLBACK = '"Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif';
+
+// 子智能体数值项:区间单源自服务端 SUBAGENT_LIMITS(服务端写入校验同源),前端只拦截并提示。
+const SUBAGENT_NUMBER_FIELDS = [
+  {
+    key: "maxConcurrency",
+    labelKey: "settings:general.subagent_max_concurrency",
+    hintKey: "settings:general.subagent_max_concurrency_hint",
+    step: 1,
+  },
+  {
+    key: "maxTasksPerCall",
+    labelKey: "settings:general.subagent_max_tasks_per_call",
+    hintKey: "settings:general.subagent_max_tasks_per_call_hint",
+    step: 1,
+  },
+  {
+    key: "tokenBudget",
+    labelKey: "settings:general.subagent_token_budget",
+    hintKey: "settings:general.subagent_token_budget_hint",
+    step: 1000,
+  },
+] as const satisfies readonly {
+  key: keyof typeof SUBAGENT_LIMITS;
+  labelKey: string;
+  hintKey: string;
+  step: number;
+}[];
+
+/** 数值项:本地受控,失焦/回车提交;越界或非整数就地回退并 toast,不静默夹取。 */
+function SubagentNumberField({
+  labelKey,
+  hintKey,
+  value,
+  range,
+  step,
+  onCommit,
+}: {
+  labelKey: string;
+  hintKey: string;
+  value: number;
+  range: { readonly min: number; readonly max: number };
+  step: number;
+  onCommit: (next: number) => void;
+}) {
+  const { t } = useTranslation();
+  const id = React.useId();
+  const [text, setText] = React.useState(String(value));
+  React.useEffect(() => {
+    setText(String(value));
+  }, [value]);
+  const commit = () => {
+    const next = Number(text.trim());
+    if (!Number.isInteger(next) || next < range.min || next > range.max) {
+      setText(String(value));
+      toast.error(t("settings:general.subagent_invalid_range", { min: range.min, max: range.max }));
+      return;
+    }
+    setText(String(next));
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <SettingsField
+      label={t(labelKey)}
+      hint={t(hintKey, { min: range.min, max: range.max })}
+      htmlFor={id}
+    >
+      <Input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        min={range.min}
+        max={range.max}
+        step={step}
+        value={text}
+        className="w-40 tabular-nums"
+        onChange={(event) => setText(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape") {
+            setText(String(value));
+          }
+        }}
+      />
+    </SettingsField>
+  );
+}
 
 /** 通用 › 个人资料:头像 + 昵称。分节纵排(标题在上、内容在下),头像点按即换,
  *  昵称行内编辑(显式提交,不走防抖自动保存)。不用 SettingsRow 的左右分栏——
@@ -92,7 +191,39 @@ export function ProfileSection({ settings }: PageProps) {
 export function AppSection({ settings }: PageProps) {
   const { t } = useTranslation();
   const shellPathId = React.useId();
+  const longTextThresholdId = React.useId();
   const display = settings.displaySetting;
+
+  // 长文本粘贴转 txt:PC 独立字段(见 defaults.ts 注释),默认开、阈值 5000。
+  const longTextEnabled = display.pcPasteLongTextAsFile !== false;
+  const longTextThreshold = normalizeLongTextThreshold(display.pcPasteLongTextThreshold);
+  const [thresholdText, setThresholdText] = React.useState(String(longTextThreshold));
+  React.useEffect(() => {
+    setThresholdText(String(longTextThreshold));
+  }, [longTextThreshold]);
+  const commitLongTextThreshold = () => {
+    const next = normalizeLongTextThreshold(thresholdText);
+    setThresholdText(String(next));
+    if (next !== longTextThreshold) patchDisplay({ pcPasteLongTextThreshold: next });
+  };
+
+  // --- 子智能体(PC 专属)---
+  // 高级项(并发 / 任务上限 / token 预算 / 子面工具)收进卡内折叠区,避免默认展开吓人。
+  const subagent = settings.subagent;
+  const [subagentAdvanced, setSubagentAdvanced] = React.useState(false);
+  const subagentAdvancedId = React.useId();
+  const patchSubagent = (patch: Partial<SubagentConfig>) => {
+    void saveSubagentPatch(patch).catch((error: unknown) => {
+      toast.error(extractErrorMessage(error, t("settings:common.save_failed")));
+    });
+  };
+  const toggleSubagentTool = (tool: SubagentToolName, checked: boolean) => {
+    const next = new Set<SubagentToolName>(subagent.allowedTools);
+    if (checked) next.add(tool);
+    else next.delete(tool);
+    // 存储顺序恒按白名单顺序,避免勾选先后影响展示/序列化。
+    patchSubagent({ allowedTools: SUBAGENT_TOOL_WHITELIST.filter((name) => next.has(name)) });
+  };
 
   // --- 关闭时最小化到托盘 —— 仅桌面壳渲染 ---
   // 该设置存在 Rust 侧的 user-config.json(跟数据目录同处),不走后端 API/SSE,
@@ -172,6 +303,109 @@ export function AppSection({ settings }: PageProps) {
             checked={display.collapseAllSteps === true}
             onCheckedChange={(checked) => patchDisplay({ collapseAllSteps: checked })}
           />
+        </SettingsRows>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("settings:general.long_text_title")}
+        description={t("settings:general.long_text_desc")}
+        fields
+      >
+        <SettingsSwitchRow
+          label={t("settings:general.long_text_as_file")}
+          description={t("settings:general.long_text_as_file_hint")}
+          checked={longTextEnabled}
+          onCheckedChange={(checked) => patchDisplay({ pcPasteLongTextAsFile: checked })}
+        />
+        <SettingsField
+          label={t("settings:general.long_text_threshold")}
+          hint={t("settings:general.long_text_threshold_hint")}
+          htmlFor={longTextThresholdId}
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              id={longTextThresholdId}
+              type="number"
+              inputMode="numeric"
+              min={500}
+              max={50000}
+              step={500}
+              value={thresholdText}
+              disabled={!longTextEnabled}
+              className="w-40 tabular-nums"
+              onChange={(event) => setThresholdText(event.target.value)}
+              onBlur={commitLongTextThreshold}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitLongTextThreshold();
+                } else if (event.key === "Escape") {
+                  setThresholdText(String(longTextThreshold));
+                }
+              }}
+            />
+            <span className="text-xs text-[var(--ds-text-secondary)]">
+              {t("settings:general.long_text_threshold_unit")}
+            </span>
+          </div>
+        </SettingsField>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("settings:general.subagent_title")}
+        description={t("settings:general.subagent_desc")}
+        action={
+          <SettingsAdvancedToggle
+            open={subagentAdvanced}
+            onOpenChange={setSubagentAdvanced}
+            controls={[subagentAdvancedId]}
+            attention={subagent.allowedTools.includes("bash")}
+          />
+        }
+      >
+        <SettingsRows>
+          <SettingsSwitchRow
+            label={t("settings:general.subagent_enabled")}
+            description={t("settings:general.subagent_enabled_hint")}
+            checked={subagent.enabled}
+            onCheckedChange={(checked) => patchSubagent({ enabled: checked })}
+          />
+          <SettingsAdvancedRegion id={subagentAdvancedId} open={subagentAdvanced}>
+            <div className="space-y-5 pt-3 pb-3">
+              {SUBAGENT_NUMBER_FIELDS.map((field) => (
+                <SubagentNumberField
+                  key={field.key}
+                  labelKey={field.labelKey}
+                  hintKey={field.hintKey}
+                  value={subagent[field.key]}
+                  range={SUBAGENT_LIMITS[field.key]}
+                  step={field.step}
+                  onCommit={(next) => patchSubagent({ [field.key]: next })}
+                />
+              ))}
+              <SettingsField
+                label={t("settings:general.subagent_tools")}
+                hint={t("settings:general.subagent_tools_hint")}
+              >
+                <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+                  {SUBAGENT_TOOL_WHITELIST.map((tool) => (
+                    <label key={tool} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={subagent.allowedTools.includes(tool)}
+                        onCheckedChange={(checked) => toggleSubagentTool(tool, checked === true)}
+                      />
+                      <span className="font-mono text-xs text-[var(--ds-text-primary)]">{tool}</span>
+                      {tool === "bash" && subagent.allowedTools.includes(tool) ? (
+                        <span className="text-mini text-[var(--ds-warning)]">
+                          {t("settings:general.subagent_bash_warning")}
+                        </span>
+                      ) : null}
+                    </label>
+                  ))}
+                </div>
+              </SettingsField>
+            </div>
+          </SettingsAdvancedRegion>
         </SettingsRows>
       </SettingsGroup>
 

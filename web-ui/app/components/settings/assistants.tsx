@@ -79,8 +79,15 @@ const LOCAL_TOOLS = [
   ["ask_user", "settings:assistants.tools.ask_user"],
 ] as const;
 
-const ROLE_KEYS = {
-  SYSTEM: "settings:assistants.role.system",
+// 新助手默认写入范围:沿用「记忆」页里为新建助手设的全局默认(老字段名 writeStrategy)。
+const DEFAULT_SCOPE_BY_STRATEGY: Record<string, AssistantProfile["memoryWriteScope"]> = {
+  ask: "tool_default_global",
+  always_global: "always_global",
+  always_assistant: "always_assistant",
+  readonly: "readonly",
+};
+
+const ROLE_KEYS = {  SYSTEM: "settings:assistants.role.system",
   USER: "settings:assistants.role.user",
   ASSISTANT: "settings:assistants.role.assistant",
 } as const;
@@ -226,6 +233,7 @@ export function AssistantsSection({
       systemPrompt: "",
       chatModelId: null,
       allowConversationSystemPrompt: false,
+      memoryWriteScope: DEFAULT_SCOPE_BY_STRATEGY[settings.memorySettings?.writeStrategy ?? "ask"] ?? "tool_default_global",
     } as AssistantProfile;
     try {
       await api.post("settings/assistant/detail", created);
@@ -585,6 +593,65 @@ function AssistantEditor({
             >
               {ADVANCED_SWITCHES.map(switchRow)}
             </SettingsAdvancedRegion>
+          </SettingsRows>
+        </SettingsGroup>
+
+        <SettingsGroup
+          title={t("settings:assistants.memory_title")}
+          description={t("settings:assistants.memory_desc")}
+        >
+          <SettingsRows>
+            <SettingsSwitchRow
+              label={t("settings:assistants.memory_enable")}
+              description={t("settings:assistants.memory_enable_desc")}
+              checked={draft.enableMemory === true}
+              onCheckedChange={(checked) => patchDraft({ enableMemory: checked })}
+            />
+            <SettingsRow
+              label={t("settings:assistants.memory_write_scope")}
+              description={t("settings:assistants.memory_write_scope_desc")}
+              control={
+                <Select
+                  value={(draft.memoryWriteScope as string) ?? "tool_default_global"}
+                  onValueChange={(value) => patchDraft({ memoryWriteScope: value as AssistantProfile["memoryWriteScope"] })}
+                >
+                  <SelectTrigger className="w-64 max-w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tool_default_global">{t("settings:assistants.memory_scope_tool_global")}</SelectItem>
+                    <SelectItem value="tool_default_assistant">{t("settings:assistants.memory_scope_tool_assistant")}</SelectItem>
+                    <SelectItem value="always_global" disabled={settings.memorySettings?.globalEnabled === false}>
+                      {t("settings:assistants.memory_scope_always_global")}
+                    </SelectItem>
+                    <SelectItem value="always_assistant">{t("settings:assistants.memory_scope_always_assistant")}</SelectItem>
+                    <SelectItem value="readonly">{t("settings:assistants.memory_scope_readonly")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              }
+            />
+            <SettingsSwitchRow
+              label={t("settings:assistants.memory_auto_organize")}
+              description={t("settings:assistants.memory_auto_organize_desc")}
+              checked={draft.autoOrganizeMemory === true}
+              disabled={draft.memoryWriteScope === "readonly" || draft.enableMemory !== true}
+              onCheckedChange={(checked) => patchDraft({ autoOrganizeMemory: checked })}
+            />
+            <SettingsRow
+              label={t("settings:assistants.memory_organize_every")}
+              description={t("settings:assistants.memory_organize_every_desc")}
+              control={
+                <Input
+                  className="w-24"
+                  inputMode="numeric"
+                  disabled={draft.autoOrganizeMemory !== true}
+                  aria-label={t("settings:assistants.memory_organize_every")}
+                  value={numberText(draft.memoryOrganizeEveryNTurns ?? 5)}
+                  onChange={(event) => {
+                    const n = Math.round(Number(event.target.value));
+                    patchDraft({ memoryOrganizeEveryNTurns: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 });
+                  }}
+                />
+              }
+            />
           </SettingsRows>
         </SettingsGroup>
 

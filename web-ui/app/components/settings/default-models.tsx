@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowDownWideNarrow,
   Bot,
+  Brain,
   FileClock,
   FileImage,
   Globe,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Settings2,
   Sparkles,
+  TimerReset,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
@@ -50,7 +52,8 @@ type ModelKey =
   | "compressModelId"
   | "promptOptimizeModelId"
   | "embeddingModelId"
-  | "rerankModelId";
+  | "rerankModelId"
+  | "memoryModelId";
 
 /** 兜底档:未设置时自动跟随会话当前模型(提示词优化/翻译/上下文压缩)。快速模型是静默档
  *  (未设置=标题用首条消息文本、建议不生成),OCR 是报错档(未设置=功能不可用)。 */
@@ -182,9 +185,11 @@ export function DefaultModelsSection({
     translateModeId: string;
     ocrModelId: string;
     compressModelId: string;
+    chatAutoCompact: boolean;
     promptOptimizeModelId: string;
     embeddingModelId: string;
     rerankModelId: string;
+    memoryModelId: string;
     promptOptimizePrompt: string;
     titlePrompt: string;
     translatePrompt: string;
@@ -207,9 +212,11 @@ export function DefaultModelsSection({
     translateModeId: textValue(settings.translateModeId),
     ocrModelId: textValue(settings.ocrModelId),
     compressModelId: textValue(settings.compressModelId),
+    chatAutoCompact: settings.chatAutoCompact === true,
     promptOptimizeModelId: textValue(settings.promptOptimizeModelId),
     embeddingModelId: textValue(settings.embeddingModelId),
     rerankModelId: textValue(settings.rerankModelId),
+    memoryModelId: textValue(settings.memoryModelId),
     promptOptimizePrompt: textValue(settings.promptOptimizePrompt),
     titlePrompt: textValue(settings.titlePrompt),
     translatePrompt: textValue(settings.translatePrompt),
@@ -274,12 +281,17 @@ export function DefaultModelsSection({
   // 每个场景档位的候选模型集合:聊天类场景共用 allModels(已排除嵌入/重排),
   // 图像/嵌入/重排各自按能力点名。抽成函数是为了让行渲染也能拿到候选数,
   // 好在一个模型都没有时给出「去哪儿补」的提示。
+  // 记忆模型走 chat/completions,后端按 type === "CHAT" 严格解析;
+  // 图像模型混进来会静默降级成「记忆模型未配置」,所以这里先按 CHAT 收窄。
+  const chatModels = allModels.filter((model) => String(model.type ?? "").toUpperCase() === "CHAT");
   const sceneOptions = (key: ModelKey) =>
     key === "embeddingModelId"
       ? embeddingModels
       : key === "rerankModelId"
         ? rerankModels
-        : allModels;
+        : key === "memoryModelId"
+          ? chatModels
+          : allModels;
   const modelSelect = (key: ModelKey) => {
     const options = sceneOptions(key);
     // 「未设置」的含义按功能分三档(与后端行为一一对应,勿随意增删档位):
@@ -426,6 +438,13 @@ export function DefaultModelsSection({
       description: t("settings:models.feature.rerank.desc"),
       emptyTypeLabelKey: "settings:model_edit.type_rerank",
     },
+    {
+      modelKey: "memoryModelId",
+      icon: Brain,
+      title: t("settings:models.feature.memory.title"),
+      description: t("settings:models.feature.memory.desc"),
+      emptyTypeLabelKey: "settings:model_edit.type_chat",
+    },
   ];
   const activePrompt = activePromptKey ? promptMeta[activePromptKey] : null;
 
@@ -446,41 +465,64 @@ export function DefaultModelsSection({
                 </span>
               ) : null;
             return (
-              <SettingsRow
-                key={feature.modelKey}
-                label={
-                  <span className="flex items-center gap-2">
-                    <Icon className="size-4 shrink-0 text-[var(--ds-icon)]" />
-                    {feature.title}
-                  </span>
-                }
-                description={
-                  <span className="block pl-6">
-                    {feature.description}
-                    {emptyHint}
-                  </span>
-                }
-                control={
-                  <>
-                    <div className="w-60">{modelSelect(feature.modelKey)}</div>
-                    {/* 无 Prompt 的场景占同宽空位,保证各行下拉框右缘对齐成一列。 */}
-                    {feature.promptKey ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setEditingPrompt(feature.promptKey ?? null)}
-                        title={t("settings:models.edit_prompt")}
-                        aria-label={t("settings:models.edit_prompt")}
-                      >
-                        <Settings2 className="size-4" />
-                      </Button>
-                    ) : (
-                      <span className="size-8 shrink-0" aria-hidden="true" />
-                    )}
-                  </>
-                }
-              />
+              <React.Fragment key={feature.modelKey}>
+                <SettingsRow
+                  label={
+                    <span className="flex items-center gap-2">
+                      <Icon className="size-4 shrink-0 text-[var(--ds-icon)]" />
+                      {feature.title}
+                    </span>
+                  }
+                  description={
+                    <span className="block pl-6">
+                      {feature.description}
+                      {emptyHint}
+                    </span>
+                  }
+                  control={
+                    <>
+                      <div className="w-60">{modelSelect(feature.modelKey)}</div>
+                      {/* 无 Prompt 的场景占同宽空位,保证各行下拉框右缘对齐成一列。 */}
+                      {feature.promptKey ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setEditingPrompt(feature.promptKey ?? null)}
+                          title={t("settings:models.edit_prompt")}
+                          aria-label={t("settings:models.edit_prompt")}
+                        >
+                          <Settings2 className="size-4" />
+                        </Button>
+                      ) : (
+                        <span className="size-8 shrink-0" aria-hidden="true" />
+                      )}
+                    </>
+                  }
+                />
+                {/* 自动压缩是压缩模型的运行策略,跟在同一张卡里而不是另开设置页:
+                    用户读「上下文压缩」时顺带就能决定要不要让它自动跑。 */}
+                {feature.modelKey === "compressModelId" ? (
+                  <SettingsRow
+                    label={
+                      <span className="flex items-center gap-2">
+                        <TimerReset className="size-4 shrink-0 text-[var(--ds-icon)]" />
+                        {t("settings:models.feature.compress.auto_title")}
+                      </span>
+                    }
+                    description={
+                      <span className="block pl-6">{t("settings:models.feature.compress.auto_desc")}</span>
+                    }
+                    control={
+                      <Switch
+                        checked={draft.chatAutoCompact}
+                        onCheckedChange={(checked) => patchDraft({ chatAutoCompact: checked })}
+                        aria-label={t("settings:models.feature.compress.auto_title")}
+                      />
+                    }
+                  />
+                ) : null}
+              </React.Fragment>
             );
           })}
         </SettingsRows>

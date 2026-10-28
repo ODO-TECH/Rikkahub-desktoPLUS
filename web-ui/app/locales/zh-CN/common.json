@@ -105,7 +105,8 @@
       "conversation_files": "会话文件",
       "workspace_files": "工作区文件",
       "code_preview": "代码预览",
-      "media_studio": "媒体生成"
+      "media_studio": "媒体生成",
+      "ssh_terminal": "SSH 终端"
     },
     "close_panel": "关闭面板",
     "toggle_open": "打开文件侧边栏",
@@ -175,7 +176,21 @@
       "action_failed": "失败",
       "in_progress": "进行中",
       "file_missing": "文件已不存在",
-      "outside_workspace": "工作区外"
+      "outside_workspace": "工作区外",
+      "upload": "上传到当前目录",
+      "upload_here": "上传到此目录",
+      "uploaded": "已上传 {{name}}",
+      "download": "下载",
+      "ssh_binding_missing": "这个工作区绑定的设备或授权目录已不在设置里，无法浏览远程文件——请在「设置 › 拓展 › SSH」重新添加后换绑。"
+    },
+    "terminal": {
+      "title": "终端",
+      "open": "打开终端",
+      "disconnect": "断开终端",
+      "reconnect": "重新连接",
+      "disconnected": "终端连接已断开",
+      "failed": "终端连接失败",
+      "confirm_host_key": "去设置确认"
     }
   },
   "custom_theme_dialog": {
@@ -370,7 +385,37 @@
     "network_unreachable": "无法连接到本地服务，请稍候重试；若持续出现请重启应用",
     "load_conversations_failed": "加载会话失败",
     "read_image_failed": "读取图片失败",
-    "decode_image_failed": "图片解码失败"
+    "decode_image_failed": "图片解码失败",
+    "ssh": {
+      "missing_password": "请先填写这台设备的密码。",
+      "missing_key": "请先粘贴这台设备的私钥。",
+      "key_too_large": "私钥过大（上限 64 KiB）。",
+      "host_key_invalid": "保存的主机密钥已不可用——请在「设置 › 拓展 › SSH」取消信任后重新确认。",
+      "host_key_unknown": "这台服务器尚未被信任。",
+      "host_key_changed": "这台服务器出示的主机密钥与你信任的那把不一致。",
+      "dir_unauthorized": "该目录不在这台设备的授权范围内。",
+      "path_escape": "该路径超出已授权的目录范围。",
+      "path_missing": "远端机器上不存在该路径。",
+      "path_invalid": "路径含有非法字符。",
+      "path_relative": "远程路径必须是绝对路径，如 /srv/app。",
+      "not_a_file": "该路径不是文件。",
+      "not_a_directory": "该路径不是目录。",
+      "already_exists": "同名文件已存在。",
+      "file_too_large": "远端文件过大，无法在此打开。",
+      "content_too_large": "内容过大，无法写入。",
+      "name_required": "请填写文件名。",
+      "file_required": "请选择要上传的文件。",
+      "root_delete": "授权目录本身不允许删除。",
+      "recursive_required": "删除目录及其内容需要明确确认。",
+      "terminal_busy": "这条连接已经有一个正在运行的终端。",
+      "device_not_found": "这台 SSH 设备已不存在——请在「设置 › 拓展 › SSH」重新选择。",
+      "binding_device_missing": "工作区绑定的 SSH 设备已不存在——请在「设置 › 拓展 › SSH」重新添加后再换绑。",
+      "binding_dir_unauthorized": "工作区绑定的远程目录已不在该设备的授权范围内——请在「设置 › 拓展 › SSH」重新授权。",
+      "binding_path_invalid": "授权的远程目录不是绝对路径——请在「设置 › 拓展 › SSH」改成如 /srv/app。",
+      "binding_host_key_unconfirmed": "这台服务器的主机密钥尚未确认——在「设置 › 拓展 › SSH」确认后才能使用该工作区。",
+      "use_remote_file_routes": "远程工作区请用「SSH 文件」面板浏览，工作区文件面板只服务本机目录。",
+      "agents_file_unsupported": "SSH 工作区不加载项目 AGENTS.md（与移动端一致），改了也不会影响模型。"
+    }
   },
   "theme": {
     "custom": "自定义",

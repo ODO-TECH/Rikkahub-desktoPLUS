@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Loader2,
   RefreshCw,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,23 +37,24 @@ import { extractErrorMessage } from "~/lib/error";
 import api from "~/services/api";
 import { useWorkspaceStore } from "~/stores/workspace-store";
 
+import {
+  capabilitiesOf,
+  fileSourceOf,
+  listDir,
+  loadPreview,
+  removeEntry,
+} from "./workspace-file-source";
+import type { FilePreview, WorkspaceFileEntry } from "./conversation-files-types";
+
 // 文件面板(M3-5,方案 §4.4):Workbench 面板类型 "workspace-files"。
-// 懒加载文件树 + 单击预览(文本/图片) + 右键(重命名/删除/在资源管理器中显示)
-// + 顶部工作区路径面包屑 + 拖文件进聊天输入框(dataTransfer text/plain = 相对路径,
-// textarea 原生接受 text/plain drop,无需输入框侧改造)。
+// 懒加载文件树 + 单击预览(文本/图片) + 顶部工作区路径面包屑 + 拖文件进聊天输入框
+// (dataTransfer text/plain = 相对路径,textarea 原生接受 text/plain drop,无需输入框侧改造)。
 // 数据 100% 即取即用,不持久化;boundary 校验在服务端,前端只做展示。
-
-interface FileEntry {
-  name: string;
-  type: "file" | "dir";
-  size: number;
-  modifiedAt: number;
-}
-
-type FilePreview =
-  | { kind: "text"; text: string; truncated: boolean; size: number }
-  | { kind: "image"; dataUrl: string; size: number }
-  | { kind: "binary"; size: number };
+//
+// 这是会话文件面板之前的旧入口(工作区容器仍可直开只读树),现在没有界面会打开它,
+// 但注册还在——所以它也必须走同一个数据源:ssh 工作区的本地文件路由一律 400
+// ssh.use_remote_file_routes,不接分派就是一个点开必错的面板。能力差异(改名/定位/AGENTS.md)
+// 同样按 capabilitiesOf 隐藏,不在这里另判一次 workspace.type。
 
 // AGENTS.md 编辑入口(P4,方案 §3.3):读写"pi 实际加载的项目上下文文件"
 // (AGENTS.md/CLAUDE.md 候选,后端裁定);无则以默认模板引导创建。
@@ -78,8 +80,10 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
 export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
   const { t } = useTranslation();
   const workspace = useWorkspaceStore((state) => state.workspaces.find((item) => item.id === workspaceId));
+  const source = fileSourceOf(workspace);
+  const capabilities = capabilitiesOf(source);
   // 目录 → 子条目;undefined=未加载。version 用于强刷(重命名/删除后重载受影响目录)。
-  const [children, setChildren] = React.useState<Record<string, FileEntry[] | undefined>>({});
+  const [children, setChildren] = React.useState<Record<string, WorkspaceFileEntry[] | undefined>>({});
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set([""]));
   const [preview, setPreview] = React.useState<{ path: string; data: FilePreview | null } | null>(null);
   const [renameTarget, setRenameTarget] = React.useState<{ path: string; name: string } | null>(null);
@@ -91,16 +95,15 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
 
   const loadDir = React.useCallback(
     async (relPath: string) => {
+      if (!source) return;
       try {
-        const res = await api.get<{ entries: FileEntry[] }>(
-          `workspaces/${workspaceId}/files?path=${encodeURIComponent(relPath)}`,
-        );
-        setChildren((prev) => ({ ...prev, [relPath]: res.entries }));
+        const entries = await listDir(source, relPath);
+        setChildren((prev) => ({ ...prev, [relPath]: entries }));
       } catch (err) {
         toast.error(extractErrorMessage(err, t("workbench.files.failed")));
       }
     },
-    [workspaceId],
+    [source],
   );
 
   React.useEffect(() => {
@@ -120,12 +123,11 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
   };
 
   const openPreview = async (relPath: string) => {
+    if (!source) return;
     setPreview({ path: relPath, data: null });
     try {
-      const res = await api.get<{ preview: FilePreview }>(
-        `workspaces/${workspaceId}/files/content?path=${encodeURIComponent(relPath)}`,
-      );
-      setPreview((current) => (current?.path === relPath ? { path: relPath, data: res.preview } : current));
+      const data = await loadPreview(source, relPath);
+      setPreview((current) => (current?.path === relPath ? { path: relPath, data } : current));
     } catch (err) {
       toast.error(extractErrorMessage(err, t("workbench.files.failed")));
       setPreview(null);
@@ -142,6 +144,7 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
       setRenameTarget(null);
       return;
     }
+    if (!capabilities.rename) return;
     try {
       await api.post(`workspaces/${workspaceId}/files/rename`, { path: renameTarget.path, newName: newName.trim() });
       reloadParentOf(renameTarget.path);
@@ -153,9 +156,9 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
   };
 
   const doDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !source) return;
     try {
-      await api.delete(`workspaces/${workspaceId}/files?path=${encodeURIComponent(deleteTarget.path)}`);
+      await removeEntry(source, deleteTarget.path, deleteTarget.isDir);
       reloadParentOf(deleteTarget.path);
     } catch (err) {
       toast.error(extractErrorMessage(err, t("workbench.files.failed")));
@@ -165,6 +168,7 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
   };
 
   const doReveal = async (relPath: string) => {
+    if (!capabilities.reveal) return;
     try {
       await api.post(`workspaces/${workspaceId}/files/reveal`, { path: relPath });
     } catch (err) {
@@ -173,6 +177,7 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
   };
 
   const openAgentsDialog = async () => {
+    if (!capabilities.agents) return;
     setAgentsDialog({ data: null });
     try {
       const res = await api.get<{ agentsFile: AgentsFileState }>(`workspaces/${workspaceId}/agents-file`);
@@ -251,16 +256,22 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
               </button>
             </ContextMenuTrigger>
             <ContextMenuContent>
-              <ContextMenuItem onSelect={() => setRenameTarget({ path: entryPath, name: entry.name })}>
-                {t("workbench.files.rename")}
-              </ContextMenuItem>
-              <ContextMenuItem onSelect={() => void doReveal(entryPath)}>
-                {t("workbench.files.reveal")}
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onSelect={() => setDeleteTarget({ path: entryPath, isDir: entry.type === "dir" })}>
-                {t("workbench.files.delete")}
-              </ContextMenuItem>
+              {capabilities.rename ? (
+                <ContextMenuItem onSelect={() => setRenameTarget({ path: entryPath, name: entry.name })}>
+                  {t("workbench.files.rename")}
+                </ContextMenuItem>
+              ) : null}
+              {capabilities.reveal ? (
+                <ContextMenuItem onSelect={() => void doReveal(entryPath)}>
+                  {t("workbench.files.reveal")}
+                </ContextMenuItem>
+              ) : null}
+              {capabilities.remove && (capabilities.rename || capabilities.reveal) ? <ContextMenuSeparator /> : null}
+              {capabilities.remove ? (
+                <ContextMenuItem variant="destructive" onSelect={() => setDeleteTarget({ path: entryPath, isDir: entry.type === "dir" })}>
+                  {t("workbench.files.delete")}
+                </ContextMenuItem>
+              ) : null}
             </ContextMenuContent>
           </ContextMenu>
           {isOpen ? renderEntries(entryPath, depth + 1) : null}
@@ -309,22 +320,28 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
     );
   }
 
+  // 远程工作区把身份 `user@host:port` 摆在路径前面:同一屏里既能看本机目录也能看远端目录,
+  // 不写身份就分不清在动哪台机器(它不含凭据)。
+  const rootLabel = [workspace.sshTarget, workspace.root].filter(Boolean).join(" · ");
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-1.5">
-        <span className="min-w-0 flex-1 truncate font-mono text-mini text-muted-foreground" title={workspace.root}>
-          {workspace.root}
+        <span className="min-w-0 flex-1 truncate font-mono text-mini text-muted-foreground" title={rootLabel}>
+          {rootLabel}
         </span>
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          aria-label={t("workbench.files.agents_edit")}
-          title={t("workbench.files.agents_edit")}
-          onClick={() => void openAgentsDialog()}
-        >
-          <BookOpenText className="size-3.5" />
-        </Button>
+        {capabilities.agents ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={t("workbench.files.agents_edit")}
+            title={t("workbench.files.agents_edit")}
+            onClick={() => void openAgentsDialog()}
+          >
+            <BookOpenText className="size-3.5" />
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="icon-sm"
@@ -339,7 +356,14 @@ export function WorkspaceFilesPanel({ workspaceId }: { workspaceId: string }) {
           <RefreshCw className="size-3.5" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto py-1">{renderEntries("", 0)}</div>
+      {/* 绑定的设备/授权目录已不在设置里:树没有可浏览的对象,说清楚原因而不是留空屏。 */}
+      {!source ? (
+        <div className="flex items-start gap-2 border-b bg-warning/10 px-3 py-2 text-warning text-xs">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+          <span className="min-w-0 flex-1 leading-5">{t("workbench.files.ssh_binding_missing")}</span>
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-auto py-1">{source ? renderEntries("", 0) : null}</div>
 
       <Dialog open={renameTarget !== null} onOpenChange={(open) => { if (!open) setRenameTarget(null); }}>
         <DialogContent className="sm:max-w-sm">

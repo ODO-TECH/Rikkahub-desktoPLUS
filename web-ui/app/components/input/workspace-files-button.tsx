@@ -43,6 +43,7 @@ export function WorkspaceFilesButton({
       : !workbench.panel.payload.conversationId &&
         workbench.panel.payload.workspaceId === workspace?.id);
 
+  // 不设 title:文件树图标已自明,悬停文字注解属噪音(2026-10-26 用户反馈)。
   return (
     <Button
       type="button"
@@ -53,7 +54,6 @@ export function WorkspaceFilesButton({
         isOpen && "text-foreground",
         className,
       )}
-      title={workspace?.name ?? t("workbench.files.title")}
       aria-pressed={isOpen}
       onClick={() => {
         if (isOpen) {

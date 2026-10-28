@@ -28,11 +28,20 @@ import type {
 export interface AppEventMap {
   settings: Settings;
   memory: MemorySnapshot;
+  /** 记忆向量索引任务进度(特性 C);终态后订阅方自行重拉 status 取现算计数。 */
+  "memory-index": MemoryIndexEvent;
   app_errors_snapshot: AppErrorSnapshotEventDto;
   app_error: AppErrorPushEventDto;
   invalidate: ConversationListInvalidateEventDto;
   mcp_health: McpHealthSnapshotDto;
   provider_auth: ProviderAuthEventDto;
+}
+
+export interface MemoryIndexEvent {
+  phase: "running" | "done" | "error" | "idle";
+  done: number;
+  total: number;
+  message?: string;
 }
 
 /** 订阅供应商登录进度(方案 §4.3 三态卡片)。凭据永不下发——只载阶段/验证码/地址。 */
@@ -53,6 +62,7 @@ type AppEventName = keyof AppEventMap;
 const REPLAY_EVENTS: ReadonlySet<AppEventName> = new Set([
   "settings",
   "memory",
+  "memory-index",
   "app_errors_snapshot",
   "invalidate",
   "mcp_health",

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 
-import { Code2, Folder, FolderTree, ImagePlus, PanelRight } from "lucide-react";
+import { Code2, Folder, FolderTree, ImagePlus, PanelRight, SquareTerminal } from "lucide-react";
 
 import Markdown from "~/components/markdown/markdown";
 import { MediaStudioPanel } from "~/components/media-studio/media-studio-panel";
@@ -10,6 +10,7 @@ import { cn } from "~/lib/utils";
 
 import { getCodePreviewLanguage } from "./code-preview-language";
 import { ConversationFilesPanel } from "./conversation-files-panel";
+import { SshTerminalPanel } from "./ssh-terminal-panel";
 import { WorkspaceFilesPanel } from "./workspace-files-panel";
 import type { WorkbenchPanel } from "./workbench-context";
 
@@ -252,6 +253,17 @@ const PANEL_RENDERERS: Record<string, WorkbenchPanelRenderer> = {
       <MediaStudioPanel panel={panel} activeConversationId={activeConversationId} />
     ),
   },
+  // SSH 交互式终端:从远程文件面板的工具条打开,一条 WebSocket = 一条 PTY。
+  "ssh-terminal": {
+    render: (panel) => (
+      <SshTerminalPanel
+        deviceId={readStringField(panel.payload, "deviceId")}
+        dirId={readStringField(panel.payload, "dirId")}
+        label={readStringField(panel.payload, "label")}
+        root={readStringField(panel.payload, "root")}
+      />
+    ),
+  },
 };
 
 const TYPE_LABEL_KEYS: Record<string, string> = {
@@ -259,6 +271,7 @@ const TYPE_LABEL_KEYS: Record<string, string> = {
   "workspace-files": "workbench.type_labels.workspace_files",
   "code-preview": "workbench.type_labels.code_preview",
   "media-studio": "workbench.type_labels.media_studio",
+  "ssh-terminal": "workbench.type_labels.ssh_terminal",
 };
 
 const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
@@ -266,6 +279,7 @@ const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string; strok
   "workspace-files": Folder,
   "code-preview": Code2,
   "media-studio": ImagePlus,
+  "ssh-terminal": SquareTerminal,
 };
 
 export function WorkbenchHost({ panel, onClose, className, activeConversationId }: WorkbenchHostProps) {

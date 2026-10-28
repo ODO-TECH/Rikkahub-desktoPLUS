@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Folder, FolderOpen, FolderSearch, MessageSquare, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { Folder, FolderOpen, FolderSearch, MessageSquare, Pencil, Plus, Server, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "~/components/ui/button";
@@ -22,10 +22,14 @@ import {
 } from "~/components/ui/dropdown-menu";
 import { Input } from "~/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
+import { extractErrorMessage } from "~/lib/error";
 import { confirmDialog } from "~/stores/confirm-store";
 import {
   CreateFolderWorkspaceDialog,
+  CreateSshWorkspaceDialog,
+  SshBindingFields,
   WorkspaceTrustDialog,
+  useSshDeviceOptions,
 } from "~/components/workspace/workspace-create-dialogs";
 import api from "~/services/api";
 import { CHAT_CONTAINER, useContainerTabsStore, type ContainerKey } from "~/stores/container-tabs-store";
@@ -48,11 +52,16 @@ function navigateToContainer(key: ContainerKey, navigate: (to: string) => void) 
 
 export function ContainerPlusMenu() {
   const { t } = useTranslation("page");
+  // errors.<code> 在 common 命名空间(与 extractErrorMessage 同一条通道)。
+  const { t: tc } = useTranslation("common");
   const navigate = useNavigate();
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const refresh = useWorkspaceStore((state) => state.refresh);
   const activeTab = useContainerTabsStore((state) => state.activeTab);
   const [folderDialogOpen, setFolderDialogOpen] = React.useState(false);
+  // B6-①c:SSH 工作区创建对话框(绑定「拓展 › SSH」里的一条授权目录)。
+  const [sshDialogOpen, setSshDialogOpen] = React.useState(false);
+  const sshOptions = useSshDeviceOptions();
   // 信任门目标 + 拒绝语义:创建流拒绝=删除记录;重开已有未信任工作区拒绝=仅关门。
   const [trustTarget, setTrustTarget] = React.useState<{ workspace: WorkspaceDto; fromCreate: boolean } | null>(null);
   // R7 工作区管理:重命名对话框目标 + 输入值(提交 PATCH workspaces/:id)。
@@ -61,6 +70,9 @@ export function ContainerPlusMenu() {
   const [renameSaving, setRenameSaving] = React.useState(false);
   // B6-①b:编辑对话里 folder 型路径可重绑。renameRoot 是编辑中的路径草稿(初始=当前 root)。
   const [renameRoot, setRenameRoot] = React.useState("");
+  // B6-①c:ssh 型改的是绑定(设备/目录两个引用),不是路径——草稿同样初始=当前绑定。
+  const [renameDeviceId, setRenameDeviceId] = React.useState("");
+  const [renameDirId, setRenameDirId] = React.useState("");
 
   const createManagedWorkspace = React.useCallback(async () => {
     try {
@@ -123,9 +135,12 @@ export function ContainerPlusMenu() {
   }, [navigate]);
 
   // B6-①b:打开编辑对话时同步名称与路径草稿(folder 型路径可重绑)。
+  // B6-①c:ssh 型同步绑定草稿(缺失时留空串,SshBindingFields 的下拉即回到占位)。
   const openEditDialog = React.useCallback((workspace: WorkspaceDto) => {
     setRenameValue(workspace.name);
     setRenameRoot(workspace.root);
+    setRenameDeviceId(workspace.sshDeviceId ?? "");
+    setRenameDirId(workspace.sshDirId ?? "");
     setRenameTarget(workspace);
   }, []);
 
@@ -145,9 +160,15 @@ export function ContainerPlusMenu() {
     const name = renameValue.trim();
     // B6-①b:folder 型且路径被改动 → 一并提交 root(后端重绑 + 信任门重置)。
     const root = renameTarget.type === "folder" ? renameRoot.trim() : "";
+    // B6-①c:ssh 型两个引用被改动 → 提交绑定(后端校验 1:1 与可用性;信任门不动)。
+    const bindingChanged =
+      renameTarget.type === "ssh" &&
+      !!renameDeviceId &&
+      !!renameDirId &&
+      (renameDeviceId !== renameTarget.sshDeviceId || renameDirId !== renameTarget.sshDirId);
     const nameChanged = !!name && name !== renameTarget.name;
     const rootChanged = renameTarget.type === "folder" && !!root && root !== renameTarget.root;
-    if (!nameChanged && !rootChanged) {
+    if (!nameChanged && !rootChanged && !bindingChanged) {
       setRenameTarget(null);
       return;
     }
@@ -156,15 +177,18 @@ export function ContainerPlusMenu() {
       await api.patch<{ workspace: WorkspaceDto }>(`workspaces/${renameTarget.id}`, {
         ...(nameChanged ? { name } : {}),
         ...(rootChanged ? { root } : {}),
+        ...(bindingChanged ? { sshDeviceId: renameDeviceId, sshDirId: renameDirId } : {}),
       });
       await refresh();
       setRenameTarget(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t(rootChanged ? "workspace.menu.rebind_failed" : "workspace.menu.rename_failed"));
+      // extractErrorMessage 而非 err.message:换绑失败带 errorCode(ssh.binding_*),
+      // 直接抛 message 会把后端的英文原因原样糊在中文界面上。
+      toast.error(extractErrorMessage(err, t(rootChanged || bindingChanged ? "workspace.menu.rebind_failed" : "workspace.menu.rename_failed")));
     } finally {
       setRenameSaving(false);
     }
-  }, [refresh, renameTarget, renameValue, renameRoot, t]);
+  }, [refresh, renameTarget, renameValue, renameRoot, renameDeviceId, renameDirId, t]);
 
   return (
     <>
@@ -184,7 +208,7 @@ export function ContainerPlusMenu() {
             <>
               <DropdownMenuLabel>{t("workspace.menu.existing")}</DropdownMenuLabel>
               {workspaces.map((workspace) => {
-                const WsIcon = workspace.type === "folder" ? FolderOpen : Folder;
+                const WsIcon = workspace.type === "folder" ? FolderOpen : workspace.type === "ssh" ? Server : Folder;
                 return (
                   <DropdownMenuItem
                     key={workspace.id}
@@ -197,14 +221,23 @@ export function ContainerPlusMenu() {
                       <span className="flex items-center gap-1.5 truncate">
                         <span className="truncate">{workspace.name}</span>
                         {workspace.status === "missing" ? (
-                          <span className="flex shrink-0 items-center gap-0.5 rounded bg-warning/15 px-1 py-px text-micro font-medium text-warning">
-                            <TriangleAlert className="size-2.5" strokeWidth={2} />
-                            {t("workspace.menu.missing_badge")}
-                          </span>
+                          // 失效原因带码:远端绑定的四类原因(设备没了/目录取消授权/路径非法/
+                          // 主机密钥未确认)下一步动作完全不同,只给「失效」徽标等于没说。
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex shrink-0 items-center gap-0.5 rounded bg-warning/15 px-1 py-px text-micro font-medium text-warning">
+                                <TriangleAlert className="size-2.5" strokeWidth={2} />
+                                {t(workspace.type === "ssh" ? "workspace.menu.missing_badge_ssh" : "workspace.menu.missing_badge")}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {workspace.unavailableErrorCode ? tc(`errors.${workspace.unavailableErrorCode}`) : workspace.unavailableReason}
+                            </TooltipContent>
+                          </Tooltip>
                         ) : null}
                       </span>
                       <span className="truncate text-mini leading-4 text-[var(--ds-text-tertiary)]">
-                        {workspace.root}
+                        {workspace.type === "ssh" && workspace.sshTarget ? `${workspace.sshTarget} · ${workspace.root}` : workspace.root}
                       </span>
                     </span>
                     <span
@@ -264,6 +297,15 @@ export function ContainerPlusMenu() {
               </div>
             </div>
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setSshDialogOpen(true)}>
+            <Server className="size-4" />
+            <div className="min-w-0">
+              <div className="text-sm">{t("workspace.create.ssh")}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {t("workspace.create.ssh_hint")}
+              </div>
+            </div>
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={openChatContainer}>
             <MessageSquare className="size-4" />
             <div className="min-w-0">
@@ -305,7 +347,7 @@ export function ContainerPlusMenu() {
             </div>
             <div className="space-y-1.5">
               <label className="text-compact font-medium text-[var(--ds-text-secondary)]">
-                {t("workspace.menu.path_label")}
+                {renameTarget?.type === "ssh" ? t("workspace.ssh.binding_label") : t("workspace.menu.path_label")}
               </label>
               {renameTarget?.type === "folder" ? (
                 <>
@@ -332,6 +374,30 @@ export function ContainerPlusMenu() {
                     <div className="text-xs text-muted-foreground">{t("workspace.menu.rebind_notice")}</div>
                   ) : null}
                 </>
+              ) : renameTarget?.type === "ssh" ? (
+                // B6-①c:ssh 型没有"路径输入框"可重绑——边界只能改成「拓展 › SSH」里已授权的
+                // 另一条目录(后端拒 1:1 冲突与不可用绑定)。这里也不给"在资源管理器中显示":
+                // root 是远端 POSIX 路径,本机 explorer 打不开它。
+                <div className="space-y-2">
+                  {renameTarget.status === "missing" ? (
+                    <div className="flex items-start gap-2 rounded-[var(--ds-radius-md)] bg-warning/10 px-3 py-2 text-xs text-warning">
+                      <TriangleAlert className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+                      <span>
+                        {renameTarget.unavailableErrorCode
+                          ? tc(`errors.${renameTarget.unavailableErrorCode}`)
+                          : renameTarget.unavailableReason ?? t("workspace.menu.missing_hint")}
+                      </span>
+                    </div>
+                  ) : null}
+                  <SshBindingFields
+                    options={sshOptions}
+                    deviceId={renameDeviceId}
+                    dirId={renameDirId}
+                    onDeviceChange={setRenameDeviceId}
+                    onDirChange={setRenameDirId}
+                    disabled={renameSaving}
+                  />
+                </div>
               ) : (
                 <button
                   type="button"
@@ -360,6 +426,15 @@ export function ContainerPlusMenu() {
         open={folderDialogOpen}
         onOpenChange={setFolderDialogOpen}
         onCreated={(workspace) => setTrustTarget({ workspace, fromCreate: true })}
+      />
+      {/* ssh 型创建即信任(登记目录 + 确认主机密钥已是两次知情同意),直接开容器。 */}
+      <CreateSshWorkspaceDialog
+        open={sshDialogOpen}
+        onOpenChange={setSshDialogOpen}
+        onCreated={(workspace) => {
+          useContainerTabsStore.getState().openContainer(workspace.id);
+          navigateToContainer(workspace.id, navigate);
+        }}
       />
       <WorkspaceTrustDialog
         workspace={trustTarget?.workspace ?? null}

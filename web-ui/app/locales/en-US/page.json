@@ -58,6 +58,35 @@
       "to_dark": "Switch to dark mode"
     },
     "compaction_divider": "Context compacted",
+    "compaction_cut_divider": "Earlier messages compacted into a summary",
+    "context_warning": "Context is nearly full ({{percent}}% used). Click to compact the conversation",
+    "compaction_detail": {
+      "title": "Compaction record",
+      "description": "Messages before the cut stay in the local conversation; they are simply no longer sent to the model.",
+      "compressed_at": "Compacted {{time}}",
+      "tokens_before": "Source text",
+      "summary_tokens": "Current summary",
+      "summary_delta": "Summary change",
+      "net_saved": "About {{tokens}} tokens saved this time",
+      "net_grew": "About {{tokens}} tokens added this time",
+      "cut_anchor": "The model resumes reading verbatim here",
+      "cut_empty": "This message has no displayable text",
+      "summary_title": "Summary",
+      "copy_summary": "Copy summary",
+      "copied_summary": "Summary copied",
+      "retained_note": "Messages before the cut remain in the local conversation and search index; they are just no longer sent to the model. The summary is the background for future turns.",
+      "close": "Close",
+      "open_hint": "View compaction record"
+    },
+    "compaction_card": {
+      "title": "{{count}} earlier messages compacted",
+      "size": "{{before}} → {{after}} tokens",
+      "candidates": "{{count}} memory candidates to review",
+      "expand": "Show originals",
+      "collapse": "Fold originals",
+      "note": "Originals stay in the local conversation; they are no longer sent to the model",
+      "detail": "Details"
+    },
     "compress": {
       "busy": "A compression is already in progress, please wait",
       "error": {
@@ -68,8 +97,16 @@
       "dialog_title": "Compress conversation history",
       "dialog_description": "Uses the context compression model from Scene models to summarize earlier messages while keeping recent ones.",
       "workspace_description": "Compacts the workspace engine's working memory: the current chat model summarizes earlier execution history. Your message history in the UI stays intact, and the next generation uses the compacted context.",
-      "target_tokens": "Target tokens",
+      "manual_hint": "Manual compression can run at any time — no need to wait until the context is nearly full; automatic compression only kicks in at the threshold. Original messages stay available to expand.",
+      "ratio": "Compression ratio",
+      "ratio_hint": "The summary keeps about {{kept}}% of the current context (~{{target}} tokens out of ~{{context}}).",
+      "ratio_hint_no_context": "No context usage is available yet; the server default summary length will be used.",
+      "ratio_warning_title": "High compression can cause hallucinations",
+      "ratio_warning_description": "Above 65%, the summary keeps less than 35% of the original detail. Missing details can make the model invent facts in later answers.",
+      "ratio_warning_confirm": "Compress at {{ratio}}%",
+      "ratio_warning_cancel": "Back to 65%",
       "keep_recent": "Keep recent messages",
+      "keep_recent_hint": "Any count works (e.g. 8 or 100). 0 compresses as much as possible while still keeping 1 message as the cut anchor.",
       "additional_prompt": "Additional requirements",
       "additional_placeholder": "Optional, e.g. keep character relationships, key parameters, and to-dos",
       "cancel": "Cancel",
@@ -164,7 +201,25 @@
       "browse": "Browse…",
       "cancel": "Cancel",
       "confirm": "Create",
-      "pick_failed": "Failed to open directory picker"
+      "pick_failed": "Failed to open directory picker",
+      "ssh": "Connect a remote directory (SSH)",
+      "ssh_hint": "Bind to a remote directory already authorized under Extensions › SSH",
+      "ssh_dialog_desc": "The workspace only references one directory registered under Extensions › SSH — host, port and credentials live there and cannot be changed here.",
+      "ssh_name_label": "Workspace name (optional)",
+      "ssh_name_placeholder": "Defaults to the remote directory name"
+    },
+    "ssh": {
+      "binding_label": "Remote binding",
+      "none_configured": "There is no SSH device to bind yet. Add a device under Settings › Extensions › SSH and register at least one authorized remote directory for it.",
+      "open_settings": "Open Settings › Extensions › SSH",
+      "device": "SSH device",
+      "device_placeholder": "Pick a device…",
+      "dir": "Authorized remote directory",
+      "dir_placeholder": "Pick a directory…",
+      "host_key_unconfirmed": "This server's host key has not been confirmed yet — confirm it before this workspace can be used. Click to open Settings.",
+      "capability_hint": "A remote workspace mounts only the read and bash tools: the AI can read files inside the boundary and run commands as the SSH user; editing files goes through bash (same as the mobile app — there are no write/edit tools). Commands are not confined to that directory, so only bind directories you really mean to hand over.",
+      "missing_title": "Remote binding is unavailable",
+      "missing_desc": "The device or authorized directory behind this workspace is gone, so the AI cannot use it right now. Your conversations are kept — bind another authorized directory and it works again."
     },
     "trust": {
       "title": "Trust this folder?",
@@ -177,11 +232,9 @@
       "failed": "Operation failed"
     },
     "empty": {
-      "managed_intro": "Files here are maintained by you and the AI together — let it read, write and run commands to turn ideas into results",
+      "managed_intro": "Files here are co-maintained by you and the AI (^^;)",
       "folder_intro": "The AI can read, write and run commands in this directory. Start with a single sentence",
-      "example_1": "Look around this directory and give me a structural overview",
-      "example_2": "Create a TODO.md and break my upcoming tasks into a checklist",
-      "example_3": "Organize what I paste next into a note and save it as a file",
+      "ssh_intro": "The AI can read this remote machine and run commands on it",
       "missing_title": "Project folder not found",
       "missing_desc": "The folder this workspace is bound to no longer exists or was moved. The AI can't read or write files until you rebind it to a folder (its conversations are kept as-is).",
       "missing_rebind": "Rebind folder"
@@ -203,6 +256,7 @@
       "name_label": "Workspace Name",
       "path_label": "Path",
       "missing_badge": "Folder missing",
+      "missing_badge_ssh": "Binding unavailable",
       "missing_hint": "This folder can't be found. Rebind to a new folder (trust authorization is required again after rebinding)",
       "rebind": "Rebind",
       "rebind_failed": "Failed to rebind workspace",

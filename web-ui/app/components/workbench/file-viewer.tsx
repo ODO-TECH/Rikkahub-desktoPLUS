@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, FileWarning, Loader2, PencilLine, RefreshCw, Save, X } from "lucide-react";
+import { Download, ExternalLink, FileWarning, Loader2, PencilLine, RefreshCw, Save, X } from "lucide-react";
 
 import { buildMermaidPreviewDocument, HighlightedCode } from "~/components/markdown/code-block";
 import { languageForPath } from "~/components/markdown/code-language";
@@ -8,16 +8,22 @@ import Markdown from "~/components/markdown/markdown";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
-import { appendWebAuthQuery } from "~/services/api";
 
-import { formatSize, workspaceRawFileUrl, type OpenFileView } from "./conversation-files-types";
+import { formatSize, type OpenFileView } from "./conversation-files-types";
+import { rawFileUrl, type WorkspaceFileSource } from "./workspace-file-source";
 
 // 文件查看器/编辑器(0.0.3 Feature A):只读预览(文本/图片/音视频/二进制)、
 // Ctrl+S 保存、外部改动冲突横幅。所有 I/O 由面板持有,本组件纯展示 + 回调。
+//
+// 文件可能来自本机工作区,也可能来自 SSH 工作区绑定的远端目录——组件只拿到 source
+// 与「这个源能不能定位/下载」,不自己拼路由:远程没有宿主文件管理器,故 canReveal
+// 为假时连按钮都不画;PDF 内联走各自域的 raw 路由(本地限 .pdf,远程按授权目录裁)。
 
 interface FileViewerProps {
   file: OpenFileView;
-  workspaceId: string | null;
+  source: WorkspaceFileSource | null;
+  canReveal: boolean;
+  canDownload: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onDraftChange: (text: string) => void;
@@ -25,6 +31,7 @@ interface FileViewerProps {
   onReload: () => void;
   onOverwrite: () => void;
   onReveal: () => void;
+  onDownload: () => void;
 }
 
 function MediaPreview({ file }: { file: OpenFileView }) {
@@ -84,7 +91,9 @@ function MediaPreview({ file }: { file: OpenFileView }) {
 
 export function FileViewer({
   file,
-  workspaceId,
+  source,
+  canReveal,
+  canDownload,
   onStartEdit,
   onCancelEdit,
   onDraftChange,
@@ -92,6 +101,7 @@ export function FileViewer({
   onReload,
   onOverwrite,
   onReveal,
+  onDownload,
 }: FileViewerProps) {
   const { t } = useTranslation();
   const editing = file.draft !== null;
@@ -119,10 +129,9 @@ export function FileViewer({
   );
   const gutterRef = React.useRef<HTMLDivElement | null>(null);
 
-  // 工作区 PDF 走领域层的 files/raw(仅 .pdf 放行),iframe 需要 web-auth query。
-  const pdfUrl = workspaceId && file.path && isPdf
-    ? appendWebAuthQuery(workspaceRawFileUrl(workspaceId, file.path))
-    : null;
+  // 工作区/远端 PDF 走各自域的 raw 路由(本地仅 .pdf 放行,远端按授权目录裁),
+  // iframe 是浏览器直连,所以取址时补 web-auth query。
+  const pdfUrl = source && file.path && isPdf ? rawFileUrl(source, file.path) : null;
 
   const editBlockedReason = file.edit && !file.edit.editable
     ? file.edit.reason === "too_large"
@@ -140,9 +149,14 @@ export function FileViewer({
         </span>
         {dirty ? <span className="shrink-0 rounded-sm bg-[var(--ds-brand-primary)]/12 px-1.5 py-0.5 text-micro text-[var(--ds-brand-primary)]">{t("workbench.files.unsaved")}</span> : null}
         {size !== null ? <span className="shrink-0 text-micro text-muted-foreground">{formatSize(size)}</span> : null}
-        {file.kind === "workspace" && workspaceId ? (
+        {file.kind === "workspace" && canReveal ? (
           <Button type="button" size="icon-sm" variant="ghost" onClick={onReveal} aria-label={t("workbench.files.reveal")} title={t("workbench.files.reveal")}>
             <ExternalLink className="size-3.5" />
+          </Button>
+        ) : null}
+        {file.kind === "workspace" && canDownload ? (
+          <Button type="button" size="icon-sm" variant="ghost" onClick={onDownload} aria-label={t("workbench.files.download")} title={t("workbench.files.download")}>
+            <Download className="size-3.5" />
           </Button>
         ) : null}
         {file.kind === "workspace" ? (

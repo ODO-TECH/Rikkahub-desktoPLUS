@@ -28,6 +28,10 @@ const NOT_SEARCHABLE: Record<string, string> = {
   "settings:mcp.entries_count": "世界书条目列表的计数标题,带动态数字",
   "settings:mcp.quick.content": "快捷消息的正文:用户内容字段",
   "settings:mcp.enabled": "模式注入高级区的「启用」:通用词,搜索无意义;详情头同名开关已可见",
+  // 主机密钥卡片的两态标题:同一时刻只渲染其一(已信任 / 尚未确认),定位统一交给分组标题
+  // ssh.host_key——登记任何一个都会让另一个状态下的搜索结果找不到行。
+  "settings:ssh.host_key_trusted": "ssh.host_key 卡片的已信任态标题,带动态算法名,与分组重复",
+  "settings:ssh.host_key_untrusted": "ssh.host_key 卡片的未确认态标题,与分组重复",
 };
 
 function sourceFiles(dir: string): string[] {
@@ -205,7 +209,7 @@ describe("打分", () => {
 
   test("面包屑命中次于标题命中", () => {
     const results = searchSettings("记忆", zhT);
-    const byBreadcrumb = results.find((r) => r.title === "AI 写入策略");
+    const byBreadcrumb = results.find((r) => r.title === "新助手默认写入范围");
     expect(byBreadcrumb?.score).toBe(1);
     expect(results[0].score).toBeGreaterThan(1);
   });

@@ -34,13 +34,19 @@ import {
   type ConversationFilesResponse,
   type WorkspaceFileEntry,
 } from "./conversation-files-types";
+import type { FileSourceCapabilities } from "./workspace-file-source";
 
 // 侧边栏的来源列表(0.0.3 Feature A):本次改动 / 工作区树 / 附件 / 产出。
 // 纯展示 + 回调,数据与生命周期归 conversation-files-panel。
+//
+// capabilities 决定右键菜单里有哪些动作:本地能改名/在文件管理器里定位,远程只能
+// 上传/下载/删除(SFTP 没有改名,也没有宿主文件管理器)。这里只隐藏入口,
+// 真正的能力裁定在 workspace-file-source——组件不必知道文件在哪个源上。
 
 export interface FileSourceListProps {
   source: "changes" | "files" | "attachments" | "outputs";
   workspaceRoot: string;
+  capabilities: FileSourceCapabilities;
   conversationFiles: ConversationFilesResponse | null;
   loading: boolean;
   tree: Record<string, WorkspaceFileEntry[] | undefined>;
@@ -50,6 +56,8 @@ export interface FileSourceListProps {
   onOpenMedia: (item: ConversationFileItem) => void;
   onRequestRename: (path: string, name: string) => void;
   onRequestDelete: (path: string, isDir: boolean) => void;
+  onRequestUpload: (path: string) => void;
+  onDownload: (path: string) => void;
   onReveal: (path: string) => void;
   onRefresh: () => void;
 }
@@ -70,6 +78,7 @@ function changeIcon(change: ConversationChangeItem) {
 export function FileSourceList({
   source,
   workspaceRoot,
+  capabilities,
   conversationFiles,
   loading,
   tree,
@@ -79,6 +88,8 @@ export function FileSourceList({
   onOpenMedia,
   onRequestRename,
   onRequestDelete,
+  onRequestUpload,
+  onDownload,
   onReveal,
   onRefresh,
 }: FileSourceListProps) {
@@ -98,7 +109,11 @@ export function FileSourceList({
     }
     return entries.map((entry) => {
       const entryPath = joinRel(relPath, entry.name);
-      const isOpen = entry.type === "dir" && expanded.has(entryPath);
+      const isDir = entry.type === "dir";
+      const isOpen = isDir && expanded.has(entryPath);
+      // 删除之前的那组动作:全被能力裁掉时连分隔线都不留,否则菜单里会挂一根孤零零的横线。
+      const hasTopActions =
+        (isDir && capabilities.upload) || (!isDir && capabilities.download) || capabilities.rename || capabilities.reveal;
       return (
         <React.Fragment key={entryPath}>
           <ContextMenu>
@@ -111,11 +126,11 @@ export function FileSourceList({
                   event.dataTransfer.setData("text/plain", entryPath);
                   event.dataTransfer.effectAllowed = "copy";
                 }}
-                onClick={() => (entry.type === "dir" ? onToggleDir(entryPath) : onOpenWorkspaceFile(entryPath))}
+                onClick={() => (isDir ? onToggleDir(entryPath) : onOpenWorkspaceFile(entryPath))}
                 className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs hover:bg-accent"
                 style={{ paddingLeft: depth * 14 + 8 }}
               >
-                {entry.type === "dir" ? (
+                {isDir ? (
                   <>
                     {isOpen ? <ChevronDown className="size-3 shrink-0 opacity-60" /> : <ChevronRight className="size-3 shrink-0 opacity-60" />}
                     {isOpen ? <FolderOpen className="size-3.5 shrink-0 text-amber-500" /> : <Folder className="size-3.5 shrink-0 text-amber-500" />}
@@ -129,22 +144,38 @@ export function FileSourceList({
                   </>
                 )}
                 <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                {entry.type === "file" ? (
+                {!isDir ? (
                   <span className="shrink-0 text-micro text-muted-foreground/70">{formatSize(entry.size)}</span>
                 ) : null}
               </button>
             </ContextMenuTrigger>
             <ContextMenuContent>
-              <ContextMenuItem onSelect={() => onRequestRename(entryPath, entry.name)}>
-                {t("workbench.files.rename")}
-              </ContextMenuItem>
-              <ContextMenuItem onSelect={() => onReveal(entryPath)}>
-                {t("workbench.files.reveal")}
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onSelect={() => onRequestDelete(entryPath, entry.type === "dir")}>
-                {t("workbench.files.delete")}
-              </ContextMenuItem>
+              {isDir && capabilities.upload ? (
+                <ContextMenuItem onSelect={() => onRequestUpload(entryPath)}>
+                  {t("workbench.files.upload_here")}
+                </ContextMenuItem>
+              ) : null}
+              {!isDir && capabilities.download ? (
+                <ContextMenuItem onSelect={() => onDownload(entryPath)}>
+                  {t("workbench.files.download")}
+                </ContextMenuItem>
+              ) : null}
+              {capabilities.rename ? (
+                <ContextMenuItem onSelect={() => onRequestRename(entryPath, entry.name)}>
+                  {t("workbench.files.rename")}
+                </ContextMenuItem>
+              ) : null}
+              {capabilities.reveal ? (
+                <ContextMenuItem onSelect={() => onReveal(entryPath)}>
+                  {t("workbench.files.reveal")}
+                </ContextMenuItem>
+              ) : null}
+              {capabilities.remove && hasTopActions ? <ContextMenuSeparator /> : null}
+              {capabilities.remove ? (
+                <ContextMenuItem variant="destructive" onSelect={() => onRequestDelete(entryPath, isDir)}>
+                  {t("workbench.files.delete")}
+                </ContextMenuItem>
+              ) : null}
             </ContextMenuContent>
           </ContextMenu>
           {isOpen ? renderEntries(entryPath, depth + 1) : null}

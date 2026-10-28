@@ -1,6 +1,7 @@
 import * as React from "react";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Pin } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "~/lib/utils";
 import type { UIMessageAnnotation, UrlCitationAnnotation } from "~/types";
@@ -29,6 +30,7 @@ export function ChatMessageAnnotationsRow({
   annotations?: UIMessageAnnotation[];
   alignRight: boolean;
 }) {
+  const { t } = useTranslation("message");
   const citations = React.useMemo(
     () =>
       (annotations ?? []).filter(
@@ -36,8 +38,11 @@ export function ChatMessageAnnotationsRow({
       ),
     [annotations],
   );
+  // 阶段四:钉住标记是持久状态而不是"本帧附加信息",所以始终可见(与引用胶囊同排),
+  // 让用户一眼能分辨"这条在压缩时会原样保留"。
+  const pinned = (annotations ?? []).some((annotation) => annotation.type === "pinned");
 
-  if (citations.length === 0) {
+  if (citations.length === 0 && !pinned) {
     return null;
   }
 
@@ -48,6 +53,15 @@ export function ChatMessageAnnotationsRow({
         alignRight ? "justify-end" : "justify-start",
       )}
     >
+      {pinned ? (
+        <span
+          className="inline-flex max-w-full items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary"
+          title={t("chat_message.pin_hint")}
+        >
+          <Pin className="size-3" />
+          {t("chat_message.pinned")}
+        </span>
+      ) : null}
       {citations.map((annotation, index) => {
         const label = getCitationLabel(annotation);
 

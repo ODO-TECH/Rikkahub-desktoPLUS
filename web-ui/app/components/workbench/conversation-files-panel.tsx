@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { BookOpenText, FolderTree, Loader2, RefreshCw } from "lucide-react";
+import { BookOpenText, FolderTree, Loader2, RefreshCw, SquareTerminal, TriangleAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "~/components/ui/button";
@@ -28,9 +28,7 @@ import {
   resolveWorkspaceFilePath,
   type ConversationFileItem,
   type ConversationFilesResponse,
-  type FilePreview,
   type OpenFileView,
-  type WorkspaceEditableContent,
   type WorkspaceFileEditInfo,
   type WorkspaceFileEntry,
 } from "./conversation-files-types";
@@ -44,12 +42,28 @@ import {
 import { FileSourceList } from "./file-source-list";
 import { FileTabs } from "./file-tabs";
 import { FileViewer } from "./file-viewer";
+import {
+  capabilitiesOf,
+  downloadFileUrl,
+  listDir,
+  loadEditable,
+  loadPreview,
+  removeEntry,
+  saveText,
+  uploadFile,
+  useWorkspaceFileSource,
+} from "./workspace-file-source";
 import { useOptionalWorkbench } from "./workbench-context";
 
 // 会话文件侧边栏(0.0.3 Feature A)——Workbench 面板类型 "conversation-files"。
 // 四个来源:本次改动(write/edit 工具命中) / 工作区文件树 / 附件 / 产出。
 // 支持预览、就地编辑(Ctrl+S、etag 冲突保护、EOL/BOM 保留)与多文件标签。
 // 数据即取即用;边界校验/原子写全在服务端,前端只做展示与意图表达。
+//
+// SSH 工作区走同一套组件:文件的来路由 workspace-file-source 按工作区 type 分派
+// (本地 workspaces/<id>/files* ↔ 远程 ssh/files*),能力差异(不能改名/定位/AGENTS.md,
+// 可以上传/下载/开终端)由 capabilitiesOf 一处裁定,组件只按它隐藏入口。
+// 「本次改动」在远程侧恒为空(AI 只有 read 与 bash,没有 write/edit),因此整个 tab 不出现。
 
 type Source = "changes" | "files" | "attachments" | "outputs";
 
@@ -105,14 +119,22 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   const workspace = useWorkspaceStore((state) =>
     state.workspaces.find((item) => item.id === resolvedWorkspaceId),
   );
+  // 文件面的唯一分派点:本地走 workspaces/<id>/files*,SSH 走 ssh/files*。
+  // null = 没有可浏览的文件面(工作区不在 store 里,或 ssh 绑定的设备/目录已被删掉)。
+  const fileSource = useWorkspaceFileSource(workspace);
+  const capabilities = capabilitiesOf(fileSource);
+  const isRemote = fileSource?.kind === "remote";
   const [loadingConversationFiles, setLoadingConversationFiles] = React.useState(false);
-  const [source, setSource] = React.useState<Source>(open?.path ? "files" : "changes");
+  const [source, setSource] = React.useState<Source>(open?.path ? "files" : isRemote ? "files" : "changes");
   const [tree, setTree] = React.useState<Record<string, WorkspaceFileEntry[] | undefined>>({});
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set([""]));
   const [files, setFiles] = React.useState<OpenFileView[]>([]);
   const [activeKey, setActiveKey] = React.useState<string | null>(null);
   const [renameTarget, setRenameTarget] = React.useState<{ path: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<{ path: string; isDir: boolean } | null>(null);
+  // 上传目标目录(相对授权目录):null=未选文件。远程专属,本地没有这条路由。
+  const [uploadTarget, setUploadTarget] = React.useState<string | null>(null);
+  const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
   const [agentsDialog, setAgentsDialog] = React.useState<{ data: AgentsFileState | null } | null>(null);
   const [agentsDraft, setAgentsDraft] = React.useState("");
   const [agentsSaving, setAgentsSaving] = React.useState(false);
@@ -138,7 +160,6 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   }, [workbench]);
 
   const effectiveWorkspaceId = workspace?.id ?? workspaceId ?? null;
-  const workspaceRoot = workspace?.root ?? "";
   const activeFile = files.find((item) => item.key === activeKey) ?? null;
   // 未保存草稿的暂存作用域:面板会随会话切换卸载,草稿靠模块级 store 渡过去。
   // 会话优先(同一工作区里不同会话的草稿互不串),纯工作区面板用 w: 前缀。
@@ -201,25 +222,23 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   // ── 工作区文件树 ──────────────────────────────────────────────
   const loadDir = React.useCallback(
     async (relPath: string) => {
-      if (!effectiveWorkspaceId) return;
+      if (!fileSource) return;
       try {
-        const res = await api.get<{ entries: WorkspaceFileEntry[] }>(
-          `workspaces/${effectiveWorkspaceId}/files?path=${encodeURIComponent(relPath)}`,
-        );
-        setTree((prev) => ({ ...prev, [relPath]: res.entries }));
+        const entries = await listDir(fileSource, relPath);
+        setTree((prev) => ({ ...prev, [relPath]: entries }));
       } catch (err) {
         toast.error(extractErrorMessage(err, t("workbench.files.failed")));
       }
     },
-    [effectiveWorkspaceId, t],
+    [fileSource, t],
   );
 
   React.useEffect(() => {
-    if (!effectiveWorkspaceId) return;
+    if (!fileSource) return;
     setTree({});
     setExpanded(new Set([""]));
     void loadDir("");
-  }, [effectiveWorkspaceId, loadDir]);
+  }, [fileSource, loadDir]);
 
   const toggleDir = (relPath: string) => {
     setExpanded((prev) => {
@@ -243,14 +262,12 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   // ── 打开/加载文件 ────────────────────────────────────────────
   const fetchPreview = React.useCallback(
     async (view: OpenFileView) => {
-      if (!effectiveWorkspaceId || !view.path) return;
+      if (!fileSource || !view.path) return;
       updateFile(view.key, { loading: true, error: null });
       try {
-        const res = await api.get<{ preview: FilePreview }>(
-          `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}`,
-        );
+        const preview = await loadPreview(fileSource, view.path);
         updateFile(view.key, {
-          preview: res.preview,
+          preview,
           loading: false,
           edit: null,
           draft: null,
@@ -261,18 +278,16 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         updateFile(view.key, { loading: false, error: extractErrorMessage(err, t("workbench.files.failed")) });
       }
     },
-    [effectiveWorkspaceId, t, updateFile],
+    [fileSource, t, updateFile],
   );
 
   /** 进入编辑。若该文件有跨会话暂存的草稿,恢复它;磁盘在草稿之后又变过则亮冲突横幅
    *  (savedText/etag 取最新磁盘值,保存走覆盖或重新加载,不会静默吞掉别人的修改)。 */
   const startEdit = React.useCallback(
     async (view: OpenFileView) => {
-      if (!effectiveWorkspaceId || !view.path) return;
+      if (!fileSource || !view.path) return;
       try {
-        const res = await api.get<WorkspaceEditableContent>(
-          `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}&mode=edit`,
-        );
+        const res = await loadEditable(fileSource, view.path);
         if (!res.edit.editable) {
           if (draftScope) clearFileDraft(draftScope, view.path);
           updateFile(view.key, { edit: res.edit, loading: false });
@@ -302,7 +317,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         updateFile(view.key, { loading: false, error: extractErrorMessage(err, t("workbench.files.failed")) });
       }
     },
-    [draftScope, effectiveWorkspaceId, t, updateFile],
+    [draftScope, fileSource, t, updateFile],
   );
 
   const openWorkspaceFile = React.useCallback(
@@ -374,22 +389,17 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   const saveFile = React.useCallback(
     async (key: string, options?: { force?: boolean }) => {
       const view = filesRef.current.find((item) => item.key === key);
-      if (!view || view.draft === null || !view.path || !effectiveWorkspaceId) return;
+      if (!view || view.draft === null || !view.path || !fileSource) return;
       updateFile(key, { saving: true, conflict: false, error: null });
       try {
         let baseEtag = view.edit?.etag ?? null;
         if (options?.force) {
-          // 覆盖保存:先取磁盘当前 etag(不改草稿),再用它提交。
-          const latest = await api.get<WorkspaceEditableContent>(
-            `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}&mode=edit`,
-          );
+          // 覆盖保存:先取磁盘当前 etag(不改草稿),再用它提交。只有本地路由有条件写。
+          const latest = await loadEditable(fileSource, view.path);
           baseEtag = latest.edit.etag;
         }
         const content = view.draft;
-        const res = await api.put<{ etag: string; size: number; modifiedAt: number }>(
-          `workspaces/${effectiveWorkspaceId}/files/content?path=${encodeURIComponent(view.path)}`,
-          { content, baseEtag, eol: view.edit?.eol ?? "\n" },
-        );
+        const res = await saveText(fileSource, view.path, content, baseEtag, view.edit?.eol ?? "\n");
         updateFile(key, {
           draft: null,
           savedText: content,
@@ -410,7 +420,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         toast.error(extractErrorMessage(err, t("workbench.files.failed")));
       }
     },
-    [draftScope, effectiveWorkspaceId, reloadParentOf, t, updateFile],
+    [draftScope, fileSource, reloadParentOf, t, updateFile],
   );
 
   /** 编辑区输入:同步组件 state 与跨会话暂存。回到原文等于放弃改动,直接清暂存。 */
@@ -499,7 +509,8 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   };
 
   const doRename = async (newName: string) => {
-    if (!renameTarget || !effectiveWorkspaceId || !newName.trim() || newName === renameTarget.name) {
+    // 改名只有本地有:SFTP 层没实现远端重命名(能力表把它关掉了,这里再兜一道)。
+    if (!renameTarget || !effectiveWorkspaceId || !capabilities.rename || !newName.trim() || newName === renameTarget.name) {
       setRenameTarget(null);
       return;
     }
@@ -516,10 +527,10 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   };
 
   const doDelete = async () => {
-    if (!deleteTarget || !effectiveWorkspaceId) return;
+    if (!deleteTarget || !fileSource || !capabilities.remove) return;
     const target = deleteTarget;
     try {
-      await api.delete(`workspaces/${effectiveWorkspaceId}/files?path=${encodeURIComponent(target.path)}`);
+      await removeEntry(fileSource, target.path, target.isDir);
       closeWorkspaceTabs(target.path);
       reloadParentOf(target.path);
     } catch (err) {
@@ -530,7 +541,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   };
 
   const doReveal = async (relPath: string) => {
-    if (!effectiveWorkspaceId) return;
+    if (!effectiveWorkspaceId || !capabilities.reveal) return;
     try {
       await api.post(`workspaces/${effectiveWorkspaceId}/files/reveal`, { path: relPath });
     } catch (err) {
@@ -538,8 +549,62 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
     }
   };
 
+  /** 上传:选完即传到目标目录(远程专属)。同名不覆盖——后端会存成「名字 (1).ext」,
+   *  与本地导入同一规则,所以要提示用户最终落到了哪个名字上。 */
+  const pickUpload = (relDir: string) => {
+    if (!capabilities.upload) return;
+    setUploadTarget(relDir);
+    uploadInputRef.current?.click();
+  };
+
+  const doUpload = async (file: File) => {
+    if (!fileSource || uploadTarget === null) return;
+    const dir = uploadTarget;
+    setUploadTarget(null);
+    try {
+      const entry = await uploadFile(fileSource, dir, file);
+      toast.success(t("workbench.files.uploaded", { name: entry.name }));
+      if (dir === "") {
+        setTree({});
+        setExpanded(new Set([""]));
+      } else {
+        // 上传接口只回 entry(name/type/...),没有完整路径;文件落点就是 dir 下,现场拼出。
+        const filePath = `${dir}/${entry.name}`;
+        setExpanded((prev) => new Set([...prev, ...ancestorDirs(filePath)]));
+      }
+      void loadDir(dir);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, t("workbench.files.failed")));
+    }
+  };
+
+  /** 下载:raw 路由回 attachment,交给浏览器落盘(与本地 PDF 的外链同一取向)。 */
+  const doDownload = (relPath: string) => {
+    if (!fileSource || !capabilities.download) return;
+    const anchor = document.createElement("a");
+    anchor.href = downloadFileUrl(fileSource, relPath);
+    anchor.download = baseName(relPath);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  };
+
+  const openTerminal = () => {
+    if (!workbench || !fileSource || fileSource.kind !== "remote") return;
+    workbench.openPanel({
+      type: "ssh-terminal",
+      title: workspace?.name ?? t("workbench.terminal.title"),
+      payload: {
+        deviceId: fileSource.deviceId,
+        dirId: fileSource.dirId,
+        label: workspace?.sshTarget ?? "",
+        root: workspace?.root ?? "",
+      },
+    });
+  };
+
   const openAgentsDialog = async () => {
-    if (!effectiveWorkspaceId) return;
+    if (!effectiveWorkspaceId || !capabilities.agents) return;
     setAgentsDialog({ data: null });
     try {
       const res = await api.get<{ agentsFile: AgentsFileState }>(`workspaces/${effectiveWorkspaceId}/agents-file`);
@@ -568,24 +633,38 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
   };
 
   // ── 渲染 ────────────────────────────────────────────────────
+  // 顶栏标题里的路径:本地是工作区根;远程把身份 `user@host:port` 摆在前面——
+  // 同一屏里既能浏览本机目录也能浏览远端目录,不写出身份就分不清在动哪台机器(它不含凭据)。
+  const rootLabel = fileSource
+    ? isRemote
+      ? [(workspace?.sshTarget ?? ""), workspace?.root ?? ""].filter(Boolean).join(" · ")
+      : workspace?.root ?? ""
+    : "";
+  const bindingBroken = workspace?.type === "ssh" && !fileSource;
+
   const sourceItems = React.useMemo(() => {
     const items = [
-      { value: "changes" as const, label: `${t("workbench.files.tab_changes")}${conversationFiles ? ` ${conversationFiles.changes.length}` : ""}` },
-      ...(effectiveWorkspaceId ? [{ value: "files" as const, label: t("workbench.files.tab_files") }] : []),
+      // 「本次改动」来自 write/edit 工具命中;远程工作区只有 read 与 bash,这个 tab 永远空,
+      // 于是整个不出现(而不是给一屏注定为空的列表)。
+      ...(isRemote || !conversationId
+        ? []
+        : [{ value: "changes" as const, label: `${t("workbench.files.tab_changes")}${conversationFiles ? ` ${conversationFiles.changes.length}` : ""}` }]),
+      ...(fileSource ? [{ value: "files" as const, label: t("workbench.files.tab_files") }] : []),
       { value: "attachments" as const, label: `${t("workbench.files.tab_attachments")}${conversationFiles ? ` ${conversationFiles.files.filter((item) => item.kind === "attachment").length}` : ""}` },
       { value: "outputs" as const, label: `${t("workbench.files.tab_outputs")}${conversationFiles ? ` ${conversationFiles.files.filter((item) => item.kind === "output").length}` : ""}` },
     ];
     return items;
-  }, [conversationFiles, effectiveWorkspaceId, t]);
+  }, [conversationFiles, conversationId, fileSource, isRemote, t]);
 
   React.useEffect(() => {
-    // 工作区 tab 消失(无工作区)时避免停留在空 tab。
-    if (!effectiveWorkspaceId && source === "files") setSource("changes");
-  }, [effectiveWorkspaceId, source]);
+    // 来源列表随工作区类型/会话有无而变(远程没有「本次改动」、绑定断了没有「工作区」),
+    // 落点不在表里就回到第一项——比逐条特判每个 tab 的消失条件稳。
+    if (!sourceItems.some((item) => item.value === source)) setSource(sourceItems[0]?.value ?? "changes");
+  }, [source, sourceItems]);
 
   const refreshAll = () => {
     void refreshConversationFiles();
-    if (effectiveWorkspaceId) {
+    if (fileSource) {
       setTree({});
       setExpanded(new Set([""]));
       void loadDir("");
@@ -627,7 +706,31 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
           className="min-w-0"
         />
         <div className="ml-auto flex shrink-0 items-center">
-          {source === "files" && effectiveWorkspaceId ? (
+          {source === "files" && capabilities.upload ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t("workbench.files.upload")}
+              title={t("workbench.files.upload")}
+              onClick={() => pickUpload("")}
+            >
+              <Upload className="size-3.5" />
+            </Button>
+          ) : null}
+          {source === "files" && capabilities.terminal ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={t("workbench.terminal.open")}
+              title={t("workbench.terminal.open")}
+              onClick={openTerminal}
+            >
+              <SquareTerminal className="size-3.5" />
+            </Button>
+          ) : null}
+          {source === "files" && effectiveWorkspaceId && capabilities.agents ? (
             <Button
               type="button"
               size="icon-sm"
@@ -652,6 +755,15 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         </div>
       </div>
 
+      {/* 绑定断了(设备或授权目录已不在):文件树没有可浏览的对象,说清楚为什么,
+          而不是留一屏看似「目录为空」的空白。 */}
+      {bindingBroken ? (
+        <div className="flex items-start gap-2 border-b bg-warning/10 px-3 py-2 text-warning text-xs">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+          <span className="min-w-0 flex-1 leading-5">{t("workbench.files.ssh_binding_missing")}</span>
+        </div>
+      ) : null}
+
       {files.length > 0 ? (
         <FileTabs
           tabs={files.map((view) => ({ key: view.key, title: view.title, dirty: isDirty(view) }))}
@@ -666,7 +778,9 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
         {activeFile ? (
           <FileViewer
             file={activeFile}
-            workspaceId={effectiveWorkspaceId}
+            source={fileSource}
+            canReveal={capabilities.reveal}
+            canDownload={capabilities.download}
             onStartEdit={() => void startEdit(activeFile)}
             onCancelEdit={() => requestDiscard(activeFile.key, "cancel-edit")}
             onDraftChange={(text) => changeDraft(activeFile, text)}
@@ -676,11 +790,15 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
             onReveal={() => {
               if (activeFile.path) void doReveal(activeFile.path);
             }}
+            onDownload={() => {
+              if (activeFile.path) doDownload(activeFile.path);
+            }}
           />
         ) : (
           <FileSourceList
             source={source}
-            workspaceRoot={workspaceRoot}
+            workspaceRoot={rootLabel}
+            capabilities={capabilities}
             conversationFiles={conversationFiles}
             loading={loadingConversationFiles}
             tree={tree}
@@ -690,6 +808,8 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
             onOpenMedia={openMedia}
             onRequestRename={(path, name) => setRenameTarget({ path, name })}
             onRequestDelete={(path, isDir) => setDeleteTarget({ path, isDir })}
+            onRequestUpload={(path) => pickUpload(path)}
+            onDownload={(path) => doDownload(path)}
             onReveal={(path) => void doReveal(path)}
             onRefresh={() => {
               setTree({});
@@ -699,6 +819,19 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
           />
         )}
       </div>
+
+      {/* 上传用的隐藏 input:远程工作区没有本机文件管理器,上传入口只能落在浏览器的文件选择框上。
+          每次选完重置 value,同一个文件连点两次也能再次触发(不重置就只有一次 change)。 */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void doUpload(file);
+        }}
+      />
 
       <Dialog open={pendingDiscard !== null} onOpenChange={(isOpen) => { if (!isOpen) setPendingDiscard(null); }}>
         <DialogContent className="sm:max-w-sm">

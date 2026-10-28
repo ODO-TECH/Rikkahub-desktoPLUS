@@ -189,7 +189,19 @@
     "balanced_hint": "仅对潜在不安全操作询问",
     "full_access": "完全访问",
     "full_access_hint": "不受限制操作电脑文件",
-    "save_failed": "保存权限档位失败"
+    "save_failed": "保存权限档位失败",
+    "sandbox_unknown": "系统边界：状态未知",
+    "sandbox_enforced": "系统边界：已生效",
+    "sandbox_not_enforced": "系统边界：未启用",
+    "sandbox_mismatch": "系统边界：声明受限但实测未生效",
+    "sandbox_enforced_detail": "越界写入由操作系统直接拒绝，权限档位只决定要不要多问一句。",
+    "sandbox_mismatch_detail": "部署声明了受限档，但实测工作区外仍可写：越界目前只靠应用层审批与危险命令清单。",
+    "sandbox_off_detail": "未启用系统边界：越界只靠应用层审批与危险命令清单。",
+    "sandbox_enable_hint": "可在「设置 › 网络 › Web 服务」开启受限沙盒，由操作系统内核强制工作区外只读。",
+    "sandbox_writable": "可写区域：{{areas}}",
+    "sandbox_mechanism_windows": "Windows 低完整性内核",
+    "sandbox_mechanism_container": "容器挂载表",
+    "sandbox_mechanism_none": "无"
   },
   "integrations": {
     "title": "MCP 与拓展",

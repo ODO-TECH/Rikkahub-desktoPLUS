@@ -15,8 +15,10 @@ import { VoiceModeBanner } from "~/components/input/voice-mode-banner";
 import { useVoiceModeState, voiceMode } from "~/lib/voice/voice-mode";
 import { MessageQueuePanel } from "~/components/input/message-queue-panel";
 import { GlobalDropZone } from "~/components/global-drop-zone";
-import { ChatMessage } from "~/components/message/chat-message";
+import { ChatMessage, useCurrentContextLimit } from "~/components/message/chat-message";
+import { CompactionDetailDialog } from "~/components/message/compaction-detail-dialog";
 import { CompactionDivider } from "~/components/message/compaction-divider";
+import { CompactionSummaryCard } from "~/components/message/compaction-summary-card";
 import { ShareExportDialog } from "~/components/message/share-export-dialog";
 import { RenameConversationDialog } from "~/components/rename-conversation-dialog";
 import { Button } from "~/components/ui/button";
@@ -31,6 +33,7 @@ import {
 import { Drawer, DrawerContent } from "~/components/ui/drawer";
 import { Input } from "~/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "~/components/ui/resizable";
+import { Slider } from "~/components/ui/slider";
 import { TypingIndicator } from "~/components/ui/typing-indicator";
 import { Textarea } from "~/components/ui/textarea";
 import {
@@ -44,6 +47,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "~/com
 import { useIsMobile } from "~/hooks/use-mobile";
 import { useAvailableCommands } from "~/hooks/use-available-commands";
 import { useConversationList } from "~/hooks/use-conversation-list";
+import { useCompactionCandidateCount } from "~/hooks/use-compaction-candidate-count";
 import { onHotkeyAction, type HotkeyBusAction } from "~/lib/hotkey-events";
 import { useCurrentAssistant } from "~/hooks/use-current-assistant";
 import type { SlashCommandDto } from "~/lib/slash-commands";
@@ -51,9 +55,25 @@ import { convertConversationToMarkdown, safeMarkdownFilename } from "~/lib/expor
 import { exportTextFile } from "~/lib/export-file";
 import { refreshSettingsStore } from "~/lib/settings-sync";
 import { cn } from "~/lib/utils";
-import { isCompactionBoundaryMessage } from "~/lib/compaction";
+import {
+  buildCompactionAnchors,
+  compactionAfterMessage,
+  compactionDividerBelow,
+  COMPRESS_KEEP_RECENT_DEFAULT,
+  COMPRESS_RATIO_DEFAULT,
+  COMPRESS_RATIO_MAX,
+  COMPRESS_RATIO_MIN,
+  COMPRESS_RATIO_WARN,
+  compressRatioToTargetTokens,
+  contextWarningPercent,
+  latestCompactionPlacement,
+  normalizeCompressKeepRecent,
+  normalizeCompressRatio,
+  type CompactionAnchorInfo,
+} from "~/lib/compaction";
 import api, { ApiError } from "~/services/api";
 import { useChatInputStore } from "~/stores";
+import { confirmDialog } from "~/stores/confirm-store";
 import {
   evictConversations,
   useConversationEngineStatus,
@@ -78,6 +98,7 @@ import { EngineStatusBar } from "~/components/workspace/engine-status-bar";
 import { PaneContainerProvider } from "~/components/workspace/pane-container-context";
 import { WorkspaceEmptyState } from "~/components/workspace/workspace-empty-state";
 import { useCompressStore, useConversationCompressing } from "~/stores/compress-store";
+import { openSettingsDialog } from "~/stores/settings-dialog-store";
 import {
   useConversationEditingSession,
   useEditingStore,
@@ -215,7 +236,6 @@ const EMPTY_SUGGESTIONS: string[] = [];
 // 嵌套更新超 50 次即 React #185 白屏(桌面端快速切换会话高发,崩溃栈实锤 rangeChanged)。
 const VirtuosoListPadding = () => <div className="h-4" />;
 const VIRTUOSO_COMPONENTS = { Header: VirtuosoListPadding, Footer: VirtuosoListPadding };
-const COMPRESS_TOKEN_OPTIONS = [500, 1000, 2000, 4000];
 // 右侧工作台是组外的一张固定宽浮卡:宽度用像素持久化、自绘分隔条拖拽调整。
 // 不再参与 react-resizable-panels 的布局——v4 的 resize()/重注册与 React 状态各记一份,
 // 关合竞态下会脱钩(点了没反应/关不掉),命令式补丁越堆越脆。
@@ -886,7 +906,9 @@ const ConversationTimeline = React.memo(
     onRegenerate,
     onSelectBranch,
     onTranslate,
+    onTogglePin,
     onToolApproval,
+    onCompress,
   }: {
     activeId: string | null;
     isHomeRoute: boolean;
@@ -898,12 +920,15 @@ const ConversationTimeline = React.memo(
     onRegenerate: (messageId: string) => Promise<void>;
     onSelectBranch: (nodeId: string, selectIndex: number) => Promise<void>;
     onTranslate: (messageId: string) => Promise<void>;
+    onTogglePin: (messageId: string, pinned: boolean) => Promise<void>;
     onToolApproval: (
       toolCallId: string,
       approved: boolean,
       reason: string,
       answer?: string,
     ) => Promise<void>;
+    /** 上下文告警行点击 → 打开压缩框(聊天引擎专用;工作区走 pi 原生压缩)。 */
+    onCompress: () => void;
   }) => {
     const { t } = useTranslation("page");
     // colocation(D 族支柱②):详情状态在消息面板本地订阅、本地派生 —— 流式增量
@@ -947,6 +972,68 @@ const ConversationTimeline = React.memo(
         message: node.messages[node.selectIndex] ?? node.messages[0],
       }));
     }, [detail]);
+    // 压缩记录 → 分割线锚点详情。切点可能落在非当前分支上,所以按节点成员查找;
+    // 旧的 cut 注解若找不到对应记录(历史版本数据)就只画线、不提供可点入口。
+    const compactionAnchors = React.useMemo(() => {
+      if (!detail) return new Map<string, CompactionAnchorInfo>();
+      return buildCompactionAnchors(
+        detail.engineCompactions,
+        detail.messages.map((node) => ({
+          messages: node.messages,
+          selectedId: (node.messages[node.selectIndex] ?? node.messages[0])?.id ?? "",
+        })),
+      );
+    }, [detail]);
+    // 最新一条有效压缩记录的位置:锚点及其之前的原文默认折叠,锚点那一行换成摘要卡。
+    // 数组本身不裁剪(切分支/翻页/搜索都按下标工作),折叠只在渲染层把旧行压成 0 高。
+    const compactionPlacement = React.useMemo(() => {
+      if (!detail) return null;
+      return latestCompactionPlacement(
+        detail.engineCompactions,
+        detail.messages.map((node) => ({
+          messages: node.messages,
+          selectedId: (node.messages[node.selectIndex] ?? node.messages[0])?.id ?? "",
+        })),
+      );
+    }, [detail]);
+    // 压缩摘要卡上的「待确认记忆候选」:实验总开关 + 压缩后置候选都开才请求,
+    // 否则不产生任何额外网络请求。失败静默为 0,不打扰阅读。
+    const compactionCandidateCount = useCompactionCandidateCount(
+      activeId,
+      compactionPlacement?.record.cutMessageId ?? null,
+      settings?.memoryExperimentSettings?.enabled === true &&
+        settings.memoryExperimentSettings.compactionCandidates === true,
+    );
+    // 默认折叠;切会话或产生新压缩记录时回到折叠态,不与用户上一次的展开选择混淆。
+    const [compactionCollapsed, setCompactionCollapsed] = React.useState(true);
+    React.useEffect(() => {
+      setCompactionCollapsed(true);
+    }, [activeId, compactionPlacement?.record.cutMessageId]);
+    // startReached 回调在 render 早期创建,折叠态经 ref 读取最新值:折叠时顶部就是
+    // 摘要卡,不应再向上无限翻页(翻出来的原文也被折叠,只是白拉数据)。
+    const compactionFoldedRef = React.useRef(false);
+    const [compactionAnchorId, setCompactionAnchorId] = React.useState<string | null>(null);
+    // 切换会话时收起详情卡:锚点 id 属于上一个会话,留着会拿错记录。
+    React.useEffect(() => {
+      setCompactionAnchorId(null);
+    }, [activeId]);
+    const compactionDetail = compactionAnchorId
+      ? (compactionAnchors.get(compactionAnchorId) ?? null)
+      : null;
+    // 上下文告警(聊天引擎):阈值与工作区 pi 自动压缩同口径——窗口剩余不足
+    // CONTEXT_WARNING_RESERVE_TOKENS 时,在最后一条回复下方提示用户主动压缩。
+    // 工作区会话不提示:pi 自带 threshold/overflow 自动压缩,手动入口也在输入区,
+    // 再插一行只是重复。渲染位置见 itemContent 的 isLastLoaded 分支。
+    const liveContextLimit = useCurrentContextLimit();
+    const contextWarning = React.useMemo(() => {
+      if (!detail || detail.workspaceId) return null;
+      const node = detail.messages.at(-1);
+      const message = node ? (node.messages[node.selectIndex] ?? node.messages[0]) : null;
+      if (!message || message.role !== "ASSISTANT" || !message.usage) return null;
+      // 刚压缩完:最后一条回复的 usage 还是压缩前的窗口量,提示会与压缩动作自相矛盾。
+      if (compactionAfterMessage(detail.engineCompactions, message.createdAt)) return null;
+      return contextWarningPercent(message.usage, liveContextLimit);
+    }, [detail, liveContextLimit]);
     const canQuickJump =
       Boolean(activeId) && !detailLoading && !detailError && selectedNodeMessages.length > 1;
     const assistant = React.useMemo(() => {
@@ -1025,8 +1112,10 @@ const ConversationTimeline = React.memo(
     // "回到底部"按钮的滚动距离判定用(复现实测:平滑滚动跨越大段未测量的巨型条目时
     // 会因尺寸修正中途卡死,永远到不了底;远距离改瞬时跳转,近距离保留平滑动画)
     const scrollerElRef = React.useRef<HTMLElement | Window | null>(null);
-    // I-2:滚到已加载顶部时向上翻页(去重/到头判断在 loadOlderConversationNodes 内)
+    // I-2:滚到已加载顶部时向上翻页(去重/到头判断在 loadOlderConversationNodes 内)。
+    // 压缩区折叠时顶部是摘要卡而不是历史原文,不再向上拉取。
     const handleStartReached = React.useCallback(() => {
+      if (compactionFoldedRef.current) return;
       if (activeId) void loadOlderConversationNodes(activeId);
     }, [activeId]);
     const [isAtBottom, setIsAtBottom] = React.useState(true);
@@ -1174,6 +1263,21 @@ const ConversationTimeline = React.memo(
     const [searchParams] = useSearchParams();
     const focusMessageId = searchParams.get("msg");
 
+    // 折叠仅在"没有全量曝光需求"时生效:导出选择要能勾选所有消息,搜索定位可能落在
+    // 折叠区内;两者结束后回到用户自己的折叠选择。0 条可折(切点就在第一条)不折。
+    const compactionFolded =
+      compactionCollapsed &&
+      compactionPlacement != null &&
+      compactionPlacement.anchorNodeIndex > 0 &&
+      !shareSelecting &&
+      !focusMessageId;
+    compactionFoldedRef.current = compactionFolded;
+    // 摘要覆盖的节点数 = 窗口外更早的节点 + 当前窗口内锚点及其之前的节点。
+    // 锚点自身也已被摘要吸收(只是它还是切点的前驱),折叠时一并收起。
+    const foldedNodeCount = compactionPlacement
+      ? nodesOffset + compactionPlacement.anchorNodeIndex + 1
+      : 0;
+
     // 加载指示延迟出现:本地请求通常几十 ms 内返回,"加载中"只闪一帧反而像故障。
     // 250ms 内完成则全程只见空白→内容;真慢(远端大会话)才浮现文案。
     const [showLoadingHint, setShowLoadingHint] = React.useState(false);
@@ -1295,6 +1399,14 @@ const ConversationTimeline = React.memo(
         }),
       [quickJumpCache, selectedNodeMessages, t],
     );
+    // 折叠时轮次条只列可见消息(摘要卡占掉锚点那一行);点击/范围下标再换算回完整数组,
+    // 避免跳进 0 高的隐藏行。
+    const quickJumpOffset =
+      compactionFolded && compactionPlacement ? compactionPlacement.anchorNodeIndex + 1 : 0;
+    const visibleQuickJumpItems = React.useMemo(
+      () => (quickJumpOffset > 0 ? quickJumpItems.slice(quickJumpOffset) : quickJumpItems),
+      [quickJumpItems, quickJumpOffset],
+    );
 
     return (
       // @container/timeline:消息区自身作为容器基准。分栏时窗格窄,右侧轮次跳转轨需要
@@ -1376,22 +1488,66 @@ const ConversationTimeline = React.memo(
             totalListHeightChanged={handleTotalListHeightChanged}
             rangeChanged={({ startIndex, endIndex }) => {
               // I-2:firstItemIndex 使回调下标携带全局偏移;轮次条用已加载数组的本地坐标。
+              // 折叠时再减去摘要卡之前的隐藏行,与 visibleQuickJumpItems 的下标对齐。
               // 只走命令式通道更新快速跳转条,绝不 setState 重渲染本组件(根治 #185
               // 白屏正反馈,见 QuickJumpOverlay 注释)。
-              quickJumpRangeRef.current?.setRange(startIndex - nodesOffset, endIndex - nodesOffset);
+              quickJumpRangeRef.current?.setRange(
+                Math.max(0, startIndex - nodesOffset - quickJumpOffset),
+                Math.max(0, endIndex - nodesOffset - quickJumpOffset),
+              );
             }}
             increaseViewportBy={overscanExpanded ? 800 : 0}
             components={VIRTUOSO_COMPONENTS}
             itemContent={(index, { node, message }) => {
+              // I-2:index 携带 firstItemIndex 全局偏移,换算回已加载数组的本地下标
+              const localIndex = index - nodesOffset;
+              // 折叠区:被摘要吸收的历史(锚点及其之前)压成 0 高;锚点那一行换成摘要卡。
+              // 数据一条不删——切分支/翻页/搜索照常,只是用户不再需要滚过模型已看不到的原文。
+              const foldedAnchorInfo = compactionPlacement
+                ? compactionAnchors.get(compactionPlacement.anchorId)
+                : undefined;
+              if (compactionFolded && compactionPlacement && foldedAnchorInfo) {
+                if (localIndex < compactionPlacement.anchorNodeIndex) {
+                  return <div aria-hidden="true" className="h-0" />;
+                }
+                if (localIndex === compactionPlacement.anchorNodeIndex) {
+                  return (
+                    <div
+                      id={getConversationMessageAnchorId(compactionPlacement.anchorId)}
+                      className={cn(
+                        "mx-auto w-full max-w-3xl px-4 py-2 scroll-mt-24",
+                        contentClassName,
+                      )}
+                    >
+                      <CompactionSummaryCard
+                        info={foldedAnchorInfo}
+                        collapsed
+                        hiddenCount={foldedNodeCount}
+                        candidateCount={compactionCandidateCount}
+                        onToggle={() => setCompactionCollapsed((prev) => !prev)}
+                        onOpen={() => setCompactionAnchorId(compactionPlacement.anchorId)}
+                        onOpenCandidates={() =>
+                          openSettingsDialog("?section=experiments&sub=memory")
+                        }
+                      />
+                    </div>
+                  );
+                }
+              }
               const model = message.modelId
                 ? (modelById.get(message.modelId) ?? fallbackModel)
                 : fallbackModel;
-              // I-2:index 携带 firstItemIndex 全局偏移,换算回已加载数组的本地下标
-              const localIndex = index - nodesOffset;
               const isLastLoaded = localIndex === selectedNodeMessages.length - 1;
-              // 压缩发生点分割线:压缩完成时服务端在"当时的最新消息"上落
-              // compaction_boundary 注解,线画在该消息下方(两模式统一)。
-              const dividerBelow = isCompactionBoundaryMessage(message);
+              // 压缩分割线(两代形态并行,判定见 lib/compaction.ts):
+              // - compaction_cut:非破坏性压缩的记忆边界,锚在切点前一条消息下方;
+              // - compaction_boundary:旧破坏式压缩的发生点,锚在当时的最新消息下方。
+              const dividerBelow = compactionDividerBelow(message);
+              const compactionAnchor = compactionAnchors.get(message.id);
+              // 最新记录的锚点行下方换成摘要卡:压缩成果直接可见,不再只能点开弹窗。
+              const summaryCardHere =
+                compactionPlacement != null &&
+                compactionPlacement.anchorId === message.id &&
+                compactionAnchor != null;
               return (
                 <div
                   id={getConversationMessageAnchorId(message.id)}
@@ -1415,13 +1571,45 @@ const ConversationTimeline = React.memo(
                     onRegenerate={onRegenerate}
                     onSelectBranch={onSelectBranch}
                     onTranslate={onTranslate}
+                    onTogglePin={onTogglePin}
+                    onCompress={onCompress}
                     onToolApproval={onToolApproval}
                     selecting={shareSelecting}
                     selected={shareSelectedIds.has(message.id)}
                     onToggleSelect={handleToggleSelect}
                     onShare={handleShare}
                   />
-                  {dividerBelow ? <CompactionDivider /> : null}
+                  {summaryCardHere ? (
+                    <CompactionSummaryCard
+                      info={compactionAnchor}
+                      collapsed={compactionFolded}
+                      hiddenCount={foldedNodeCount}
+                      candidateCount={compactionCandidateCount}
+                      onToggle={() => setCompactionCollapsed((prev) => !prev)}
+                      onOpen={() => setCompactionAnchorId(message.id)}
+                      onOpenCandidates={() =>
+                        openSettingsDialog("?section=experiments&sub=memory")
+                      }
+                    />
+                  ) : dividerBelow ? (
+                    <CompactionDivider
+                      variant={dividerBelow}
+                      onOpen={
+                        dividerBelow === "cut" && compactionAnchor
+                          ? () => setCompactionAnchorId(message.id)
+                          : undefined
+                      }
+                    />
+                  ) : null}
+                  {isLastLoaded && contextWarning != null ? (
+                    <button
+                      type="button"
+                      onClick={onCompress}
+                      className="mt-1 w-full text-center text-xs text-amber-600 hover:underline dark:text-amber-400"
+                    >
+                      {t("conversations.context_warning", { percent: contextWarning })}
+                    </button>
+                  ) : null}
                 </div>
               );
             }}
@@ -1489,14 +1677,18 @@ const ConversationTimeline = React.memo(
             {canQuickJump ? (
               <QuickJumpOverlay
                 ref={quickJumpRangeRef}
-                seedKey={`${activeId ?? "home"}:${selectedNodeMessages.length === 0}`}
-                initialIndex={initialLocation.index}
-                itemCount={selectedNodeMessages.length}
+                seedKey={`${activeId ?? "home"}:${selectedNodeMessages.length === 0}:${quickJumpOffset}`}
+                initialIndex={Math.max(0, initialLocation.index - quickJumpOffset)}
+                itemCount={visibleQuickJumpItems.length}
                 isAtBottom={isAtBottom}
                 isAtTop={isAtTop}
-                items={quickJumpItems}
+                items={visibleQuickJumpItems}
                 onItemClick={(index) =>
-                  virtuosoRef.current?.scrollToIndex({ index, behavior: "smooth", align: "start" })
+                  virtuosoRef.current?.scrollToIndex({
+                    index: index + quickJumpOffset,
+                    behavior: "smooth",
+                    align: "start",
+                  })
                 }
               />
             ) : null}
@@ -1509,6 +1701,12 @@ const ConversationTimeline = React.memo(
             .filter((item) => shareSelectedIds.has(item.message.id))
             .map((item) => item.message)}
           title={conversationTitle ?? ""}
+        />
+        <CompactionDetailDialog
+          info={compactionDetail}
+          onOpenChange={(open) => {
+            if (!open) setCompactionAnchorId(null);
+          }}
         />
       </div>
     );
@@ -1597,8 +1795,34 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
   const beginEdit = useEditingStore((state) => state.beginEdit);
   const endEdit = useEditingStore((state) => state.endEdit);
   const [compressDialogOpen, setCompressDialogOpen] = React.useState(false);
-  const [compressTargetTokens, setCompressTargetTokens] = React.useState(2000);
-  const [compressKeepRecent, setCompressKeepRecent] = React.useState(32);
+  // 压缩比例:压掉上下文的百分比,摘要保留剩下的部分。默认 40%,滑杆允许 20–100,
+  // 超过 65% 视为高风险(细节不足,模型容易编造),一次会话内确认一次后放行。
+  const [compressRatio, setCompressRatio] = React.useState(COMPRESS_RATIO_DEFAULT);
+  const compressRatioAcknowledgedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!compressDialogOpen) compressRatioAcknowledgedRef.current = false;
+  }, [compressDialogOpen]);
+  // 换算基准:最后一条带 usage 的助手回复(与上下文告警同一口径 prompt + completion)。
+  // 最后一条回复早于最近一次压缩时,它的 usage 还是压缩前的窗口量,拿来换算会给出
+  // 比当前上下文还大的摘要目标——按未知处理,提交时省略 targetTokens 走服务端默认。
+  const compressContextTokens = useConversationStore((state) => {
+    const detail = activeId ? state.entries[activeId]?.detail : null;
+    if (!detail) return null;
+    for (let index = detail.messages.length - 1; index >= 0; index -= 1) {
+      const node = detail.messages[index];
+      const message = node?.messages[node.selectIndex] ?? node?.messages[0];
+      if (!message || message.role !== "ASSISTANT" || !message.usage) continue;
+      if (compactionAfterMessage(detail.engineCompactions, message.createdAt)) return null;
+      const used = (message.usage.promptTokens ?? 0) + (message.usage.completionTokens ?? 0);
+      if (used > 0) return used;
+    }
+    return null;
+  });
+  const compressTargetTokens = compressRatioToTargetTokens(compressRatio, compressContextTokens);
+  // 保留条数仍用字符串态承载原始键入(允许清空/逐步输入),提交与失焦时才归一。
+  const [compressKeepRecent, setCompressKeepRecent] = React.useState(
+    String(COMPRESS_KEEP_RECENT_DEFAULT),
+  );
   const [compressAdditionalPrompt, setCompressAdditionalPrompt] = React.useState("");
   // 压缩状态全局化(compress-store):压缩是长任务,状态不随本组件卸载而丢——切页回来
   // busy 互斥/spinner/取消句柄照常;取消语义(R7-4)不变,后端落库前查 request.signal。
@@ -1793,6 +2017,18 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     setTranslationDialogMessageId(messageId);
   }, []);
 
+  // 阶段四:钉住/取消钉住。UI 靠 node_update 的整节点帧刷新徽标,无需重取详情。
+  const handleTogglePin = React.useCallback(
+    async (messageId: string, pinned: boolean) => {
+      if (!activeId) return;
+      await api.post<{ status: string; pinned: boolean }>(
+        `conversations/${activeId}/messages/${messageId}/pin`,
+        { pinned },
+      );
+    },
+    [activeId],
+  );
+
   const handleConfirmTranslateMessage = React.useCallback(async () => {
     if (!activeId || !translationDialogMessageId) return;
     setTranslatingMessage(true);
@@ -1983,13 +2219,60 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
     [activeId, isWorkspaceConversation, refreshList],
   );
 
+  const confirmHighCompressRatio = React.useCallback(
+    async (ratio: number): Promise<boolean> => {
+      const acknowledged = await confirmDialog({
+        title: t("conversations.compress.ratio_warning_title"),
+        description: t("conversations.compress.ratio_warning_description", {
+          kept: 100 - ratio,
+        }),
+        confirmLabel: t("conversations.compress.ratio_warning_confirm", { ratio }),
+        cancelLabel: t("conversations.compress.ratio_warning_cancel"),
+        danger: true,
+      });
+      if (acknowledged) compressRatioAcknowledgedRef.current = true;
+      return acknowledged;
+    },
+    [t],
+  );
+
+  // 松手才弹警告:拖动过程中 onValueChange 连续触发,逐个弹框会互相顶掉。
+  const handleCompressRatioCommit = React.useCallback(
+    async (raw: number) => {
+      const ratio = normalizeCompressRatio(raw);
+      if (ratio <= COMPRESS_RATIO_WARN || compressRatioAcknowledgedRef.current) return;
+      if (!(await confirmHighCompressRatio(ratio))) setCompressRatio(COMPRESS_RATIO_WARN);
+    },
+    [confirmHighCompressRatio],
+  );
+
   const handleConfirmCompressConversation = React.useCallback(async () => {
+    // 提交前归一:输入框允许清空/输到一半,真正发给后端的永远是合法整数。
+    const keepRecentMessages = normalizeCompressKeepRecent(compressKeepRecent);
+    setCompressKeepRecent(String(keepRecentMessages));
+    const ratio = normalizeCompressRatio(compressRatio);
+    // 滑杆可能沿用上次打开的 >65% 值,没有重新拖动就不会触发 commit 警告——
+    // 提交前补一次门,不确认就不发请求,并把滑杆拉回安全线。
+    if (ratio > COMPRESS_RATIO_WARN && !compressRatioAcknowledgedRef.current) {
+      if (!(await confirmHighCompressRatio(ratio))) {
+        setCompressRatio(COMPRESS_RATIO_WARN);
+        return;
+      }
+    }
     await performCompress({
-      targetTokens: compressTargetTokens,
+      // 上下文未知时省略字段,由服务端按默认目标长度处理。
+      ...(compressTargetTokens != null ? { targetTokens: compressTargetTokens } : {}),
       additionalPrompt: compressAdditionalPrompt,
-      keepRecentMessages: compressKeepRecent,
+      keepRecentMessages,
     });
-  }, [compressAdditionalPrompt, compressKeepRecent, compressTargetTokens, performCompress]);
+  }, [
+    compressAdditionalPrompt,
+    compressKeepRecent,
+    compressRatio,
+    compressTargetTokens,
+    confirmHighCompressRatio,
+    performCompress,
+  ]);
 
   // ── 斜杠指令:清单(服务端权威)+ 执行分发表(实现池前端部分;方案 §3.4) ──────
   const availableSlashCommands = useAvailableCommands(activeId);
@@ -2264,7 +2547,9 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
                   onRegenerate={handleRegenerate}
                   onSelectBranch={handleSelectBranch}
                   onTranslate={handleTranslateMessage}
+                  onTogglePin={handleTogglePin}
                   onToolApproval={handleToolApproval}
+                  onCompress={handleCompressConversation}
                 />
               </div>
             </>
@@ -2273,7 +2558,7 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           <div>
             {isNewChat &&
               (activeWorkspace ? (
-                <WorkspaceEmptyState workspace={activeWorkspace} onPrompt={handleClickSuggestion} />
+                <WorkspaceEmptyState workspace={activeWorkspace} />
               ) : (
                 <div className="mb-6 text-center">
                   <EmptyGreeting />
@@ -2386,7 +2671,7 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
           open={compressDialogOpen}
           onOpenChange={(open) => !compressing && setCompressDialogOpen(open)}
         >
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{t("conversations.compress.dialog_title")}</DialogTitle>
               <DialogDescription>
@@ -2396,34 +2681,44 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-5">
-              {/* P5:工作区会话走 pi 原生压缩,目标 Token/保留最近消息是 UI 历史压缩的
+              {/* P5:工作区会话走 pi 原生压缩,压缩比例/保留最近消息是 UI 历史压缩的
                 参数(服务端忽略),隐藏以免误导;额外要求透传为压缩自定义指示。 */}
               {!isWorkspaceConversation ? (
                 <>
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                    {t("conversations.compress.manual_hint")}
+                  </div>
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">
-                      {t("conversations.compress.target_tokens")}
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-sm font-medium">
+                        {t("conversations.compress.ratio")}
+                      </span>
+                      <span className="text-sm font-semibold tabular-nums">
+                        {compressRatio}%
+                      </span>
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {COMPRESS_TOKEN_OPTIONS.map((value) => (
-                        <Button
-                          key={value}
-                          type="button"
-                          variant={compressTargetTokens === value ? "default" : "outline"}
-                          onClick={() => setCompressTargetTokens(value)}
-                        >
-                          {value}
-                        </Button>
-                      ))}
-                    </div>
-                    <Input
-                      type="number"
-                      min={256}
-                      value={compressTargetTokens}
-                      onChange={(event) =>
-                        setCompressTargetTokens(Math.max(256, Number(event.target.value) || 2000))
+                    <Slider
+                      value={[compressRatio]}
+                      min={COMPRESS_RATIO_MIN}
+                      max={COMPRESS_RATIO_MAX}
+                      step={1}
+                      onValueChange={(value) =>
+                        setCompressRatio(normalizeCompressRatio(value[0] ?? COMPRESS_RATIO_DEFAULT))
                       }
+                      onValueCommit={(value) =>
+                        void handleCompressRatioCommit(value[0] ?? compressRatio)
+                      }
+                      aria-label={t("conversations.compress.ratio")}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      {compressTargetTokens != null && compressContextTokens != null
+                        ? t("conversations.compress.ratio_hint", {
+                            kept: 100 - compressRatio,
+                            target: compressTargetTokens.toLocaleString(),
+                            context: compressContextTokens.toLocaleString(),
+                          })
+                        : t("conversations.compress.ratio_hint_no_context")}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <div className="text-sm font-medium">
@@ -2434,13 +2729,34 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
                         <Button
                           key={value}
                           type="button"
-                          variant={compressKeepRecent === value ? "default" : "outline"}
-                          onClick={() => setCompressKeepRecent(value)}
+                          variant={
+                            normalizeCompressKeepRecent(compressKeepRecent) === value
+                              ? "default"
+                              : "outline"
+                          }
+                          onClick={() => setCompressKeepRecent(String(value))}
                         >
                           {value}
                         </Button>
                       ))}
                     </div>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      step={1}
+                      value={compressKeepRecent}
+                      onChange={(event) => setCompressKeepRecent(event.target.value)}
+                      onBlur={() =>
+                        setCompressKeepRecent(
+                          String(normalizeCompressKeepRecent(compressKeepRecent)),
+                        )
+                      }
+                      aria-label={t("conversations.compress.keep_recent")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("conversations.compress.keep_recent_hint")}
+                    </p>
                   </div>
                 </>
               ) : null}

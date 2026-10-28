@@ -11,6 +11,7 @@ import {
   Brain,
   ChartNoAxesColumn,
   Database,
+  FlaskConical,
   Globe,
   Heart,
   ImagePlus,
@@ -108,7 +109,16 @@ export const SETTINGS_NAV = [
     children: [
       { id: "proxy", labelKey: "settings:subnav.connectivity.proxy" },
       { id: "server", labelKey: "settings:subnav.connectivity.server" },
+      { id: "im", labelKey: "settings:subnav.connectivity.im" },
     ],
+  },
+  // 实验功能单独成页:默认关闭、可能消耗模型费用、涉及不可逆的遗忘语义,
+  // 不与稳定的「记忆」设置混在同一页。放在「网络」与「统计日志」之间(系统类设置区)。
+  {
+    id: "experiments",
+    labelKey: "settings:nav.experiments",
+    icon: FlaskConical,
+    children: [{ id: "memory", labelKey: "settings:subnav.experiments.memory" }],
   },
   {
     id: "stats",

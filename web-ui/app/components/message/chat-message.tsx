@@ -2,7 +2,7 @@ import * as React from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
-import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Clock3, Copy, Ellipsis, Gauge, GitFork, Languages, Pencil, RefreshCw, Share2, Volume2, VolumeX, Trash2, Zap } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Clock3, Copy, Ellipsis, Gauge, GitFork, Languages, Pencil, Pin, PinOff, RefreshCw, Share2, Volume2, VolumeX, Trash2, Zap } from "lucide-react";
 import { useSettingsStore } from "~/stores";
 import type { AssistantProfile, MessageDto, MessageNodeDto, ProviderProfile, ProviderModel, TokenUsage, UIMessageAnnotation, UIMessagePart } from "~/types";
 
@@ -14,7 +14,8 @@ import { getAudioPlaybackKey, stopAudio, useAudioPlaybackKey } from "~/lib/globa
 import { ttsController, useIsTtsActiveForKey } from "~/lib/tts/tts-controller";
 import { prepareSpeechText } from "~/lib/tts/text-filter";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "~/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
+import { CompressContextIcon } from "~/components/icons/compress-context-icon";
 import api from "~/services/api";
 import { useCurrentModel } from "~/hooks/use-current-model";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "~/components/ui/dropdown-menu";
@@ -49,6 +50,10 @@ interface ChatMessageProps {
     answer?: string,
   ) => void | Promise<void>;
   onShare?: (messageId: string) => void;
+  /** 钉住/取消钉住(阶段四):钉住的消息在上下文压缩时原样保留给模型。 */
+  onTogglePin?: (messageId: string, pinned: boolean) => void | Promise<void>;
+  /** 打开手动压缩框:入口收在上下文预览弹层里(压缩的是整个会话,不是单条消息)。 */
+  onCompress?: () => void;
   selecting?: boolean;
   selected?: boolean;
   onToggleSelect?: (messageId: string) => void;
@@ -232,7 +237,9 @@ function ensureContextLimit(modelKey: string) {
     }
   });
 }
-function useCurrentContextLimit(): number | null | undefined {
+/** 当前选中模型的最大上下文窗口(模块级单例缓存,首查后同 tick 复用)。
+ *  导出给会话页:上下文告警阈值与消息里的进度环必须同一分母。 */
+export function useCurrentContextLimit(): number | null | undefined {
   const { currentModelId } = useCurrentModel();
   const modelKey = currentModelId ?? "";
   React.useEffect(() => {
@@ -357,51 +364,93 @@ function formatTokenCount(value: number): string {
   return String(value);
 }
 
-/** 上下文占用进度环(H6,参考项目对位):环体填充 used/limit,悬停出详情卡;
-    模型上限未知时无法算百分比,退回 Gauge 图标 + 数字文本。 */
-function ContextGauge({ usedTokens, limitTokens }: { usedTokens: number; limitTokens: number | null }) {
+/** 上下文占用进度环 + 点击弹层(占用量、进度条、手动压缩入口)。
+    手动压缩入口收在这里而不是输入框工具栏:压缩是"对上下文做的事",与上下文预览同处
+    才自解释;工具栏只留发送/附件一类高频动作。 */
+function ContextGauge({
+  usedTokens,
+  limitTokens,
+  onCompress,
+}: {
+  usedTokens: number;
+  limitTokens: number | null;
+  onCompress?: () => void;
+}) {
   const { t } = useTranslation("message");
-  if (limitTokens == null) {
-    return (
-      <div className="inline-flex items-center gap-1">
-        <Gauge className="size-3" />
-        <span>{formatTokenCount(usedTokens)}</span>
-      </div>
-    );
-  }
-  const percent = Math.min(100, (usedTokens / limitTokens) * 100);
+  const hasLimit = limitTokens != null && limitTokens > 0;
+  const percent = hasLimit ? Math.min(100, (usedTokens / (limitTokens as number)) * 100) : 0;
   const usedPct = Math.min(100, Math.max(percent > 0 ? 1 : 0, Math.round(percent)));
   const radius = 5;
   const circumference = 2 * Math.PI * radius;
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex cursor-default items-center">
-          <svg className="size-3.5 shrink-0 -rotate-90" viewBox="0 0 14 14">
-            <circle cx="7" cy="7" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
-            <circle
-              cx="7"
-              cy="7"
-              r={radius}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeDasharray={`${(circumference * percent) / 100} ${circumference}`}
-              strokeLinecap="round"
-            />
-          </svg>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="end" className="text-center">
-        <div>{t("chat_message.context_window_title")}</div>
-        <div className="mt-0.5">
-          {t("chat_message.context_window_usage", { used: usedPct, left: 100 - usedPct })}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={t("chat_message.open_context_menu")}
+          className="inline-flex cursor-pointer items-center rounded-full px-1 text-muted-foreground/50 transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+        >
+          {hasLimit ? (
+            <svg className="size-3.5 shrink-0 -rotate-90" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+              <circle
+                cx="7"
+                cy="7"
+                r={radius}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeDasharray={`${(circumference * percent) / 100} ${circumference}`}
+                strokeLinecap="round"
+              />
+            </svg>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              <Gauge className="size-3" />
+              <span>{formatTokenCount(usedTokens)}</span>
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-56 gap-0 p-3 text-xs" side="top">
+        <div className="font-medium text-[var(--ds-text-secondary)]">
+          {t("chat_message.context_window_title")}
         </div>
-        <div className="mt-0.5 font-normal text-[var(--ds-text-secondary)]">
-          {formatTokenCount(usedTokens)} / {formatTokenCount(limitTokens)} tokens
+        {hasLimit ? (
+          <>
+            <div className="mt-1">
+              {t("chat_message.context_window_usage", { used: usedPct, left: 100 - usedPct })}
+            </div>
+            <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-[var(--ds-text-secondary)]/20">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${Math.max(percent > 0 ? 2 : 0, percent)}%` }}
+              />
+            </div>
+          </>
+        ) : null}
+        <div className="mt-1.5 text-[var(--ds-text-secondary)]">
+          {formatTokenCount(usedTokens)}
+          {hasLimit ? ` / ${formatTokenCount(limitTokens as number)}` : ""} tokens
         </div>
-      </TooltipContent>
-    </Tooltip>
+        {onCompress ? (
+          <div className="mt-2.5 border-t border-[var(--ds-text-secondary)]/20 pt-2">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-[var(--ds-text-secondary)]/10"
+              onClick={onCompress}
+            >
+              <CompressContextIcon className="size-4" />
+              <span>{t("chat_message.compress_context")}</span>
+            </button>
+            <div className="mt-1 px-1.5 text-[10px] leading-snug text-[var(--ds-text-secondary)]">
+              {t("chat_message.compress_context_hint")}
+            </div>
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -561,6 +610,7 @@ const ChatMessageActionsRow = React.memo(
     onFork,
     onTranslate,
     onShare,
+    onTogglePin,
   }: {
     node: MessageNodeDto;
     message: MessageDto;
@@ -573,6 +623,7 @@ const ChatMessageActionsRow = React.memo(
     onFork?: (messageId: string) => void | Promise<void>;
     onTranslate?: (messageId: string) => void | Promise<void>;
     onShare?: (messageId: string) => void;
+    onTogglePin?: (messageId: string, pinned: boolean) => void | Promise<void>;
   }) => {
     const { t } = useTranslation("message");
     const [regenerating, setRegenerating] = React.useState(false);
@@ -588,6 +639,7 @@ const ChatMessageActionsRow = React.memo(
     const [switchingBranch, setSwitchingBranch] = React.useState(false);
     const [deleting, setDeleting] = React.useState(false);
     const [forking, setForking] = React.useState(false);
+    const [pinning, setPinning] = React.useState(false);
     const [copied, setCopied] = React.useState(false);
     const copyTimerRef = React.useRef<number | null>(null);
 
@@ -678,6 +730,20 @@ const ChatMessageActionsRow = React.memo(
       }
     }, [message.id, onFork, t]);
 
+    const pinned = (message.annotations ?? []).some((annotation) => annotation.type === "pinned");
+    const handleTogglePin = React.useCallback(async () => {
+      if (!onTogglePin) return;
+
+      setPinning(true);
+      try {
+        await onTogglePin(message.id, !pinned);
+      } catch {
+        toast.error(t("chat_message.action_failed"));
+      } finally {
+        setPinning(false);
+      }
+    }, [message.id, onTogglePin, pinned, t]);
+
     // When THIS row unmounts, only stop playback if WE were the active speaker. With a
     // virtualized list this fires whenever the message scrolls out of view; calling
     // stopAudio() unconditionally would interrupt unrelated playback (e.g. user scrolled
@@ -748,7 +814,7 @@ const ChatMessageActionsRow = React.memo(
       Boolean(onEdit) &&
       (message.role === "USER" || message.role === "ASSISTANT") &&
       hasEditableContent(message.parts);
-    const actionDisabled = loading || switchingBranch || regenerating || deleting || forking;
+    const actionDisabled = loading || switchingBranch || regenerating || deleting || forking || pinning;
     const actionButtonClass =
       "transition-[color,background-color,border-color,box-shadow,transform] hover:shadow-sm active:shadow-inner";
 
@@ -889,6 +955,17 @@ const ChatMessageActionsRow = React.memo(
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align={alignRight ? "end" : "start"}>
+            {onTogglePin && (
+              <DropdownMenuItem
+                disabled={actionDisabled}
+                onSelect={() => {
+                  void handleTogglePin();
+                }}
+              >
+                {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                {pinned ? t("chat_message.unpin") : t("chat_message.pin")}
+              </DropdownMenuItem>
+            )}
             {onShare && (
               <DropdownMenuItem onSelect={() => onShare(message.id)}>
                 <Share2 className="size-3.5" />
@@ -926,7 +1003,17 @@ const ChatMessageActionsRow = React.memo(
 );
 
 const ChatMessageNerdLineRow = React.memo(
-  ({ message, alignRight, live = true }: { message: MessageDto; alignRight: boolean; live?: boolean }) => {
+  ({
+    message,
+    alignRight,
+    live = true,
+    onCompress,
+  }: {
+    message: MessageDto;
+    alignRight: boolean;
+    live?: boolean;
+    onCompress?: () => void;
+  }) => {
     const { t } = useTranslation("message");
     const displaySetting = useSettingsStore((state) => state.settings?.displaySetting);
     // 分母跟随当前选中模型:切模型时这条统计行的分母立即更新(产品意图是"当下决策依据",
@@ -974,7 +1061,11 @@ const ChatMessageNerdLineRow = React.memo(
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           {items.map(renderStat)}
         </div>
-        <ContextGauge usedTokens={context.usedTokens} limitTokens={context.limitTokens} />
+        <ContextGauge
+          usedTokens={context.usedTokens}
+          limitTokens={context.limitTokens}
+          onCompress={onCompress}
+        />
       </div>
     );
   },
@@ -997,6 +1088,8 @@ export const ChatMessage = React.memo(
     onTranslate,
     onToolApproval,
     onShare,
+    onTogglePin,
+    onCompress,
     selecting = false,
     selected = false,
     onToggleSelect,
@@ -1125,6 +1218,7 @@ export const ChatMessage = React.memo(
               onFork={onFork}
               onTranslate={onTranslate}
               onShare={onShare}
+              onTogglePin={onTogglePin}
             />
           </div>
         )}
@@ -1144,7 +1238,12 @@ export const ChatMessage = React.memo(
           />
         ) : null}
 
-        <ChatMessageNerdLineRow message={message} alignRight={isUser} live={loading} />
+        <ChatMessageNerdLineRow
+          message={message}
+          alignRight={isUser}
+          live={loading}
+          onCompress={onCompress}
+        />
       </div>
     );
   },

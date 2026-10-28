@@ -6,6 +6,8 @@ interface ErrorResponse {
   /** 业务错误码(服务端 foundation/errors CodedError 通道;可选,旧端点不带)。
    *  前端按码查 i18n 文案,error 字段是兜底人话。 */
   errorCode?: string;
+  /** 端点自带的结构化字段:SSH 主机密钥确认要读 hostKey / verifyCommand / expectedFingerprint。 */
+  [key: string]: unknown;
 }
 
 interface WebAuthTokenResponse {
@@ -22,12 +24,19 @@ export class ApiError extends Error {
   code: number;
   /** 业务错误码(可选):有码时调用方可按 `errors.${errorCode}` 查 i18n 文案,message 兜底。 */
   errorCode?: string;
+  /**
+   * 错误体里 error/code/errorCode 之外的字段(原样)。SSH 的主机密钥确认框就靠它:
+   * 服务器当场出示的 hostKey、核对命令与期望指纹必须由错误带上来,否则界面无法确认。
+   * 通用文案路径不看这个字段,只有明确需要附加信息的调用方才读它。
+   */
+  details?: Record<string, unknown>;
 
-  constructor(message: string, code: number, errorCode?: string) {
+  constructor(message: string, code: number, errorCode?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.errorCode = errorCode;
+    this.details = details;
   }
 }
 
@@ -123,7 +132,9 @@ async function handleError(error: unknown): Promise<never> {
       // 用状态端点探明后弹出迁移进度页;普通业务 503 探测结果是 ready,不打扰。
       void maybeDispatchStartupPending();
     }
-    throw new ApiError(message, code, errorData?.errorCode);
+    // 第三个参数是 errorCode,第四个把整份错误体交给调用方:主机密钥确认这类
+    // 「要靠附加信息才能弹窗」的错误全靠它,不再各处重发一次请求去拿同样的字段。
+    throw new ApiError(message, code, errorData?.errorCode, errorData);
   }
   if (isNetworkLayerError(error)) {
     throw new ApiError(ERROR_CODE_NETWORK_UNREACHABLE, 0, ERROR_CODE_NETWORK_UNREACHABLE);

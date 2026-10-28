@@ -105,7 +105,8 @@
       "conversation_files": "Conversation files",
       "workspace_files": "Workspace files",
       "code_preview": "Code preview",
-      "media_studio": "Media generation"
+      "media_studio": "Media generation",
+      "ssh_terminal": "SSH terminal"
     },
     "close_panel": "Close panel",
     "toggle_open": "Open files sidebar",
@@ -175,7 +176,21 @@
       "action_failed": "Failed",
       "in_progress": "In progress",
       "file_missing": "File no longer exists",
-      "outside_workspace": "Outside workspace"
+      "outside_workspace": "Outside workspace",
+      "upload": "Upload to this folder",
+      "upload_here": "Upload to this folder",
+      "uploaded": "Uploaded {{name}}",
+      "download": "Download",
+      "ssh_binding_missing": "The device or authorized folder this workspace is bound to is no longer in Settings — add it again under Settings › Extensions › SSH, then rebind."
+    },
+    "terminal": {
+      "title": "Terminal",
+      "open": "Open terminal",
+      "disconnect": "Disconnect terminal",
+      "reconnect": "Reconnect",
+      "disconnected": "Terminal connection closed",
+      "failed": "Terminal connection failed",
+      "confirm_host_key": "Confirm in Settings"
     }
   },
   "custom_theme_dialog": {
@@ -370,7 +385,37 @@
     "network_unreachable": "Cannot reach the local service. Please retry shortly; restart the app if this persists",
     "load_conversations_failed": "Failed to load conversations",
     "read_image_failed": "Failed to read image",
-    "decode_image_failed": "Failed to decode image"
+    "decode_image_failed": "Failed to decode image",
+    "ssh": {
+      "missing_password": "Enter this device's password first.",
+      "missing_key": "Paste this device's private key first.",
+      "key_too_large": "The private key is too large (64 KiB limit).",
+      "host_key_invalid": "The stored host key is unusable — revoke it under Settings › Extensions › SSH and confirm again.",
+      "host_key_unknown": "This server has not been trusted yet.",
+      "host_key_changed": "This server presented a different host key than the one you trusted.",
+      "dir_unauthorized": "That directory is not authorized for this device.",
+      "path_escape": "That path lies outside the authorized directories.",
+      "path_missing": "That path does not exist on the remote machine.",
+      "path_invalid": "The path contains an invalid character.",
+      "path_relative": "Remote paths must be absolute, e.g. /srv/app.",
+      "not_a_file": "That path is not a file.",
+      "not_a_directory": "That path is not a directory.",
+      "already_exists": "A file with that name already exists.",
+      "file_too_large": "The remote file is too large to open here.",
+      "content_too_large": "The content is too large to write.",
+      "name_required": "Enter a file name.",
+      "file_required": "Choose a file to upload.",
+      "root_delete": "The authorized directory itself cannot be deleted.",
+      "recursive_required": "Deleting a folder and its contents needs explicit confirmation.",
+      "terminal_busy": "This connection already has a running terminal.",
+      "device_not_found": "This SSH device no longer exists — pick it again under Settings › Extensions › SSH.",
+      "binding_device_missing": "The SSH device this workspace is bound to no longer exists — add it again under Settings › Extensions › SSH.",
+      "binding_dir_unauthorized": "The remote directory this workspace is bound to is no longer authorized — re-authorize it under Settings › Extensions › SSH.",
+      "binding_path_invalid": "The authorized remote directory is not an absolute path — set it to something like /srv/app under Settings › Extensions › SSH.",
+      "binding_host_key_unconfirmed": "This server's host key has not been confirmed — confirm it under Settings › Extensions › SSH before using this workspace.",
+      "use_remote_file_routes": "Remote workspaces are browsed in the SSH files panel; the workspace file panel only covers local folders.",
+      "agents_file_unsupported": "SSH workspaces do not load a project AGENTS.md (same as the mobile app), so editing it would change nothing."
+    }
   },
   "theme": {
     "custom": "Custom",

@@ -26,6 +26,7 @@ import { copyTextToClipboard } from "~/lib/clipboard";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { confirmDialog } from "~/stores/confirm-store";
 import { saveProxyFields, statusOf, useProxyStatus } from "~/components/settings/proxy";
+import { loadSandboxStatus, type SandboxStatusDto } from "~/lib/sandbox-status";
 import type { Settings } from "~/types";
 import {
   PasswordInput,
@@ -34,6 +35,7 @@ import {
   SettingsRow,
   SettingsRows,
   SettingsStack,
+  SettingsSwitchRow,
 } from "~/components/settings/shared";
 
 /** 反代 proxy_pass 目标:取绑定组里第一个可直接拨号的 IPv4。0.0.0.0/:: 是通配而非可拨地址
@@ -52,7 +54,12 @@ function parsePort(raw: string): number | null | "invalid" {
 }
 
 /** 数据管理 › Web 服务:端口(配置值 + 实际绑定)、访问密码、出站 UA。对外暴露时密码必备。 */
-export function WebServiceSection({ settings }: { settings: Settings; onSettings: (settings: Settings) => void }) {
+export function WebServiceSection({
+  settings,
+}: {
+  settings: Settings;
+  onSettings: (settings: Settings) => void;
+}) {
   const { t } = useTranslation();
   const portId = React.useId();
   const uaId = React.useId();
@@ -63,7 +70,9 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
   // ── 服务端口:启动期配置,写入后要重启才生效。只接受直接输入(文本框无上下步进),
   //    点「保存」才落库;保存 8080 时先给一次建议性提醒(可继续),已保存的值不再重复弹窗 ──
   const initialPort = settings.preferredPort ?? null;
-  const [portDraft, setPortDraft] = React.useState<string>(initialPort == null ? "" : String(initialPort));
+  const [portDraft, setPortDraft] = React.useState<string>(
+    initialPort == null ? "" : String(initialPort),
+  );
   const [portSaving, setPortSaving] = React.useState(false);
   React.useEffect(() => {
     // 焦点在输入框时不回推,避免吞掉正在敲的内容;切页/他端改动则同步。
@@ -74,6 +83,43 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
 
   const desktopShell = isDesktopShell();
   const [restarting, setRestarting] = React.useState(false);
+
+  // ── 重启机制(端口与受限沙盒共用)──
+  // 两条壳路径: Tauri 先拿到 relaunch 再停机(插件不可用时绝不先停后端造成死页面),
+  // 保存 → POST app/shutdown → 等 600ms → relaunch;
+  // WebView2 轻量壳没有 Tauri IPC,保存后导航到 rikkahub://restart,由壳停掉后端、
+  // 重新拉起并重新导航(壳自己保证释放端口与数据目录锁)。
+  // 受限沙盒开启时,重启的后端会在启动编排里自降级(标目录 → Low 令牌重启 → 准备进程
+  // 退出),壳要等的是"慢半拍的同一端口"(S4)。
+  const restartWith = async (save: () => Promise<boolean>) => {
+    setRestarting(true);
+    try {
+      if (isTauriEnvironment()) {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        if (!(await save())) {
+          setRestarting(false);
+          return;
+        }
+        try {
+          await api.post("app/shutdown", {});
+        } catch {
+          // 停机请求可能因服务端立即退出而断开——属预期,继续重启。
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 600));
+        await relaunch();
+        return;
+      }
+      if (!(await save())) {
+        setRestarting(false);
+        return;
+      }
+      window.location.href = "rikkahub://restart";
+    } catch (err) {
+      setRestarting(false);
+      toast.error(t("settings:proxy.restart_failed"));
+      console.warn("[restart] failed", err);
+    }
+  };
 
   /** 把端口草稿落库。返回 false = 校验失败或用户在 8080 提醒里选择换端口,
    *  「保存并重启」据此中止,不白重启一次。 */
@@ -133,39 +179,41 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
   };
 
   // ── 保存并重启(仅桌面壳渲染按钮)──
-  // 两条壳路径: Tauri 先拿到 relaunch 再停机(插件不可用时绝不先停后端造成死页面),
-  // 保存端口(含 8080 提醒)→ POST app/shutdown → 等 600ms → relaunch;
-  // WebView2 轻量壳没有 Tauri IPC,保存后导航到 rikkahub://restart,由壳停掉后端、
-  // 按新端口重新拉起并重新导航(壳自己保证释放端口与数据目录锁)。
-  const restartApp = async () => {
-    setRestarting(true);
-    try {
-      if (isTauriEnvironment()) {
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        if (!(await savePort())) {
-          setRestarting(false);
-          return;
-        }
-        try {
-          await api.post("app/shutdown", {});
-        } catch {
-          // 停机请求可能因服务端立即退出而断开——属预期,继续重启。
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 600));
-        await relaunch();
-        return;
+  const restartApp = async () => restartWith(savePort);
+
+  // ── 受限沙盒(S2b):Windows 低完整性机制才给开关;容器由挂载表决定,只给提示。──
+  const [sandbox, setSandbox] = React.useState<SandboxStatusDto | null>(null);
+  const [sandboxSaving, setSandboxSaving] = React.useState(false);
+  React.useEffect(() => {
+    void loadSandboxStatus().then(setSandbox);
+  }, []);
+  const sandboxOn = settings.sandboxRestricted === true;
+  const saveSandbox = React.useCallback(
+    async (checked: boolean): Promise<boolean> => {
+      setSandboxSaving(true);
+      try {
+        await api.post("settings/sandbox-restricted", { sandboxRestricted: checked });
+        patchSettingsLocal({ sandboxRestricted: checked });
+        return true;
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("settings:data.sandbox_save_failed"),
+        );
+        return false;
+      } finally {
+        setSandboxSaving(false);
       }
-      if (!(await savePort())) {
-        setRestarting(false);
-        return;
-      }
-      window.location.href = "rikkahub://restart";
-    } catch (err) {
-      setRestarting(false);
-      toast.error(t("settings:proxy.restart_failed"));
-      console.warn("[port] restart failed", err);
-    }
-  };
+    },
+    [t],
+  );
+  // 开关(下次启动生效)与运行实测分开陈述:开着开关但还没重启 = 待重启;
+  // 重启过但实测仍未生效 = 启动编排降级了,以 notes 的说明为准,不粉饰。
+  const sandboxPending = sandboxOn !== (sandbox?.tier === "restricted");
+  const sandboxBadge = sandbox?.boundaryActive
+    ? t("settings:data.sandbox_badge_enforced")
+    : sandbox?.measured === "unknown"
+      ? t("settings:data.sandbox_badge_unknown")
+      : t("settings:data.sandbox_badge_not_enforced");
 
   // —— 访问密码:状态经独立端点 /api/web-auth/status(只回布尔,不含哈希)。——
   const [webAuthStatus, setWebAuthStatus] = React.useState<WebAuthStatus | null>(null);
@@ -200,7 +248,9 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
         setWebPwNew("");
         await refreshWebAuthStatus();
         patchSettingsLocal({ webServerJwtEnabled: !clear });
-        toast.success(t(clear ? "settings:data.web_password_cleared" : "settings:data.web_password_saved"));
+        toast.success(
+          t(clear ? "settings:data.web_password_cleared" : "settings:data.web_password_saved"),
+        );
       } catch (error) {
         toast.error((error as Error).message || t("settings:data.web_password_failed"));
       } finally {
@@ -254,7 +304,9 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
                 autoComplete="off"
                 disabled={portLocked || portSaving}
                 value={portDraft}
-                onChange={(event) => setPortDraft(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                onChange={(event) =>
+                  setPortDraft(event.target.value.replace(/\D/g, "").slice(0, 5))
+                }
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void savePort();
                 }}
@@ -296,7 +348,12 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
           <Button
             size="compact"
             onClick={() => void savePort()}
-            disabled={portLocked || portSaving || restarting || portDraft === (initialPort == null ? "" : String(initialPort))}
+            disabled={
+              portLocked ||
+              portSaving ||
+              restarting ||
+              portDraft === (initialPort == null ? "" : String(initialPort))
+            }
           >
             {portSaving ? <Loader2 className="animate-spin" /> : null}
             {t("settings:proxy.port_save")}
@@ -315,7 +372,9 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
           ) : null}
         </div>
         {status?.containerMode ? (
-          <div className="mt-3 text-xs text-[var(--ds-text-secondary)]">{t("settings:proxy.port_container_locked")}</div>
+          <div className="mt-3 text-xs text-[var(--ds-text-secondary)]">
+            {t("settings:proxy.port_container_locked")}
+          </div>
         ) : status ? (
           <Notice className="mt-3" tone="warning">
             {t("settings:proxy.port_restart_note")}
@@ -385,10 +444,79 @@ export function WebServiceSection({ settings }: { settings: Settings; onSettings
         )}
       </SettingsGroup>
 
+      {sandbox && sandbox.mechanism === "container_mounts" ? (
+        <SettingsGroup
+          title={t("settings:data.sandbox_title")}
+          description={t("settings:data.sandbox_desc")}
+        >
+          <Notice className="mt-3">{t("settings:data.sandbox_container_hint")}</Notice>
+        </SettingsGroup>
+      ) : null}
+      {sandbox && sandbox.mechanism === "windows_integrity" ? (
+        <SettingsGroup
+          title={t("settings:data.sandbox_title")}
+          description={t("settings:data.sandbox_desc")}
+          action={
+            <StatusBadge tone={sandbox.boundaryActive ? "success" : "neutral"}>
+              {sandboxBadge}
+            </StatusBadge>
+          }
+        >
+          <SettingsRows className="mt-3 rounded-[var(--ds-radius-md)] border border-[var(--ds-divider)] px-4">
+            <SettingsSwitchRow
+              label={t("settings:data.sandbox_switch")}
+              description={t("settings:data.sandbox_switch_hint")}
+              checked={sandboxOn}
+              disabled={sandboxSaving || restarting}
+              onCheckedChange={(checked) => void saveSandbox(checked)}
+            />
+            <SettingsRow
+              label={t("settings:data.sandbox_measured")}
+              description={t("settings:data.sandbox_measured_desc")}
+              control={
+                <span className="text-sm text-[var(--ds-text-secondary)]">{sandboxBadge}</span>
+              }
+            />
+          </SettingsRows>
+          {/* 后端的差异说明(探针失败原因、各目录标注结果、降级原因)——只在受限档
+              且有事可说时出现,是最诚实的故障定位入口。 */}
+          {sandbox.tier === "restricted" && sandbox.notes.length > 0 ? (
+            <ul className="mt-3 space-y-1 text-xs text-[var(--ds-text-secondary)]">
+              {sandbox.notes.map((note, index) => (
+                <li key={index} className="break-all">
+                  {note}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {sandboxPending ? (
+            <Notice className="mt-3" tone="warning">
+              {t("settings:data.sandbox_restart_pending")}
+            </Notice>
+          ) : null}
+          {desktopShell && sandboxPending ? (
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="tertiary"
+                size="compact"
+                onClick={() => void restartWith(() => saveSandbox(sandboxOn))}
+                disabled={sandboxSaving || restarting}
+              >
+                {restarting ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                {t("settings:data.sandbox_restart_now")}
+              </Button>
+            </div>
+          ) : null}
+        </SettingsGroup>
+      ) : null}
+
       <SettingsGroup
         title={t("settings:proxy.ua_title")}
         description={t("settings:proxy.ua_desc")}
-        action={<AutosaveStatusRow status={uaAutosave.status} onRetry={() => void uaAutosave.saveNow()} />}
+        action={
+          <AutosaveStatusRow status={uaAutosave.status} onRetry={() => void uaAutosave.saveNow()} />
+        }
         fields
       >
         <SettingsField
