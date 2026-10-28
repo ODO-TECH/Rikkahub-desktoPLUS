@@ -13,7 +13,7 @@ const serverEntry = join(import.meta.dir, "..", "server.ts");
 describe("POST /api/app/shutdown(优雅停机端点)", () => {
   test("返回 200 后进程以 0 码自退", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-shutdown-e2e-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18230", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18230", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
       stdout: "pipe",
       stderr: "pipe",
@@ -42,7 +42,7 @@ describe("POST /api/app/shutdown(优雅停机端点)", () => {
   // 锁住"壳报文 ↔ Bun 解析器"的字节级契约(壳或 Bun 任一侧漂移都会在这里现形)。
   test("Tauri 壳的原始 CRLF 报文(字节级契约):200 且进程自退", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-shutdown-e2e4-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18260", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18260", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
       stdout: "pipe",
       stderr: "pipe",
@@ -79,7 +79,7 @@ describe("POST /api/app/shutdown(优雅停机端点)", () => {
   // 被穿透。带任一代理转发头的请求一定不是 Tauri 壳发的——必须 403 且服务不退。
   test("带代理转发头的请求被拒绝,服务不停机", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-shutdown-e2e3-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18250", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18250", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
       stdout: "pipe",
       stderr: "pipe",
@@ -108,7 +108,7 @@ describe("POST /api/app/shutdown(优雅停机端点)", () => {
 
   test("GET 方法不触发停机(只接受 POST)", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-shutdown-e2e2-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18240", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18240", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
       stdout: "pipe",
       stderr: "pipe",

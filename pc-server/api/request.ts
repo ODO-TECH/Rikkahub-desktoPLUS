@@ -48,6 +48,12 @@ export function mime(path: string) {
   if (path.endsWith(".otf")) return "font/otf";
   if (path.endsWith(".json")) return "application/json; charset=utf-8";
   if (path.endsWith(".wasm")) return "application/wasm";
+  // 远程文件面板(ssh/files/raw)与附件下载共用这张表:PDF 要正确的类型才能进 iframe 内嵌阅读器,
+  // 文本类补齐 charset 免得界面按本地编码猜。图片走预览的 data URL,不在这里展开。
+  // 远端文件名大小写随意(REPORT.PDF),所以这两条比小写;上面那些是给静态资源用的,不动它们的语义。
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (/\.(txt|md|log|csv|jsonl)$/.test(lower)) return "text/plain; charset=utf-8";
   return "application/octet-stream";
 }
 

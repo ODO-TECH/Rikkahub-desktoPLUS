@@ -574,7 +574,9 @@ const webDavServer = Bun.serve({
 });
 
 function spawnPcServer() {
-  return Bun.spawn(["bun", "run", "server.ts"], {
+  // 直接起 server.ts(不经 `bun run` 包装):Windows 上 `bun run` 会多一层进程,kill()
+  // 只杀包装层,真服务器继续占端口与数据目录,冒烟收尾后留下孤儿、下一次 rmSync 撞 EBUSY。
+  return Bun.spawn([process.execPath, "server.ts"], {
     cwd: serverDir,
     env: {
       ...process.env,
@@ -1395,12 +1397,9 @@ async function runLocalToolsMemorySmoke() {
     mcpServers: [],
     enableMemory: true,
     useGlobalMemory: false,
-  });
-  // save_memory(1.3.2)默认 writeStrategy=ask 会进待确认队列,smoke 要验证记忆落盘 + 后续注入,
-  // 改用 always_assistant 让 save_memory 直接存助手层(对称旧 memory_tool create 的即写即落盘行为)。
-  await api("/api/settings/memory-settings", {
-    method: "POST",
-    body: JSON.stringify({ writeStrategy: "always_assistant" }),
+    // save_memory 的落点由助手级 memoryWriteScope 决定;默认 ask 会进待确认队列,
+    // smoke 要验证记忆落盘 + 后续注入,改用 always_assistant 直接存助手层。
+    memoryWriteScope: "always_assistant",
   });
   const beforeCount = requests.length;
   const conversationId = `smoke-local-tools-${Date.now()}`;
@@ -1820,6 +1819,17 @@ async function runCompressionSmoke() {
   });
   assert(conflictResponse.status === 409, `concurrent compression should 409, got ${conflictResponse.status}: ${await conflictResponse.text()}`);
   await inFlightCompression;
+  // 非破坏性链式压缩:上一次切点之后才是未摘要的原文,首压后只剩一条消息,
+  // 再压必须有新对话。补一轮完整往返,让最终压缩有可压缩段。
+  await api(`/api/conversations/${conversationId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ parts: [{ type: "text", text: "请调用本地时间工具，然后回答。"}] }),
+  });
+  await waitForConversation(
+    conversationId,
+    (item) => !item.isGenerating && assistantMessages(item).filter((msg: AnyRecord) => textFromParts(msg.parts ?? []).includes("继续回复")).length >= 2,
+    "answer before second compression",
+  );
   // engine-status 帧是瞬态广播(不进快照),只在压缩生命周期内订阅才能收到;
   // 收集器必须挂在带延迟窗的最终压缩上(keep 0 → 压全部 → 走 mock 的 2s 延迟)。
   // 注意:busy:false 兜底清条只在 pi 引擎生成路径广播(编排器 isRunAndSuspend),
@@ -1845,7 +1855,21 @@ async function runCompressionSmoke() {
     "compression did not broadcast engine-status compacting phase",
   );
   const compressed = await api(`/api/conversations/${conversationId}`);
-  assert(selectedMessages(compressed).some((msg: AnyRecord) => textFromParts(msg.parts ?? []).includes("Compressed conversation summary.")), "compressed summary was not written back as context");
+  // 非破坏性压缩:摘要不再写回消息时间线(旧实现整体替换 messages),落点是
+  // engineCompactions 记录 + 切点注解;原文一条不删。断言随新语义转向。
+  const compactionRecords = (compressed.engineCompactions ?? []) as AnyRecord[];
+  assert(
+    compactionRecords.some((record) => String(record.summary ?? "").includes("Compressed conversation summary.")),
+    "compressed summary was not persisted to engineCompactions",
+  );
+  assert(
+    selectedMessages(compressed).some((msg: AnyRecord) => (msg.annotations ?? []).some((item: AnyRecord) => item.type === "compaction_cut")),
+    "compaction cut marker missing",
+  );
+  assert(
+    selectedMessages(compressed).some((msg: AnyRecord) => textFromParts(msg.parts ?? []).includes("请调用本地时间工具")),
+    "non-destructive compression removed original messages",
+  );
   const compressionRequest = requests
     .slice(beforeCount)
     .reverse()

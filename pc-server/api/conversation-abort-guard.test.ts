@@ -112,6 +112,7 @@ describe("压缩窗口写互斥", () => {
     ["send", () => "messages", { parts: [{ type: "text", text: "压缩中溜进来的消息" }] }],
     ["regenerate", () => "regenerate", { messageId: "whatever" }],
     ["edit", (conv) => `messages/${conv.id}-m1/edit`, { parts: [{ type: "text", text: "改" }] }],
+    ["pin", (conv) => `messages/${conv.id}-m1/pin`, { pinned: true }],
   ];
 
   for (const [label, subPathOf, body] of entries) {

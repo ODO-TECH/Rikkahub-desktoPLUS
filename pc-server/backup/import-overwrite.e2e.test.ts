@@ -12,7 +12,7 @@ const serverEntry = join(import.meta.dir, "..", "server.ts");
 describe("备份恢复不覆写现有附件(5-1)+ 导入前 state.json 快照(5-6)", () => {
   test("上传附件后导入含同 id 文件的老 JSON 备份:旧字节原封不动,备份内容走新路径,快照落盘", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-import-e2e-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18250", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18250", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir, RIKKAHUB_ANALYTICS: "0" },
       stdout: "pipe",
       stderr: "pipe",

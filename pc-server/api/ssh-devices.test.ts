@@ -15,7 +15,16 @@ process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-ssh-devices-t
 import type { State } from "../foundation/types";
 import type { SshDevice } from "../foundation/types/settings";
 import { setState, state } from "../persistence/json-store";
-import { normalizeSshDevices, parseSshDevice, sshCredentialError } from "../ssh/devices";
+import {
+  findRemoteDir,
+  normalizeSshDevices,
+  parseSshDevice,
+  sshConnectionSignature,
+  sshCredentialError,
+  sshDeviceInputError,
+  usableRemoteDirs,
+} from "../ssh/devices";
+import { encodeHostKey } from "../ssh/host-key";
 import { handleSshRoutes } from "./handlers/ssh";
 
 async function call(method: string, path: string, body?: unknown): Promise<Response | null> {
@@ -34,6 +43,23 @@ function saved(): SshDevice[] {
 
 let nextId = 0;
 const fixedId = () => `generated-${++nextId}`;
+
+/** 造一把合法的 ed25519 公钥 blob:长度前缀算法名 + 长度前缀 32 字节密钥。 */
+function ed25519Blob(seed = "aaaaaaaa"): Buffer {
+  const type = Buffer.from("ssh-ed25519", "ascii");
+  const key = Buffer.alloc(32);
+  key.write(seed.padEnd(32, ".").slice(0, 32), "ascii");
+  const blob = Buffer.alloc(4 + type.length + 4 + key.length);
+  let offset = 0;
+  blob.writeUInt32BE(type.length, offset);
+  offset += 4;
+  type.copy(blob, offset);
+  offset += type.length;
+  blob.writeUInt32BE(key.length, offset);
+  offset += 4;
+  key.copy(blob, offset);
+  return blob;
+}
 
 beforeAll(() => {
   setState({ settings: { sshDevices: [] } } as unknown as State);
@@ -99,6 +125,8 @@ describe("sshCredentialError", () => {
     password: "",
     privateKey: "",
     passphrase: "",
+    hostKey: null,
+    dirs: [],
   };
 
   test("密码认证要非空密码(空格算内容)", () => {
@@ -111,6 +139,106 @@ describe("sshCredentialError", () => {
     expect(sshCredentialError(keyAuth)).toBe("key");
     expect(sshCredentialError({ ...keyAuth, privateKey: "  \n " })).toBe("key");
     expect(sshCredentialError({ ...keyAuth, privateKey: "-----BEGIN" })).toBeNull();
+  });
+});
+
+// 主机密钥与授权目录是这次对齐新增的两个写边界,单独成组测,免得混在凭据用例里看不清在验什么。
+describe("parseSshDevice 主机密钥与授权目录", () => {
+  test("指纹按 blob 重算:客户端回传什么都不能信", () => {
+    const trusted = encodeHostKey(ed25519Blob())!;
+    const device = parseSshDevice({
+      host: "h",
+      username: "u",
+      hostKey: { type: trusted.type, key: trusted.key, fingerprint: "SHA256:伪造的" },
+    }, fixedId)!;
+    expect(device.hostKey).toEqual(trusted);
+    expect(device.hostKey!.fingerprint).not.toBe("SHA256:伪造的");
+    expect(device.hostKey!.fingerprint).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
+  });
+
+  test("解不开的 hostKey 当未信任(null),而不是带着坏条目去连", () => {
+    expect(parseSshDevice({ host: "h", hostKey: { type: "ssh-ed25519", key: "!!!" } }, fixedId)!.hostKey).toBeNull();
+    expect(parseSshDevice({ host: "h", hostKey: { type: "", key: "" } }, fixedId)!.hostKey).toBeNull();
+    expect(parseSshDevice({ host: "h", hostKey: "字符串" }, fixedId)!.hostKey).toBeNull();
+    // blob 与 type 对不上(拿 rsa 的 blob 冒充 ed25519)同样拒绝。
+    const blob = ed25519Blob("bbbbbbbb");
+    expect(parseSshDevice({
+      host: "h",
+      hostKey: { type: "ssh-rsa", key: blob.toString("base64") },
+    }, fixedId)!.hostKey).toBeNull();
+  });
+
+  test("目录路径归一;半填的相对路径原样留着,由使用处报错而不是入口吞掉整行", () => {
+    const device = parseSshDevice({
+      host: "h",
+      dirs: [
+        { id: "d1", name: " 编译机 ", path: "/srv/app//" },
+        { id: "d2", path: "var/log" },
+        { id: "d3", path: "" },
+        { id: "d4", path: "\\\\server\\share" },
+        "不是对象",
+      ],
+    }, fixedId)!;
+    expect(device.dirs.map((dir) => dir.path)).toEqual(["/srv/app", "var/log", "", "/server/share"]);
+    expect(device.dirs.map((dir) => dir.name)).toEqual(["编译机", "", "", ""]);
+    expect(device.dirs).toHaveLength(4);
+  });
+
+  test("目录 id 缺失或重复时补新 id(界面按 id 绑定,重复会让 React key 撞车)", () => {
+    const device = parseSshDevice({
+      host: "h",
+      dirs: [{ id: "same", path: "/a" }, { id: "same", path: "/b" }, { path: "/c" }],
+    }, fixedId)!;
+    const ids = device.dirs.map((dir) => dir.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids[0]).toBe("same");
+    expect(device.dirs[2]!.id).toMatch(/^generated-\d+$/);
+  });
+
+  test("usableRemoteDirs 只认填完的;findRemoteDir 按 id 找,旧数据的路径也能命中", () => {
+    const device = parseSshDevice({
+      host: "h",
+      dirs: [{ id: "ok", path: "/srv/app" }, { id: "draft", path: "" }],
+    }, fixedId)!;
+    expect(usableRemoteDirs(device).map((dir) => dir.id)).toEqual(["ok"]);
+    expect(findRemoteDir(device, "ok")?.path).toBe("/srv/app");
+    expect(findRemoteDir(device, "/srv/app")?.id).toBe("ok");
+    expect(findRemoteDir(device, "nope")).toBeNull();
+    // 草稿目录不可绑定:命中了也只回空 path,由调用方判空。
+    expect(findRemoteDir(device, "draft")?.path).toBe("");
+  });
+
+  test("私钥超过 64 KiB 整条拒绝(截断只会变成更难查的认证失败)", () => {
+    const device = parseSshDevice({ host: "h", username: "u", authType: "key", privateKey: "x".repeat(64 * 1024 + 1) }, fixedId)!;
+    expect(sshDeviceInputError(device)).toBe("ssh.key_too_large");
+    expect(sshDeviceInputError(parseSshDevice({ host: "h", username: "u", privateKey: "x" }, fixedId)!)).toBeNull();
+  });
+});
+
+describe("sshConnectionSignature", () => {
+  const device = (patch: Partial<SshDevice>): SshDevice => ({
+    ...parseSshDevice({ host: "h", username: "u", password: "p" }, fixedId)!,
+    ...patch,
+  });
+
+  test("影响连接的字段变了就换指纹;改名与改目录不影响连接", () => {
+    const base = device({});
+    expect(sshConnectionSignature(base)).toBe(sshConnectionSignature(device({})));
+    expect(sshConnectionSignature(device({ host: "h2" }))).not.toBe(sshConnectionSignature(base));
+    expect(sshConnectionSignature(device({ port: 2222 }))).not.toBe(sshConnectionSignature(base));
+    expect(sshConnectionSignature(device({ password: "p2" }))).not.toBe(sshConnectionSignature(base));
+    expect(sshConnectionSignature(device({ name: "改名" }))).toBe(sshConnectionSignature(base));
+    expect(sshConnectionSignature(device({
+      dirs: [{ id: "d", name: "新目录", path: "/srv" }],
+    }))).toBe(sshConnectionSignature(base));
+  });
+
+  test("取消信任主机密钥必须触发重连——否则旧连接绕过了新加的信任门槛", () => {
+    const trusted = encodeHostKey(ed25519Blob())!;
+    const withKey = device({ hostKey: trusted });
+    expect(sshConnectionSignature(device({ hostKey: null }))).not.toBe(sshConnectionSignature(withKey));
+    const other = encodeHostKey(ed25519Blob("另一把"))!;
+    expect(sshConnectionSignature(device({ hostKey: other }))).not.toBe(sshConnectionSignature(withKey));
   });
 });
 
@@ -201,5 +329,52 @@ describe("SSH 路由写边界", () => {
 
   test("未知路径交回路由层", async () => {
     expect(await call("GET", "ssh/device")).toBeNull();
+  });
+
+  // 授权目录是这次对齐的执行边界:命令的工作目录只能是条目里 grant 过的路径。
+  // 拒绝类用例必须在「连网之前」就被拦下(地址用一个不会通的私网 IP,漏拦会变成慢超时);
+  // 放行类用 127.0.0.1:1 —— 秒级 ECONNREFUSED,证明过了 403 闸、卡在连接阶段。
+  test("cwd 未授权 → 403;dirId 不存在同样 403", async () => {
+    const draft = {
+      id: "grant-check",
+      host: "10.0.0.9",
+      username: "root",
+      password: "secret",
+      dirs: [{ id: "d1", name: "应用", path: "/srv/app" }],
+    };
+    const escaping = await call("POST", "ssh/exec", { device: draft, command: "id", cwd: "/etc" });
+    expect(escaping?.status).toBe(403);
+    expect((await escaping!.json()).errorCode).toBe("ssh.path_escape");
+    expect((await call("POST", "ssh/exec", { device: draft, command: "id", dirId: "nope" }))?.status).toBe(403);
+    // 探测里的 remoteDir 是编辑表单的「先看看存不存在」,不参与授权校验,但同样只 stat。
+    expect((await call("POST", "ssh/test", { device: draft, dirId: "nope" }))?.status).toBe(403);
+  });
+
+  test("过了授权校验才轮到连接:本地 1 端口秒失败 → 502,不是 403", async () => {
+    const draft = {
+      id: "grant-pass",
+      host: "127.0.0.1",
+      port: 1,
+      username: "root",
+      password: "secret",
+      dirs: [{ id: "d1", name: "应用", path: "/srv/app" }],
+    };
+    const res = await call("POST", "ssh/exec", { device: draft, command: "id", dirId: "d1" });
+    expect(res?.status).toBe(502);
+    expect((await res!.json()).error).toContain("127.0.0.1");
+  });
+
+  test("私钥过大在保存边界就拒绝", async () => {
+    const res = await call("POST", "ssh/device", {
+      id: "fat-key",
+      name: "超大私钥",
+      host: "h",
+      username: "u",
+      authType: "key",
+      privateKey: "x".repeat(64 * 1024 + 1),
+    });
+    expect(res?.status).toBe(400);
+    expect((await res!.json()).errorCode).toBe("ssh.key_too_large");
+    expect(saved().some((item) => item.id === "fat-key")).toBe(false);
   });
 });

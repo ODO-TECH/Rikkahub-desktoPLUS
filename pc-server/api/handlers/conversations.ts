@@ -3,7 +3,7 @@
 
 import type { Conversation, ConversationSnapshotEventDto, ConversationSnapshotMetaEventDto, EngineStatusEventDto, JsonValue, MessageNode, MessagePart } from "../../foundation/types";
 import type { ConversationListDto, ConversationNodesPageDto, MessageSearchResultDto, PagedResult } from "../../foundation/types";
-import { applyPlaceholders, id, message, textFromParts } from "../../foundation/utils";
+import { applyPlaceholders, id, isRecord, message, textFromParts } from "../../foundation/utils";
 import { CodedError } from "../../foundation/errors";
 import { state } from "../../persistence/json-store";
 import {
@@ -36,13 +36,14 @@ import { attachOcrToImageParts, compressConversation, conversationModelIdFor, en
 import { compactEngineConversation, dispatchMessageQueue, generateAnswer, resolveEngineForConversation } from "../../conversations/orchestrator";
 import { deleteConversationsById, ensureConversation, findAssistant, finishInterruptedPendingToolsInConversation, hasPendingToolApproval } from "../../conversations/helpers";
 import { forkConversationTitle } from "../../conversations/fork-title";
-import { editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
+import { cancelWaitingQueuedMessages, editQueuedMessage, enqueueMessage, holdMessageQueue, pauseMessageQueue, releaseMessageQueueHold, removeQueuedMessage, resumeMessageQueue, waitForQueuedReply } from "../../conversations/message-queue";
 import { pushSteeringMessage, removeSteeringMessage } from "../../conversations/steering-channel";
 import { abortGeneration, awaitingApproval, compressing, generating } from "../../conversations/generation-state";
 import { getWorkspace } from "../../workspace";
 import { resolveToolApproval } from "../../inference-engine/approval-gate";
 import { finishToolParts, stripLoadingPlaceholder } from "../../inference-engine/parts";
 import { listConversationFiles } from "../../conversations/conversation-files";
+import { scheduleCompactionCandidates } from "../../memory/experiment/compaction-candidates";
 
 export async function handleConversationRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 列表失效事件已并入 /api/events 通道(invalidate 事件);会话详情流保持独立端点
@@ -333,6 +334,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       // 显式 resume。generateAnswer 的中止分支会再 hold 一次(纵深防御),此处先置是为
       // 了覆盖「流已不在跑、队列还挂着」的边缘态(stop 幂等连点)。
       holdMessageQueue(conversation.id);
+      // IM/语音等待方随停止结算 null(与 IM /stop 同一语义),否则冻结队列让串行链悬挂。
+      cancelWaitingQueuedMessages(conversation.id);
       broadcastConversation(conversation);
       // 与新消息入口对齐：用户主动停止时，也把残留的 pending tool 标记成"用户取消"，
       // 否则下次重生成/继续时会基于一条 output 为空的 pending tool 节点继续。
@@ -559,6 +562,35 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
       broadcastConversation(conversation);
       return json({ status: "deleted" });
     }
+    // 阶段四:钉住/取消钉住一条消息。pinned 注解是 PC 独有(安卓导出时剥离),
+    // 语义 = "压缩时不要把这条摘要掉,切点之前也原文保留给模型"。
+    const messagePin = sub.match(/^messages\/([^/]+)\/pin$/);
+    if (messagePin && request.method === "POST") {
+      const body = await readJson<{ pinned?: boolean }>(request);
+      if (typeof body.pinned !== "boolean") return error("pinned must be a boolean", 400);
+      // 压缩互斥:压缩在途时摘要输入已按旧钉住集切好,此刻改钉住集会让"摘要里被缩写
+      // 的那条"和"实际希望原文保留的那条"错位——与其他写入口同口径 409。
+      if (compressing.has(conversation.id)) {
+        return error("已有压缩正在进行，请稍候", 409, "compress_in_progress");
+      }
+      const messageId = decodeURIComponent(messagePin[1]);
+      const node = conversation.messages.find((item) => item.messages.some((msg) => msg.id === messageId));
+      const msg = node?.messages.find((item) => item.id === messageId);
+      if (!node || !msg) return error("Message not found", 404);
+      const others = Array.isArray(msg.annotations)
+        ? msg.annotations.filter((annotation) => !(isRecord(annotation) && annotation.type === "pinned"))
+        : [];
+      const hadPinned = (msg.annotations?.length ?? 0) !== others.length;
+      msg.annotations = body.pinned ? [...others, { type: "pinned" }] : others;
+      if (hadPinned !== body.pinned) {
+        conversation.updateAt = Date.now();
+        persistConversation(conversation);
+        // I-2:注解挂在消息上,按 id 推 node_update(理由同分支切换),列表刷新走会话帧。
+        broadcastNodeUpdate(conversation, node);
+        broadcastConversation(conversation);
+      }
+      return json({ status: "updated", pinned: body.pinned });
+    }
     const messageEdit = sub.match(/^messages\/([^/]+)\/edit$/);
     if (messageEdit && request.method === "POST") {
       // 压缩互斥:理由见 send 入口(压缩落库覆盖期间写入)。
@@ -733,6 +765,8 @@ export async function handleConversationRoutes(request: Request, url: URL, path:
           Math.max(0, Number(body.keepRecentMessages ?? 32) || 0),
           request.signal,
         );
+        // 实验：压缩后置候选（默认关；内部自行门控，best-effort 不影响压缩结果）。
+        scheduleCompactionCandidates(conversation);
         return json({ status: "compressed", summaries });
       } catch (err) {
         // 用户中止(请求 signal 断)是正常路径不是故障:静默吞掉,不写错误中心、不刷全局

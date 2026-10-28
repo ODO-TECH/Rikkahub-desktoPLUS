@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import type { Assistant, JsonValue, Provider, ProxyConfig, SearchService } from "../../foundation/types";
 import type { Settings } from "../../foundation/types/settings";
+import { validateSubagentPatch } from "../../foundation/types/settings/subagent-config";
 import { getStringArray, id, isRecord } from "../../foundation/utils";
 import { RUNNING_IN_CONTAINER } from "../../foundation/platform";
 import { searchSelectionAfterDelete } from "../../foundation/search-selection";
@@ -807,6 +808,15 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     updateSettings({ ...state.settings, enableWebSearch: body.enabled });
     return json({ status: "ok" });
   }
+  // 子智能体设置(PC-only)：整单校验，任一字段越界即 400（不夹取、不部分生效）。
+  // 读取侧归一化在 persistence/state-load.ts（逐字段回落默认）。
+  if (path === "settings/subagent" && request.method === "POST") {
+    const body = await readJson<Record<string, JsonValue>>(request);
+    const parsed = validateSubagentPatch(body);
+    if (!parsed.ok) return error(parsed.error, 400);
+    updateSettings({ ...state.settings, subagent: { ...state.settings.subagent, ...parsed.value } });
+    return json({ status: "ok", subagent: state.settings.subagent });
+  }
   if (path === "settings/search/service" && request.method === "POST") {
     const body = await readJson<{ index: number }>(request);
     updateSettings({ ...state.settings, searchServiceSelected: body.index });
@@ -901,6 +911,10 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
   }
   if (path === "settings/default-models" && request.method === "POST") {
     const body = await readJson<Partial<Settings>>(request);
+    // 嵌入/重排场景档决定记忆召回与重排结果:换模型后旧召回声明与冻结快照必须作废,
+    // 否则同会话会一直用旧模型算出的选择(且模型维度也可能已变)。
+    const prevEmbeddingId = String(state.settings.embeddingModelId ?? "");
+    const prevRerankId = String(state.settings.rerankModelId ?? "");
     updateSettings({
       ...state.settings,
       chatModelId: String(body.chatModelId ?? state.settings.chatModelId),
@@ -912,11 +926,15 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       imageGenerationModelId: String(body.imageGenerationModelId ?? state.settings.imageGenerationModelId),
       ocrModelId: String(body.ocrModelId ?? state.settings.ocrModelId),
       compressModelId: String(body.compressModelId ?? state.settings.compressModelId),
+      // 聊天模式自动压缩开关:缺省不动现值(老前端不回传布尔);非布尔值同样保持现值。
+      chatAutoCompact: typeof body.chatAutoCompact === "boolean" ? body.chatAutoCompact : state.settings.chatAutoCompact,
       promptOptimizeModelId: String(body.promptOptimizeModelId ?? state.settings.promptOptimizeModelId ?? ""),
       // 全局嵌入 / 重排场景档:与其余模型档一样按字段合并、写入侧不校验(与 OCR/图像生成同口径,
       // 失效 id 由读取方 modelExists + 类型判定兜底)。空串 = 未配置。
       embeddingModelId: String(body.embeddingModelId ?? state.settings.embeddingModelId ?? ""),
       rerankModelId: String(body.rerankModelId ?? state.settings.rerankModelId ?? ""),
+      // 记忆去重 / 自动整理共用的场景模型:空串 = 未配置(写入与整理退化为只做精确去重)。
+      memoryModelId: String(body.memoryModelId ?? state.settings.memoryModelId ?? ""),
       // 媒体工作台「优化提示词」模型:同口径字段合并、写入侧不校验(失效/纯文本 id 由
       // 前端选择时把关)。空串 = 未配置。
       mediaPromptRewriteModelId: String(body.mediaPromptRewriteModelId ?? state.settings.mediaPromptRewriteModelId ?? ""),
@@ -927,6 +945,10 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
       ocrPrompt: String(body.ocrPrompt ?? state.settings.ocrPrompt ?? DEFAULT_OCR_PROMPT),
       compressPrompt: String(body.compressPrompt ?? state.settings.compressPrompt ?? DEFAULT_COMPRESS_PROMPT),
     });
+    if (String(state.settings.embeddingModelId ?? "") !== prevEmbeddingId
+      || String(state.settings.rerankModelId ?? "") !== prevRerankId) {
+      invalidateContextSnapshots();
+    }
     return json({ status: "ok" });
   }
   if (path === "settings/kelivo-sync" && request.method === "POST") {
@@ -1332,6 +1354,25 @@ ${outcome.serverName ? `<p>${esc(outcome.serverName)}</p>` : ""}
     // The running server keeps its current port; we return requiresRestart so the UI can tell
     // the user to restart.
     return json({ status: "ok", preferredPort, requiresRestart: true });
+  }
+  if (path === "settings/sandbox-restricted" && request.method === "POST") {
+    // 受限沙盒开关(S2b):机制是 Windows 低完整性降级,别的部署形态没有这条链路。
+    // 容器:档位由挂载表决定(:rw/:ro + read_only,RIKKAHUB_SANDBOX 只做声明与探针),
+    // 应用内开关会给人"改了会生效"的假象,直接拒写并指出出路(同 port)。
+    if (RUNNING_IN_CONTAINER) {
+      return error("容器部署的沙盒档位由挂载表决定(compose 的 :rw/:ro 与 read_only),应用内开关不生效。", 400);
+    }
+    if (process.platform !== "win32") {
+      return error("受限沙盒目前仅支持 Windows 部署(低完整性机制)。", 400);
+    }
+    const body = await readJson<{ sandboxRestricted?: boolean }>(request).catch(
+      () => ({}) as { sandboxRestricted?: boolean },
+    );
+    const sandboxRestricted = body?.sandboxRestricted === true;
+    updateSettings({ ...state.settings, sandboxRestricted });
+    // 开关只在启动编排时读取(锁端口之前),改动下次重启生效;当前运行不变,
+    // 返回 requiresRestart 让界面提示重启(端口设置同款)。
+    return json({ status: "ok", sandboxRestricted, requiresRestart: true });
   }
   if (path === "settings/shell-path" && request.method === "POST") {
     // shellPath 是 Windows 机器级 bash 路径;容器部署是 Linux,无此概念,直接拒写(同 port)。

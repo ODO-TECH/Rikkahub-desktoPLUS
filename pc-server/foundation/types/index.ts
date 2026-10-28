@@ -164,6 +164,17 @@ export interface Assistant {
   streamOutput: boolean;
   enableMemory: boolean;
   useGlobalMemory: boolean;
+  // 记忆写入范围（助手级，对齐 Kelivo MemoryWriteScope）：
+  //   always_global           仅写全局
+  //   always_assistant        仅写本助手
+  //   tool_default_global     模型自选，默认全局
+  //   tool_default_assistant  模型自选，默认本助手
+  //   readonly                只读，不暴露 save_memory
+  // 可选：老数据 / 外部构造缺省时按 tool_default_global 处理（state-load 会补全）。
+  memoryWriteScope?: MemoryWriteScope;
+  // 每 N 轮对话自动整理（去重/合并）本助手可见的记忆。
+  autoOrganizeMemory?: boolean;
+  memoryOrganizeEveryNTurns?: number;
   enableRecentChatsReference: boolean;
   messageTemplate: string;
   presetMessages: JsonValue[];
@@ -301,6 +312,21 @@ export interface AssistantMemory {
   content: string;
   createdAt: number;
   updatedAt: number;
+  // PC→PC 完整备份可携带实验扩展；安卓 / Kelivo 导出不带（可选字段，旧导入端忽略）。
+  kind?: MemoryKind;
+  status?: MemoryStatus;
+  rawContent?: string | null;
+  facets?: MemoryFacets | null;
+  explicitRemember?: boolean;
+  mentionCount?: number;
+  lastMentionedAt?: number | null;
+  /** 第二轮提及分（0~1，独立于权重与召回相关度）：每次跨会话提及按半衰期累加。 */
+  mentionScore?: number;
+  generation?: number;
+  distilledAt?: number | null;
+  purgeAfter?: number | null;
+  sourceConversationId?: string | null;
+  sourceCutMessageId?: string | null;
 }
 
 // 记忆写入策略(模型提议记忆时应用如何处理)。阶段 3 启用,阶段 2 先加字段。
@@ -310,9 +336,20 @@ export interface AssistantMemory {
 // - "readonly":不暴露写入工具,只注入已有记忆
 export type WriteStrategy = "ask" | "always_assistant" | "always_global" | "readonly";
 
+/** 助手级写入范围。写入策略下沉到助手后，全局 writeStrategy 仅作为老数据迁移与
+ *  新助手默认值的来源。 */
+export type MemoryWriteScope =
+  | "always_global"
+  | "always_assistant"
+  | "tool_default_global"
+  | "tool_default_assistant"
+  | "readonly";
+
 export interface MemorySettings {
   globalEnabled: boolean;       // 启用全局记忆层(注入 + 可写)
-  writeStrategy: WriteStrategy;
+  writeStrategy: WriteStrategy; // 遗留：新助手默认写入策略 / 老数据迁移来源
+  dedupEnabled: boolean;        // 写入与整理时启用去重（未配置记忆模型时只做精确去重）
+  memoryModelThinkingEnabled: boolean; // 允许去重/整理模型思考
 }
 
 export interface Conversation {
@@ -345,26 +382,42 @@ export interface Conversation {
 
 // ----- 工作区(agent 模式)领域模型 -----
 
-export type WorkspaceType = "managed" | "folder";
+/**
+ * 工作区类型:
+ * - managed  托管目录(dataDir/workspaces/<id>/files)
+ * - folder   用户选择的本地目录(过信任门)
+ * - ssh      拓展 › SSH 里登记的一条「远程目录」授权(能力面对齐安卓端 SSH 工作区:
+ *   只有 read + shell,没有 write/edit;见 workspace/runtime.ts 挂载矩阵)
+ */
+export type WorkspaceType = "managed" | "folder" | "ssh";
 
 /** 审批档位(§3.2):read 恒免审;confirm_each=write/edit/bash 全审批;
  *  balanced=区内写免审、bash 审批;full_access=全免审——连危险命令静态拦截也跳过
  *  (runtime.ts 执行层显式排除,用户选档即知情;恒生效的只剩体积闸门与保留设备名阻断)。 */
 export type WorkspacePermissionPreset = "confirm_each" | "balanced" | "full_access";
 
-/** 运行时健康状态(计算属性,不落库):missing = 根目录丢失(对齐安卓 BROKEN 语义,不静默删记录)。 */
+/** 运行时健康状态(计算属性,不落库):missing = 根目录丢失(对齐安卓 BROKEN 语义,不静默删记录)。
+ *  ssh 型的 missing = 配置层绑定失效(设备/授权目录被删、路径没填、主机密钥未确认),
+ *  不代表网络不通——连接失败在工具执行时报错,不做每轮探测(见 ssh/workspace-binding.ts)。 */
 export type WorkspaceStatus = "ready" | "missing";
 
 export interface Workspace {
   id: string;
   name: string;
   type: WorkspaceType;
-  /** 边界根(绝对路径)。managed 型指向 dataDir/workspaces/<id>/files(载入时由 dataDir 计算,
-   *  DB 存空串——数据目录整体搬迁后自愈);folder 型为用户选择的真实目录(DB 存绝对路径)。 */
+  /** 边界根。managed 型指向 dataDir/workspaces/<id>/files(载入时由 dataDir 计算,
+   *  DB 存空串——数据目录整体搬迁后自愈);folder 型为用户选择的真实目录(DB 存绝对路径);
+   *  ssh 型为远端授权目录的绝对路径(POSIX,同样由设置项派生、不落库——改授权即换边界)。 */
   root: string;
   permissionPreset: WorkspacePermissionPreset;
-  /** 信任门通过时间(§3.3)。managed 型创建即信任;folder 型 null = 未过信任门。 */
+  /** 信任门通过时间(§3.3)。managed 型创建即信任;folder 型 null = 未过信任门。
+   *  ssh 型创建即信任:授权动作发生在「拓展 › SSH」的目录登记 + 主机密钥确认,已由用户做过。 */
   trustedAt: number | null;
+  /** ssh 型:绑定的设备 id(拓展 › SSH 条目);其余类型为 null。
+   *  只存引用不存凭据——凭据永远留在设置项里,工作区表/备份/日志都不含它。 */
+  sshDeviceId: string | null;
+  /** ssh 型:绑定的授权目录 id(SshDevice.dirs[].id);其余类型为 null。 */
+  sshDirId: string | null;
   createAt: number;
   updateAt: number;
   lastAccessAt: number;
@@ -377,6 +430,9 @@ export interface PcWorkspaceRow {
   root: string;
   permission_preset: string;
   trusted_at: number | null;
+  /** ssh 型绑定列(旧库经 ALTER TABLE 补列,非 ssh 行恒为 NULL)。 */
+  ssh_device_id?: string | null;
+  ssh_dir_id?: string | null;
   create_at: number;
   update_at: number;
   last_access_at: number;
@@ -518,6 +574,22 @@ export type GithubRelease = {
   assets?: { name?: string; browser_download_url?: string; size?: number }[];
 };
 
+// 实验「记忆与上下文」：记忆分级与状态。未开启实验的旧记忆一律 unclassified + active，
+// 注入行为与引入前一致。status 非 active 的行只会在实验开启后出现。
+export type MemoryKind = "setting" | "habit" | "event" | "unclassified";
+export type MemoryStatus = "active" | "stale" | "superseded" | "archived" | "tombstone";
+
+/** 稀疏标签：只存用户/模型明确给出的维度，缺项不补空串。 */
+export interface MemoryFacets {
+  time?: string;
+  place?: string;
+  person?: string;
+  event?: string;
+  tags?: string[];
+  /** 自由扩展（例如 source 场景），导出安卓时整体剥离。 */
+  [key: string]: string | string[] | undefined;
+}
+
 export interface MemoryEntry {
   id: number;
   content: string;
@@ -526,6 +598,25 @@ export interface MemoryEntry {
   // 来源标记(非跨端契约,备份导出时丢弃)。语义:用户手动新增/编辑过 → "manual";
   // 模型提议且用户原样确认 → "ai"。任何手动编辑都置 manual,故 "ai" 徽章不会长期挂着已改动的记忆。
   source: "manual" | "ai";
+  // ---- 实验扩展（可选：旧数据/旧备份没有这些键，读取时按 unclassified/active 兜底）----
+  kind?: MemoryKind;
+  status?: MemoryStatus;
+  /** 结构化摘要。content 是注入用文本；rawContent 是失真前的原文（宽限期内保留）。 */
+  rawContent?: string | null;
+  facets?: MemoryFacets | null;
+  /** 用户明确要求「记住」：按设定级保护，永不自动降级/删除。 */
+  explicitRemember?: boolean;
+  mentionCount?: number;
+  lastMentionedAt?: number | null;
+  /** 第二轮提及分（0~1，独立于权重与召回相关度）：每次跨会话提及按半衰期累加。 */
+  mentionScore?: number;
+  /** 失真代数：0 = 原文，1+ = 每次降级 +1。 */
+  generation?: number;
+  distilledAt?: number | null;
+  /** 失真后原文的延迟清除时间（0/null = 不自动清除）。 */
+  purgeAfter?: number | null;
+  sourceConversationId?: string | null;
+  sourceCutMessageId?: string | null;
 }
 
 export interface GlobalMemoryFile {
@@ -555,6 +646,16 @@ export interface PendingEntry {
   content: string;
   proposedAt: number;
   messageNodeId?: string;
+  // ---- 实验扩展（可选）----
+  kind?: MemoryKind;
+  facets?: MemoryFacets | null;
+  explicitRemember?: boolean;
+  rawContent?: string | null;
+  /** 压缩后置候选：来源切点与幂等键，保证同一段压缩重复触发只入队一次。 */
+  sourceCutMessageId?: string | null;
+  idempotencyKey?: string | null;
+  /** 候选来源：manual = 用户/工具直接写入；compaction = 压缩后置提取。 */
+  origin?: "manual" | "tool" | "compaction";
 }
 
 export interface PendingMemoryFile {
@@ -569,6 +670,13 @@ export interface AddMemoryInput {
   source?: "manual" | "ai";
   createdAt?: number;
   updatedAt?: number;
+  kind?: MemoryKind;
+  status?: MemoryStatus;
+  rawContent?: string | null;
+  facets?: MemoryFacets | null;
+  explicitRemember?: boolean;
+  sourceConversationId?: string | null;
+  sourceCutMessageId?: string | null;
 }
 
 // memory SSE 推送给前端的完整快照。globalEnabled/writeStrategy 冗余(从 settings 读),

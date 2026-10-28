@@ -6,6 +6,11 @@ export interface AppConfig {
   developerMode: boolean;
   displaySetting: Record<string, JsonValue>;
   preferredPort: number | null;
+  /** PC-only:受限沙盒开关(Windows 低完整性档)。true = 下次启动把工作区目录标为
+   *  Low 可写,再以低完整性后端自重启(见 workspace/restricted-launch.ts);本次运行
+   *  不变,故改它需重启生效(端口设置同款)。容器部署的档位由挂载表决定,此开关不生效。
+   *  机器级安全姿态:导出安卓备份剥离,pc-backup(PC→PC)保留。 */
+  sandboxRestricted: boolean;
   /** PC-only:用户上一次选择的工作区权限档位(新建工作区的默认档位记忆);
    *  null = 从未选择过,新建取 balanced(默认权限)。 */
   workspaceLastPermissionPreset: string | null;

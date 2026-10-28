@@ -15,6 +15,7 @@ import { isLoopbackRequest } from "../net-context";
 import { stripAuthSecrets } from "../auth";
 import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
 import { memoryStore } from "../../memory/index";
+import { getMemoryIndexProgress } from "../../memory/vector-index";
 import { recentAppErrors } from "../../observability/app-errors";
 import { computeStats } from "../../conversations/stats";
 import { getConversation } from "../../conversations";
@@ -23,11 +24,17 @@ import { markUiActivity } from "../../app-config/analytics";
 import { conversationModelIdFor, fetchAuxiliaryText, modelExists } from "../../conversations/auxiliary";
 import { readGlobalAgentsFile, writeGlobalAgentsFile } from "../../agents/global-agents";
 import { serveAIIcon } from "../../assets/icons";
+import { sandboxStatus } from "../../workspace/sandbox";
 import { FONT_EXTENSIONS_SET, FONT_MIME, MAX_FONT_BYTES, fontCssName, fontExtension, isBareFileName, isFontFile, listBuiltinFonts, listCustomFonts, listSystemFonts, makeBundledFontEntry, resolveFontFile } from "../../assets/fonts";
 
 export async function handleSystemRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 4-6:不回显绝对 dataDir 路径(未鉴权即可见的轻微信息泄露;无消费方读它)。
   if (path === "health") return json({ ok: true, version: APP_VERSION });
+  // 沙盒档位自检结果(声明档位 / 实测边界 / 机制 / 探针位置)。
+  // 界面据此显示"当前档位是实测出来的,不是你选的",而不是复述配置里的声称。
+  if (path === "app/sandbox" && request.method === "GET") {
+    return json(sandboxStatus());
+  }
   // 专题6:UI 活动信标——前端在窗口可见且聚焦时定期上报,analytics 据此把"使用
   // 时长"心跳限定在用户实际在用的时间段(托盘常驻/无头部署不再灌时长)。
   if (path === "activity" && request.method === "POST") {
@@ -47,6 +54,7 @@ export async function handleSystemRoutes(request: Request, url: URL, path: strin
       () => [
         ["settings", stripAuthSecrets(state.settings)],
         ["memory", memoryStore.getSnapshot()],
+        ["memory-index", getMemoryIndexProgress()],
         ["app_errors_snapshot", { type: "snapshot", errors: recentAppErrors() }],
         ["invalidate", { type: "invalidate", assistantId: state.settings.assistantId, timestamp: Date.now() }],
         mcpHealthSnapshotFrame(),

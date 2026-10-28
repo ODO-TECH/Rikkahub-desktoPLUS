@@ -150,7 +150,7 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
       },
     ],
     modeInjections: [{ role: "USER", content: "inject" }],
-    displaySetting: { userAvatar: { type: "url", value: "http://x" }, chatFontFamilyCss: "mono", theme: "dark" },
+    displaySetting: { userAvatar: { type: "url", value: "http://x" }, chatFontFamilyCss: "mono", theme: "dark", pcPasteLongTextAsFile: true, pcPasteLongTextThreshold: 5000 },
   };
 
   test("avatar FQN 映射 + 大小写转换 + strip PC-only 字段 + 空 UUID 填充", () => {
@@ -166,6 +166,8 @@ describe("rewriteAvatarsInSettings（to-android 导出方向）", () => {
     expect(out.modeInjections[0].role).toBe("user");
     expect(out.displaySetting.userAvatar.type).toBe("me.rerere.rikkahub.data.model.Avatar.Image");
     expect(out.displaySetting.chatFontFamilyCss).toBeUndefined();
+    expect(out.displaySetting.pcPasteLongTextAsFile).toBeUndefined();
+    expect(out.displaySetting.pcPasteLongTextThreshold).toBeUndefined();
     expect(out.displaySetting.theme).toBe("dark");
     expect(out.proxyConfig).toBeUndefined();
     expect(out.preferredPort).toBeUndefined();

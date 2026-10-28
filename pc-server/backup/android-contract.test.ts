@@ -75,6 +75,8 @@ describe("filterAnnotationsForAndroid(A-2 注解过滤)", () => {
         { type: "steered" },
         { type: "pi-fidelity", v: 1 },
         { type: "compaction_boundary" },
+        { type: "compaction_cut" },
+        { type: "pinned" },
         { type: "url_citation", url: "https://x" },
       ]),
     ).toEqual([{ type: "url_citation", url: "https://x" }]);
@@ -303,6 +305,48 @@ describe("RERANK 档位不出 PC（移动端 ModelType 严格枚举保护）", (
     expect(out.providers[0].authMode).toBeUndefined();
     expect(out.providers[0].oauth).toBeUndefined();
     expect(out.providers[0].models.map((m: any) => m.id)).toEqual(["m1"]);
+  });
+});
+
+// SSH 设备表是 PC 侧设置:安卓的 SSH 配置逐工作区存在 workspaces.ssh_config 列,凭据字段是
+// Keystore 密文(见 SshWorkspaceSettings.kt),AppSettings 里根本没有 sshDevices 这个键。
+// PC 这份带明文密码/私钥/passphrase——跟着备份上传 WebDAV/S3 等于把凭据放到云端。
+// README 里"不随 Android 备份导出"那句承诺由这两条测试撑着;pc-backup.json(PC→PC)不剥,
+// 换机恢复必须带走设备与已信任的主机密钥,与 webPasswordHash 同一取舍。
+describe("SSH 设备表不出 PC（跨端备份不含凭据）", () => {
+  const sshDevices = [
+    {
+      id: "d1",
+      name: "NAS",
+      host: "10.0.0.5",
+      port: 22,
+      username: "root",
+      authType: "password",
+      password: "hunter2",
+      privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----",
+      passphrase: "hunter3",
+      hostKey: { type: "ssh-ed25519", fingerprint: "SHA256:abc" },
+      remoteDirs: [{ id: "r1", path: "/srv/app" }],
+    },
+  ];
+
+  test("to-android：整段剔除，备份里不留任何凭据痕迹", () => {
+    const out = rewriteAvatarsInSettings({ sshDevices }, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect("sshDevices" in out).toBe(false);
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain("hunter2");
+    expect(serialized).not.toContain("PRIVATE KEY");
+    expect(serialized).not.toContain("10.0.0.5");
+  });
+
+  test("to-pc 方向不剥：APP→PC 导入不该把 PC 侧已配置的设备清空（安卓本来就没这字段）", () => {
+    const out = rewriteAvatarsInSettings({ sshDevices }, PC_AVATAR_TYPE_TO_ANDROID, "to-pc");
+    expect(out.sshDevices).toEqual(sshDevices);
+  });
+
+  test("剥的是副本：内存里的运行时 settings 不能被导出就地掏空", () => {
+    rewriteAvatarsInSettings({ sshDevices }, PC_AVATAR_TYPE_TO_ANDROID, "to-android");
+    expect(sshDevices).toHaveLength(1);
   });
 });
 

@@ -21,13 +21,17 @@ import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } fro
 import { clearWorkingSet } from "../conversations/working-set";
 import { clearAllPendingBroadcasts } from "../api/sse";
 import { importSkills } from "../tools";
-import { ANDROID_AVATAR_TYPE_TO_PC, copyDirRecursive, rewriteAvatarsInSettings } from "./export";
+import { ANDROID_AVATAR_TYPE_TO_PC, copyDirRecursive, PC_ONLY_DISPLAY_SETTING_FIELDS, rewriteAvatarsInSettings } from "./export";
 import { FULL_BACKUP_SCOPE } from "./export";
 import { broadcastList, broadcastSettings } from "../api/sse";
 import { defaultSettings } from "../app-config/defaults";
 import { defaultAssistant } from "../assistants/index";
 import { FILE_DEDUP_MIGRATION, normalizeState, PROVIDER_REORDER_MIGRATION, PROVIDER_REORDER_MIGRATION_V2 } from "../persistence/state-load";
-import { generating } from "../conversations/generation-state";
+import { awaitingApproval, compressing, generating } from "../conversations/generation-state";
+import { clearAllMessageQueues } from "../conversations/message-queue";
+import { clearAllSteeringChannels } from "../conversations/steering-channel";
+import { clearQueuedReplyBookkeeping } from "../conversations/orchestrator";
+import { bumpRuntimeEpoch } from "../conversations/runtime-epoch";
 import { listAllConversationMetas } from "../conversations/read-queries";
 import {
   kelivoText,
@@ -60,6 +64,64 @@ export interface ImportReport {
 
 export function newImportReport(): ImportReport {
   return { filesDeduped: 0, dbReadError: null, messageNodesUnreadable: 0 };
+}
+
+/** 安卓设置导入时「PC 拥有、安卓不拥有」的顶层设置键:一律以导入前的 PC 现值为准。
+ *  这些键 APP 备份正常不带(导出侧剥离或它根本不认识),但 `...app` 浅合并 + normalizeState
+ *  的默认回填会把 PC 值冲掉(例如 chatAutoCompact 被重置 false、memorySettings 被 M1 推断
+ *  覆盖、备份范围回到默认),手改/旧格式 zip 还能直接夹带敏感值(webPasswordHash 等)。
+ *
+ *  单一清单:新增 PC-only 字段只登记这里。backup/android-import-settings.test.ts 会枚举
+ *  defaultSettings() 的全部顶层键,要求每个键要么在本清单、要么在测试的安卓共享清单里,
+ *  漏登记即红。敏感/机器级字段同时在 export.ts 的 to-android 剥离块里删除。 */
+export const PC_ONLY_SETTINGS_PRESERVED_ON_ANDROID_IMPORT = [
+  // 机器级 / 安全姿态
+  "proxyConfig",
+  "webServerJwtEnabled",
+  "preferredPort",
+  "sandboxRestricted",
+  "workspaceLastPermissionPreset",
+  "keybindings",
+  "webPasswordHash",
+  "shellPath",
+  // 模型场景档与 PC 先行开关
+  "chatAutoCompact",
+  "titleGenerationEnabled",
+  "promptOptimizeModelId",
+  "promptOptimizePrompt",
+  "embeddingModelId",
+  "rerankModelId",
+  "memoryModelId",
+  "mediaPromptRewriteModelId",
+  "defaultMediaImageModel",
+  "defaultMediaVideoModel",
+  // 记忆与子智能体
+  "memorySettings",
+  "memoryVectorSettings",
+  "memoryExperimentSettings",
+  "subagent",
+  // 凭据与外部接入
+  "sshDevices",
+  "imAccess",
+  // 备份 / 同步选择
+  "exportKelivoBackup",
+  "kelivoSyncOptions",
+  "backupAllData",
+  "backupScope",
+  // 预置项删除墓碑
+  "dismissedProviderIds",
+  "dismissedAssistantIds",
+  "dismissedSearchServiceTypes",
+] as const;
+
+/** 取 PC-only 键的现值守恒快照。值为 undefined 时也显式落键——宁可把 APP 夹带的
+ *  敏感值覆盖成「未设置」,也不让跨端备份决定本机的密码哈希 / shell 路径。 */
+function preservePcOnlySettings(pc: Settings): Partial<Settings> {
+  const preserved: Record<string, unknown> = {};
+  for (const key of PC_ONLY_SETTINGS_PRESERVED_ON_ANDROID_IMPORT) {
+    preserved[key] = (pc as unknown as Record<string, unknown>)[key];
+  }
+  return preserved as Partial<Settings>;
 }
 
 /** 选择性备份的恢复语义:备份里没勾的类别 = 「本包不含」,不是「目标机该清空」。
@@ -218,7 +280,7 @@ function seedRestoreMigrationMarkers(incoming: Partial<State>): void {
  *  拷进 files/ 的字节成为孤儿——数据安全优先不回删,同内容再导入会被去重复用。 */
 function captureRestoreRollbackPoint(): (err: unknown) => void {
   const stateSnapshot = structuredClone(state);
-  const memorySnapshot = memoryStore.exportFlat();
+  const memorySnapshot = memoryStore.exportFlatWithExperiment();
   return (err: unknown) => {
     try {
       setState(stateSnapshot);
@@ -276,10 +338,11 @@ export function applyBackupPayload(body: { state?: Partial<State>; skills?: unkn
     seedRestoreMigrationMarkers(incoming);
     setState(normalizeState(incoming));
     if (!hadConversations) delete state.conversations;
-    // 记忆:整体替换语义(恢复备份 = 回到备份时的状态)。normalizeState 已把 incoming.memories
-    // 解析到 state.memories;交给 memoryStore 接管(replace:先清空再导入),然后从 state 移除。
+    // 记忆:整体替换语义(恢复备份 = 回到备份时的状态)。必须直接取备份里的原始 memories:
+    // normalizeState 的兼容映射只保留 id / assistantId / content / 时间戳,会把 S14 的实验
+    // 扩展(kind/status/rawContent/generation/purgeAfter)丢掉——恢复后宽限期到期清除失效。
     // pending 一并清空(备份不含 pending,恢复即丢弃待确认队列——前端应在恢复前弹警告)。
-    const incomingMemories = Array.isArray(state.memories) ? state.memories : [];
+    const incomingMemories = Array.isArray(incoming.memories) ? incoming.memories : [];
     memoryStore.importFlatMemories(incomingMemories, "replace");
     invalidateContextSnapshots();
     delete state.memories;
@@ -369,11 +432,11 @@ function applyPcBackupFromExtractDir(extractDir: string, pcBackupPath: string): 
     incomingState.settings = preserveUnscopedEntities(incomingSettings, localSettings, incomingScope);
     seedRestoreMigrationMarkers(incomingState);
     setState(normalizeState(incomingState));
-    // 记忆:整体替换语义(PC 备份恢复)。normalizeState 把 incomingState.memories 解析到
-    // state.memories;交给 memoryStore 接管(replace),然后从 state 移除。
+    // 记忆:整体替换语义(PC 备份恢复)。同 applyBackupPayload:直接读备份原始 memories,
+    // 不走 normalizeState 的瘦身映射,否则实验扩展(rawContent/purgeAfter/…)全部丢失。
     // 未勾选记忆时不调用 replace——本机记忆原样保留(导出包里的 memories 已是空数组)。
     if (incomingScope.memories) {
-      const incomingMemories = Array.isArray(state.memories) ? state.memories : [];
+      const incomingMemories = Array.isArray((incoming as State).memories) ? (incoming as State).memories! : [];
       memoryStore.importFlatMemories(incomingMemories, "replace");
     }
     invalidateContextSnapshots();
@@ -631,7 +694,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
       //      displaySetting.userNickname 非空、userAvatar 非 Dummy 才覆盖;chatFontFamily 永远保 PC
       //      (APP 是 enum 字符串、PC 是字体名,手机端字体 PC 未必安装)。
       //   7) webDav/s3:两端结构对齐后,PC 已配置保 PC、PC 空采用 APP(APP 也有此功能)。
-      //      proxy/jwt/port/promptOptimize* 是 PC 独有(Android 无),永远保 PC。
+      //      PC-only 顶层键(proxy/jwt/port/场景模型/备份范围/凭据等)见
+      //      PC_ONLY_SETTINGS_PRESERVED_ON_ANDROID_IMPORT,整组以 PC 现值覆盖 APP 值。
       // 历史:{...PC,...APP} 浅合并丢 key;Plan B 全 PC 优先把 APP 同 id 助手/MCP/世界书挡在外面;
       //      三轮分流只覆盖 10 个集合,标量全走 PC 基底→默认模型/提示词/主题/收藏/标签全丢;七层方案补齐
       //      后又发现 searchServices 两端随机 id 致 mergeById 翻倍、webDav 误判 PC 独有被丢——本轮修正。
@@ -705,6 +769,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
           }
         } else if (k === "chatFontFamily") {
           // 字体两端语义/可用性不同 → 保 PC
+        } else if (PC_ONLY_DISPLAY_SETTING_FIELDS.has(k)) {
+          // PC-only 显示项:正常 APP 备份导出时已剥离;手改 zip 夹带也不接管。
         } else {
           mergedDisplay[k] = v;
         }
@@ -720,6 +786,9 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         : (app.s3Config ?? pc.s3Config);
       const merged = {
         ...app,
+        // PC-only 顶层设置:安卓不拥有这些键。无论 APP 备份是否夹带,一律以本机现值为准;
+        // 清单与理由见 PC_ONLY_SETTINGS_PRESERVED_ON_ANDROID_IMPORT。
+        ...preservePcOnlySettings(pc),
         dynamicColor: pick("dynamicColor"),
         themeId: pick("themeId"),
         developerMode: pick("developerMode"),
@@ -729,9 +798,8 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         // titleModelId/suggestionModelId 时回退迁移(标题优先,其次建议,皆无则由 state-load 兜底 AUTO)。
         fastModelId: pick("fastModelId") ?? pick("titleModelId") ?? pick("suggestionModelId"),
         // 快速模型子功能开关:enableSuggestion 是 APP 原生字段(双向互通——手机关过建议,
-        // PC 未定制时采纳 APP);titleGenerationEnabled 是 PC 先行字段,APP 备份没有 → 恒保 PC。
+        // PC 未定制时采纳 APP);titleGenerationEnabled 是 PC 先行字段,在 PC-only 清单里恒保 PC。
         enableSuggestion: pick("enableSuggestion"),
-        titleGenerationEnabled: pick("titleGenerationEnabled"),
         translateModeId: pick("translateModeId"),
         imageGenerationModelId: pick("imageGenerationModelId"),
         ocrModelId: pick("ocrModelId"),
@@ -767,24 +835,6 @@ function applyAndroidOriginZipFromExtractDir(extractDir: string): { settingsImpo
         },
         webDavConfig: mergedWebDav,
         s3Config: mergedS3,
-        proxyConfig: pc.proxyConfig,
-        webServerJwtEnabled: pc.webServerJwtEnabled,
-        preferredPort: pc.preferredPort,
-        // workspaceLastPermissionPreset 是 PC-only 字段(工作区新建档位记忆),导入时保 PC 值。
-        workspaceLastPermissionPreset: pc.workspaceLastPermissionPreset,
-        promptOptimizeModelId: pc.promptOptimizeModelId,
-        promptOptimizePrompt: pc.promptOptimizePrompt,
-        // 全局嵌入 / 重排场景档同为 PC-only(APP Settings 无此字段):`...app` 里没有这两个键,
-        // 不显式保 PC 就会被 normalizeState 重置成未配置,用户选好的模型在导入一次手机备份后就没了。
-        embeddingModelId: pc.embeddingModelId,
-        rerankModelId: pc.rerankModelId,
-        // 媒体提示词改写模型同为 PC-only:同上保 PC 值,导入手机备份不重置。
-        mediaPromptRewriteModelId: pc.mediaPromptRewriteModelId,
-        // keybindings 是 PC-only 字段(APP 无对应),导入时必须保 PC 自定义,否则被 normalizeState 重置为默认。
-        keybindings: pc.keybindings,
-        // memorySettings 同为 PC-only(APP Settings 无此字段),保 PC 设置,否则 normalizeState
-        // 的 M1 推断会覆盖用户的 globalEnabled 选择。
-        memorySettings: pc.memorySettings,
       } as unknown as State["settings"];
       const adjusted = rewriteAvatarsInSettings(merged, ANDROID_AVATAR_TYPE_TO_PC, "to-pc");
       setState(normalizeState({ ...state, settings: adjusted as State["settings"] }));
@@ -1857,11 +1907,23 @@ function normalizeAndroidMessage(raw: unknown): Message | null {
  *  upsert 旧节点进刚重灌的活库);清空 working set 防陈旧实例(导入前 checkout 的实例
  *  数据已作废,读到旧数据比读到空更危险)。 */
 function finalizeConversationImport(): void {
+  // D2:运行态代际 +1 先于一切清理。在途生成/后台任务/压缩在下一个异步边界发现代际
+  // 失效后自行作废——即便导入原样恢复了同一会话 id,旧实例的写入也不得落到新库。
+  bumpRuntimeEpoch();
   // 中止所有流(手动,不走 abortConversationGeneration 以免它 persist——马上要全量重灌)
   for (const conversationId of Array.from(generating.keys())) {
     generating.get(conversationId)?.abort();
   }
   generating.clear();
+  // 审批/压缩/队列/steering/回复通道全部属于旧运行态:导入后这些键要么指向已作废的
+  // 会话实例,要么等待永远不会到来的旧流回执。审批与压缩整体清空;队列清空并为
+  // waitingReply 等待方 resolve null(IM 串行链不悬挂);steering 残留与回复通道
+  // 记账随旧排队项 id 一同作废。
+  awaitingApproval.clear();
+  compressing.clear();
+  clearAllMessageQueues();
+  clearAllSteeringChannels();
+  clearQueuedReplyBookkeeping();
   clearConvDirtyState();
   // 有暂存才重灌:PC 备份恢复(替换语义,含"备份无会话→清空")与 Android 库合并都会建立
   // 暂存;settings-only Android zip 无暂存,不触碰活库现有会话。

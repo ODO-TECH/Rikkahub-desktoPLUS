@@ -4,7 +4,7 @@
 // 承载,线上契约在 DTO 层收窄为真实产出形状),显式写在 Omit 里。
 // 前端 web-ui/app/types/dto.ts 只做 type-only re-export;字段增删属冻结契约变更。
 
-import type { Conversation, Message, MessageNode } from "./index";
+import type { Conversation, Message, MessageNode, WorkspacePermissionPreset, WorkspaceStatus, WorkspaceType } from "./index";
 
 // ── 消息级线上明细类型 ──────────────────────────────────────────────
 
@@ -30,14 +30,30 @@ export type CompactionBoundaryAnnotation = {
   type: "compaction_boundary";
 };
 
+/** 压缩切点标记(对话模式非破坏性压缩):打在"切点前一条消息"上,前端在该消息下方
+ *  画分割线——线上原文对用户仍可见,线下(切点及之后)才是模型逐字看到的范围。与
+ *  compaction_boundary 的区别:boundary 锚"用户发起压缩的位置"(旧破坏式压缩,线下
+ *  原文已删),cut 锚"模型记忆边界"(新非破坏式压缩,原文全保留)。老会话保留
+ *  boundary 语义,两种注解前端并行识别。PC 特有注解,安卓导出时过滤。 */
+export type CompactionCutAnnotation = {
+  type: "compaction_cut";
+};
+
+/** 用户手动钉住的消息(阶段四)。切点之前被钉住的原文不再只活在摘要里——
+ *  编码层把它们的逐字正文注入 <pinned_messages>,压缩时也不进摘要分块。
+ *  纯 PC 语义(安卓无对应能力),导出时过滤。 */
+export type PinnedAnnotation = {
+  type: "pinned";
+};
+
 /** 注释判别联合(对齐安卓 UIMessageAnnotation)。 */
-export type UIMessageAnnotation = UrlCitationAnnotation | ModelCallErrorAnnotation | CompactionBoundaryAnnotation;
+export type UIMessageAnnotation = UrlCitationAnnotation | ModelCallErrorAnnotation | CompactionBoundaryAnnotation | CompactionCutAnnotation | PinnedAnnotation;
 
 /** 专题3 批4:PC 注解判别符注册表(联合类型的运行时镜像)。UIMessageAnnotation 新增
  *  成员而不登记于此 = 编译失败(下方双向断言);登记后 android-contract-sync.test.ts
  *  会强制声明其安卓兼容性(安卓已知类型 or 导出过滤黑名单)。这样"新功能忘了惦记
  *  备份契约"会在编译/测试期爆炸,而不是在用户导入 APP 时爆炸。 */
-export const PC_MESSAGE_ANNOTATION_TYPES = ["url_citation", "model_call_error", "compaction_boundary"] as const;
+export const PC_MESSAGE_ANNOTATION_TYPES = ["url_citation", "model_call_error", "compaction_boundary", "compaction_cut", "pinned"] as const;
 type AssertTrue<T extends true> = T;
 type MutuallyEqual<A extends string, B extends string> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 export type _AnnotationRegistryComplete = AssertTrue<
@@ -125,18 +141,28 @@ export type ConversationListDto = {
   workspaceId: string | null;
 };
 
-/** 工作区(agent 模式):workspaces 路由的元素。status 为运行时计算(missing=根目录丢失)。 */
+/** 工作区(agent 模式):workspaces 路由的元素。status 为运行时计算(missing=根目录丢失/远程绑定失效)。 */
 export type WorkspaceDto = {
   id: string;
   name: string;
-  type: "managed" | "folder";
+  type: WorkspaceType;
+  /** ssh 型是远端目录的绝对路径(POSIX),不是本机路径。 */
   root: string;
-  permissionPreset: "confirm_each" | "balanced" | "full_access";
+  permissionPreset: WorkspacePermissionPreset;
   trustedAt: number | null;
+  /** ssh 型:拓展 › SSH 里的设备/授权目录引用(界面跳转与解绑提示用)。其余类型 null。 */
+  sshDeviceId: string | null;
+  sshDirId: string | null;
+  /** ssh 型:远端身份 `user@host:port`(永不含凭据)。其余类型 null。 */
+  sshTarget: string | null;
+  /** status=missing 时的人话原因(配置层判定,不是网络探测结果)。 */
+  unavailableReason: string | null;
+  /** unavailableReason 的 i18n 键(ssh.binding_*);界面按它查文案,英文 reason 留给模型。 */
+  unavailableErrorCode: string | null;
   createAt: number;
   updateAt: number;
   lastAccessAt: number;
-  status: "ready" | "missing";
+  status: WorkspaceStatus;
 };
 
 /** conversations/paged 响应包装。 */

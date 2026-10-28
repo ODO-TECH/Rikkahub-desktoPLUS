@@ -22,7 +22,7 @@ function freePort(): number {
 }
 
 function spawnServer(args: string[], dataDir: string) {
-  return Bun.spawn(["bun", serverEntry, ...args, "--no-open"], {
+  return Bun.spawn([process.execPath, serverEntry, ...args, "--no-open"], {
     env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
     stdout: "pipe",
     stderr: "pipe",

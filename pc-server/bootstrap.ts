@@ -19,9 +19,23 @@ import { repairForkNodeTheft } from "./conversations/fork-repair";
 import { initSseWiring } from "./api/sse";
 import { initMcpHealthBroadcast } from "./api/sse";
 import { startMcpHealthSupervisor } from "./tools/mcp-health";
+import { reconcileImAdapters } from "./im/registry";
 import { resumePendingMediaTasks } from "./media-generation/resume";
+import { initSandbox } from "./workspace/sandbox";
+import { scheduleMaintenanceCatchUp } from "./memory/experiment/maintenance";
+import { scheduleForgettingPurge } from "./memory/experiment/forget";
 
 export async function bootstrap(): Promise<void> {
+  // 0) 沙盒实测（先于一切业务）：档位是部署声明的，边界是否真在生效要自己测一遍
+  //    ——往"区外"写一个临时文件，写不进去才算数。结论进日志与 /api/app/sandbox，
+  //    权限层据此决定要不要给"区外写入"的承诺（sandbox.ts 顶部注释有完整口径）。
+  const sandbox = initSandbox();
+  console.log(
+    `[sandbox] 声明档位=${sandbox.tier} 实测=${sandbox.measured} 机制=${sandbox.mechanism} 探针=${sandbox.probePath}` +
+      (sandbox.probeError ? ` 探针失败原因=${sandbox.probeError}` : ""),
+  );
+  for (const note of sandbox.notes) console.warn(`[sandbox] ${note}`);
+
   // 1) 状态装载 + 一次性迁移链(SQLite 灌库、记忆拆分、附件去重、.tmp 清扫都在 loadState 内)。
   //    R1-1:灌库分批提交、去重逐文件让出事件循环,迁移期启动进度端点可被响应。
   setStartupPhase("load-state");
@@ -42,6 +56,12 @@ export async function bootstrap(): Promise<void> {
 
   // 3) 会话运行时:working set 判据接线 + 驻留清扫定时器。
   initConversationsRuntime();
+
+  // 3a) 实验：周期维护补算。只写失真 / 保真计划（dry-run），不调用模型、不改记忆；
+  //     延迟 5 秒是为了让端口、SSE 和首屏请求先就绪；实验开关关闭时函数直接早退。
+  scheduleMaintenanceCatchUp();
+  // 3a2) 实验：到期清除补算。排在计划之后（8 秒），试运行 / 开关关闭时零副作用。
+  scheduleForgettingPurge();
 
   // 3b) 历史 fork 缺陷修复:被分支抢走节点行的会话在就绪前还原(客户端加载到空会话
   //     之前必须完成)。幂等且只读扫描为主,失败仅记录,不阻断启动。
@@ -71,6 +91,10 @@ export async function bootstrap(): Promise<void> {
     getAssistants: () => state.settings.assistants,
   });
   initMcpHealthBroadcast(() => mcpSupervisor.snapshot());
+
+  // 4c) 外部接入(IM):把上次退出前已启用的 QQ / 微信适配器拉起来。reconcile 同步返回,
+  //     真正的网关握手在后台跑,启动闸门不受它影响。
+  reconcileImAdapters();
 
   // 5) 1-8:启动规范化结果(normalizeState 的 backfill/迁移标记)与 launchCount 立即落盘。
   //    此前只活在内存,纯只读会话(启动→看历史→退出)每次启动重跑全部规范化,

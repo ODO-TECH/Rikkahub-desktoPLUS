@@ -12,7 +12,7 @@ const serverEntry = join(import.meta.dir, "..", "server.ts");
 describe("ASR WebSocket 恶意帧防护", () => {
   test("非 JSON 文本帧被静默丢弃,连接与服务均存活", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-ws-frame-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18260", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18260", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
       stdout: "pipe",
       stderr: "pipe",

@@ -370,8 +370,10 @@ export function defaultProviders(): Provider[] {
   ];
 }
 
-export function findModel(modelId: string | null | undefined) {
-  const wanted = modelId || state.settings.chatModelId;
+/** 按 id 或 modelId 在已配置供应商里查找;找不到返回 null(不做任何回落)。
+ *  回落策略由调用方决定:UI/旧路径走 findModel(auto 兜底),子智能体的显式
+ *  model_id 必须走 findModelStrict——未知模型要报错而不是静默换成别的模型。 */
+function lookupModel(wanted: string | null | undefined) {
   for (const provider of state.settings.providers) {
     const modelItem = provider.models.find((item) => item.id === wanted || item.modelId === wanted);
     if (modelItem) {
@@ -392,7 +394,22 @@ export function findModel(modelId: string | null | undefined) {
       return { provider, model: modelItem };
     }
   }
-  return { provider: state.settings.providers.find((item) => item.enabled) ?? state.settings.providers[0], model: model("auto", "Auto") };
+  return null;
+}
+
+export function findModel(modelId: string | null | undefined) {
+  const wanted = modelId || state.settings.chatModelId;
+  return (
+    lookupModel(wanted) ?? {
+      provider: state.settings.providers.find((item) => item.enabled) ?? state.settings.providers[0],
+      model: model("auto", "Auto"),
+    }
+  );
+}
+
+/** 严格解析(子智能体 model_id):只返回真实配置的模型,未知即 null。 */
+export function findModelStrict(modelId: string) {
+  return lookupModel(modelId);
 }
 
 // 对齐移动端:日志存完整请求/响应体(供前端 JsonTree 展开),默认不再字符级截断。

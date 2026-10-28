@@ -15,6 +15,7 @@ import { state } from "../persistence/json-store";
 import { sseHeaders } from "./request";
 import { toMessageNodeDtos } from "../conversations";
 import { memoryStore } from "../memory/index";
+import { initMemoryVectorBroadcast } from "../memory/vector-index";
 import { generating } from "../conversations/generation-state";
 
 // Streaming clients receive a node_update per chunk. Since each update carries the full growing
@@ -110,6 +111,10 @@ export const conversationClients = new Map<string, Set<ReadableStreamDefaultCont
 // - 错误中心广播:通道模块(observability)不依赖 api 层,由这里把 SSE 出口喂给它。
 export function initSseWiring(): void {
   initWorkingSetSseGuard((convId) => (conversationClients.get(convId)?.size ?? 0) > 0);
+  // 特性 C：记忆索引进度与 memory/settings 同走单一应用事件通道。
+  initMemoryVectorBroadcast((event) => {
+    broadcastTo(appClients, sseFrame("memory-index", event));
+  });
   initAppErrorBroadcast((entry) => {
     broadcastTo(appClients, sseFrame("app_error", { type: "app_error", error: entry }));
   });

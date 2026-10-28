@@ -24,6 +24,7 @@ import { DEFAULT_ASSISTANT_ID, collectConversationReferencedFileIds, exportPcCon
 import { listAllConversationMetas } from "../conversations/read-queries";
 import { collectPcFileRefs, hashFileSha256 } from "./file-refs";
 import { createZipFromDirectory } from "./zip";
+import { adaptSubagentToolPartForAndroid } from "./subagent-android-export";
 import { adaptWorkspaceToolPartForAndroid } from "./workspace-android-export";
 import androidSchemaV24 from "./android-schema-v24.json";
 import { exportSkills } from "../tools";
@@ -104,7 +105,9 @@ export function backupPayloadMetadataOnly(
         backupNameById?.has(file.id) ? { ...file, backupName: backupNameById.get(file.id) } : file,
       ),
       // 记忆已独立成一类:未勾选时整段为空,恢复端见 [] 且 backupScope.memories=false → 保留本机。
-      memories: scope.memories ? memoryStore.exportFlat() : [],
+      // PC→PC 完整备份保留实验扩展（状态 / 分类 / 原文宽限期 / 墓碑），
+      // 安卓与 Kelivo 方向仍只导出 active 且不带扩展字段。
+      memories: scope.memories ? memoryStore.exportFlatWithExperiment() : [],
     },
     skills: scope.skills ? exportSkills() : [],
     // 批5:移除曾经的顶层 files[] 副本——与 state.files 完全重复(含 extractedText 时是
@@ -165,6 +168,15 @@ export function mapAvatarType(value: JsonValue, mapping: Record<string, string>)
   if (!type || !mapping[type]) return value;
   return { ...value, type: mapping[type] };
 }
+
+/** displaySetting 里安卓没有、PC 独有的显示项。单一清单:导出(to-android)据此剥离,
+ *  安卓导入据此拒绝 APP 值(见 import.ts 的 displaySetting 合并)。新增 PC-only 显示项
+ *  只登记这里,两处同时生效,不再靠手工记得补。 */
+export const PC_ONLY_DISPLAY_SETTING_FIELDS: ReadonlySet<string> = new Set([
+  "chatFontFamilyCss", "uiFontSize", "chatFontSize", "chatInputHeight",
+  "themeMode", "colorTheme", "userThemes", "language", "collapseAllSteps",
+  "pcPasteLongTextAsFile", "pcPasteLongTextThreshold",
+]);
 
 /** 方向感知的 settings 转换。
  *  - "to-android"(默认,PC→APP 导出):映射 avatar + strip PC-only 字段 + role/reasoningLevel
@@ -239,11 +251,7 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
       // - uiFontSize / chatFontSize: PC-only font size fields
       // - themeMode/colorTheme/userThemes/language: 专题8,UI 主题与语言的权威存储
       //   (从 localStorage 迁来,防端口变更导致 origin 隔离丢失)
-      const pcOnlyDisplayFields = [
-        "chatFontFamilyCss", "uiFontSize", "chatFontSize", "chatInputHeight",
-        "themeMode", "colorTheme", "userThemes", "language", "collapseAllSteps",
-      ];
-      for (const field of pcOnlyDisplayFields) {
+      for (const field of PC_ONLY_DISPLAY_SETTING_FIELDS) {
         if (field in displaySetting) delete displaySetting[field];
       }
       // 安卓对齐批6:chatFontFamily 只对安卓枚举外的值(PC 自由字体名/空串)strip;
@@ -260,10 +268,28 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
     // Strip PC-only top-level fields
     delete copy.proxyConfig;
     delete copy.preferredPort;
+    // sandboxRestricted 是机器级安全姿态(APP 无此概念;容器/安卓不吃这个开关),
+    // 跨端剥离;pc-backup(PC→PC)保留,换机恢复后下次启动生效。
+    delete copy.sandboxRestricted;
+    // subagent 是 PC-only 能力(安卓端无 subagent_dispatch、无对应设置字段),
+    // 跨端剥离;pc-backup(PC→PC)保留。
+    delete copy.subagent;
+    // 记忆实验是 PC-only 语义（安卓不认识分级/墓碑/延迟清除），跨端剥离避免把
+    // 实验开关和状态带到 APP；pc-backup（PC→PC）保留。
+    delete copy.memoryExperimentSettings;
     delete copy.keybindings;
     // webPasswordHash 是 PC-only 敏感字段(访问密码派生哈希):APP 无此概念,且敏感值不该
     // 进跨端备份。pc-backup(PC→PC)不剥,跨机恢复带上(见 api/auth.ts)。
     delete copy.webPasswordHash;
+    // sshDevices 同理,而且更硬:安卓的 SSH 配置根本不在 settings 里,而是逐工作区存在
+    // workspaces.ssh_config(凭据为 Keystore 密文,见 SshWorkspaceSettings.kt)。PC 这份带
+    // 明文密码/私钥/passphrase,形状也与安卓不同——过去既解不开,又把凭据送进可能上传
+    // WebDAV/S3 的跨端备份。pc-backup.json 不剥:PC→PC 换机必须带走设备与已信任的主机密钥。
+    delete copy.sshDevices;
+    // imAccess 同 sshDevices,而且更硬:安卓端没有 IM 接入这条链路,而这里装着 QQ 的
+    // appSecret 与微信的 botToken——明文进跨端备份等于把机器人凭据送进可能上传
+    // WebDAV/S3 的压缩包。pc-backup(PC→PC)不剥,换机必须带走绑定与配对名单。
+    delete copy.imAccess;
     // Kelivo 同步是 PC 协调端能力：安卓 settings 没有这两个字段，也不应看到
     // “是否导出 Kelivo 备份”这种桌面设置。
     delete copy.exportKelivoBackup;
@@ -426,8 +452,10 @@ export function filterMessagePartsForAndroid(
 /** PC-only 消息注解判别符(安卓 UIMessageAnnotation 只有 url_citation;PC 生成失败时
  *  写入的 model_call_error 若流入安卓即"会话打不开")。pi-fidelity 是 P7 引擎消息
  *  保真注解(块结构/思维链签名),纯 PC 工作区语义,同样不得流入安卓。steered 是
- *  steer 插话用户消息的轻量标注(仅 PC 用于将来可选 UI 标记),同样不得流入安卓。 */
-export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary", "steered"]);
+ *  steer 插话用户消息的轻量标注(仅 PC 用于将来可选 UI 标记),同样不得流入安卓。
+ *  compaction_cut 是非破坏式压缩的记忆边界标记(对话引擎手动压缩),安卓无此语义。
+ *  pinned 是用户钉住关键消息的标记(压缩时逐字注入),安卓无此能力。 */
+export const PC_ONLY_ANNOTATION_TYPES: ReadonlySet<string> = new Set(["model_call_error", "pi-fidelity", "compaction_boundary", "compaction_cut", "steered", "pinned"]);
 
 /** A-2:导出方向的注解清洗。只保留"带字符串判别符且非 PC-only"的注解——缺判别符的
  *  遗留脏对象与 PC-only 类型都会让安卓多态解码即炸;安卓自有/未来新增类型原样透传。 */
@@ -616,7 +644,8 @@ function buildAndroidDbFromVendoredSchema(dbPath: string, backupNameById?: Map<n
 function insertMemoriesIntoDb(db: InstanceType<typeof Database>) {
   const hasTable = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEntity'").get();
   if (!hasTable) return;
-  const flat = memoryStore.exportFlat();
+  // 实验：只把当前有效的记忆交给安卓；superseded / tombstone 不跨端。
+  const flat = memoryStore.exportFlatActive();
   if (flat.length === 0) return;
   const stmt = db.prepare("INSERT INTO MemoryEntity (assistant_id, content) VALUES (?, ?)");
   const seen = new Set<string>();
@@ -704,6 +733,11 @@ function insertConversationsIntoDb(db: InstanceType<typeof Database>, backupName
             let fixed = { ...p };
             if (fixed.createdAt) fixed.createdAt = toInstant(fixed.createdAt);
             if (fixed.finishedAt) fixed.finishedAt = toInstant(fixed.finishedAt);
+            if (fixed.type === "tool") {
+              // D7:subagent_dispatch 安卓无同名工具 → 降级为摘要 text part(先于工作区映射,
+              // 降级后 type 已变 text,后续映射不再作用于它)。
+              fixed = adaptSubagentToolPartForAndroid(fixed);
+            }
             if (fixed.type === "tool") {
               // M3-2(§9.1B 增强层):pi 形状 → 安卓 workspace_* 原生形状,换原生 diff/终端卡渲染。
               fixed = adaptWorkspaceToolPartForAndroid(fixed);

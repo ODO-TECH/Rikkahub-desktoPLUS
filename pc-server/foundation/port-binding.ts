@@ -147,10 +147,10 @@ export type BindResult<L> =
 
 /** 停掉一组监听器(回滚半截绑定、进程停服共用)。监听套接字在 stop 调用时同步释放,不必等待
  *  返回的 Promise(那是在途连接的收尾)。 */
-export function stopListeners(listeners: readonly StoppableListener[]): void {
+export function stopListeners(listeners: readonly StoppableListener[], closeActiveConnections = true): void {
   for (const listener of listeners) {
     try {
-      void Promise.resolve(listener.stop(true)).catch(() => {
+      void Promise.resolve(listener.stop(closeActiveConnections)).catch(() => {
         // 在途连接收尾失败:套接字已释放、进程要么继续试下一个端口要么即将退出,无可补救。
       });
     } catch {

@@ -36,6 +36,15 @@ const KELIVO_BACKUP_FORMAT_VERSION = 3;
 const KELIVO_MINIMUM_READABLE_FORMAT = 3;
 const KELIVO_MINIMUM_READABLE_SCHEMA = 3;
 
+// 本机 MemoryWriteScope(下划线) → Kelivo MemoryWriteScope(驼峰)。
+const KELIVO_MEMORY_SCOPE: Record<string, string> = {
+  always_global: "alwaysGlobal",
+  always_assistant: "alwaysAssistant",
+  tool_default_global: "toolDefaultGlobal",
+  tool_default_assistant: "toolDefaultAssistant",
+  readonly: "alwaysAssistant",
+};
+
 export interface KelivoExportResult {
   size: number;
   conversationCount: number;
@@ -178,11 +187,11 @@ function kelivoAssistantPayload(
     gradientBackgroundOffsetY: 0,
     customHeaders,
     customBody,
-    enableMemory: assistant.enableMemory === true,
-    autoOrganizeMemory: false,
-    memoryOrganizeEveryNTurns: 1,
+    enableMemory: assistant.memoryWriteScope !== "readonly" && assistant.enableMemory === true,
+    autoOrganizeMemory: assistant.autoOrganizeMemory === true,
+    memoryOrganizeEveryNTurns: Math.min(20, Math.max(1, assistant.memoryOrganizeEveryNTurns || 5)),
     memorySmartAddMode: "batched",
-    memoryWriteScope: "alwaysAssistant",
+    memoryWriteScope: KELIVO_MEMORY_SCOPE[assistant.memoryWriteScope ?? "tool_default_global"] ?? "alwaysAssistant",
     allowPastConversationRecall: assistant.enableRecentChatsReference === true,
     generateConversationSummary: false,
     recentChatsSummaryMessageCount: 5,
@@ -456,7 +465,8 @@ function buildKelivoDatabase(
       });
 
       // 记忆（同步选项未勾选时整组不写）
-      const memories = include.memories ? memoryStore.exportFlat() : [];
+      // 实验：Kelivo 契约只有 active / archived，跨端只带当前有效记忆。
+      const memories = include.memories ? memoryStore.exportFlatActive() : [];
       memories.forEach((memory, index) => {
         const assistantId = memory.assistantId === GLOBAL_MEMORY_ID || !assistantIds.has(memory.assistantId)
           ? null
@@ -675,7 +685,7 @@ export function createKelivoBackupZipToPath(targetZipPath: string): KelivoExport
     });
     const searchServices = searchExport.map((entry) => entry.payload);
     const exportedSearchSelected = Math.max(0, searchExport.findIndex((entry) => entry.sourceIndex === (settings.searchServiceSelected ?? 0)));
-    const memories = memoryStore.exportFlat().map((memory) => {
+    const memories = memoryStore.exportFlatActive().map((memory) => {
       const assistantId = memory.assistantId === GLOBAL_MEMORY_ID || !assistants.some((item) => item.id === memory.assistantId)
         ? null
         : memory.assistantId;

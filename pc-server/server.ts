@@ -6,13 +6,14 @@ import { planOriginRelay } from "./foundation/origin-relay";
 import { createOriginRelayApi, readUiOriginRecord } from "./api/origin-relay";
 import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
+import { disposeTerminalSession, handleTerminalFrame } from "./ssh/terminal-session";
 import { error, json } from "./api/request";
 import { startAnalytics } from "./app-config/analytics";
 import { bootstrap } from "./bootstrap";
 import { getStartupStatus, isStartupReady, markStartupFailed, markStartupReady } from "./foundation/startup-gate";
 import { DataDirLockedError, acquireDataDirLock, releaseDataDirLock } from "./persistence/instance-lock";
 import { runDataDirHygiene } from "./persistence/data-dir-hygiene";
-import { generating } from "./conversations/generation-state";
+import { abortGeneration, generating } from "./conversations/generation-state";
 import { handleAuthTokenRequest, handleWebAuthStatus, isWebAuthAuthorized, warnIfExposedWithoutAuth } from "./api/auth";
 import { routeStatic } from "./api/static";
 import { routeApi } from "./api/router";
@@ -26,9 +27,13 @@ import { existsSync } from "node:fs";
 import { installProcessSafetyNet, reportError } from "./observability/app-errors";
 import { bootCleanExit, bootMilestone, bootNote, bootTraceStartup, readPreviousCrashLog } from "./observability/boot-trace";
 import { killTrackedDetachedChildren } from "./workspace/tools/shell";
+import { maybeRelaunchForRestrictedSandbox } from "./workspace/restricted-launch";
 import { closeAllStdioClients } from "./tools/mcp-stdio";
+import { closeAllSshConnections } from "./ssh/client";
+import { stopAllImAdapters } from "./im/registry";
 import { maybeRunExtractionWorker } from "./files/extraction";
 import { primeFirstSpawn } from "./foundation/spawn-warm";
+import { createGracefulShutdown } from "./shutdown";
 
 // 全面审查 4-2:进程级异常兜底必须最早安装,罩住后续启动期与运行期的一切
 // 定时器/游离 Promise 顶层抛错(SIGINT/SIGTERM 的优雅停机在文件尾另行注册)。
@@ -60,6 +65,26 @@ bootMilestone("进程拉起");
 // bootstrap 关键路径上(实测与对策见 foundation/spawn-warm.ts)。必须在提取 worker 分支
 // 之后——子进程只跑一次提取就退,没必要替它垫。
 primeFirstSpawn();
+
+// S2b 受限沙盒启动编排(仅 Windows、仅首次 Medium 启动):开 = 标注工作区目录为 Low
+// 可写 → 用低完整性令牌把后端(自己)再拉起一遍 → 本准备进程干净退出;关 = 还原上次
+// 残留标签。必须在 dataDir 单实例锁之前——准备进程不抢锁,Low 子进程拿锁无竞态;
+// 子进程带 RIKKAHUB_SANDBOX_LAUNCHED=1,走到这里直接跳过,不会自重启循环。
+const restrictedLaunch = maybeRelaunchForRestrictedSandbox();
+if (restrictedLaunch.action === "relaunched") {
+  console.log(`[startup] 受限沙盒:低完整性后端已拉起(pid ${restrictedLaunch.pid}),准备进程退出。`);
+  bootNote("sandboxRelaunch", `低完整性后端 pid ${restrictedLaunch.pid}`);
+  bootCleanExit();
+  process.exit(0);
+}
+if (restrictedLaunch.action === "restored") {
+  console.log(`[startup] 受限沙盒已关闭:还原了 ${restrictedLaunch.outcome.labeled.length} 个目录的完整性标签。`);
+}
+if (restrictedLaunch.action === "relaunch_failed") {
+  // 如实降级:受限档没启成,以不受限模式继续,绝不谎报(实际档位以 /api/app/sandbox 为准)。
+  console.warn(`[startup] 受限沙盒启动失败,以不受限模式继续:${restrictedLaunch.reason}`);
+  bootNote("sandboxRelaunchFailed", restrictedLaunch.reason);
+}
 
 // R1-4:壳(lib.rs)在 stdout 解析的单行诊断标记。release 壳下 stderr 不可见,启动失败
 // 的真实原因全靠它带出去;消息压成单行,壳原样弹窗展示。code 对齐 process.exit 码,
@@ -228,13 +253,10 @@ function serveOn(hostname: string, port: number) {
           if (hasProxyForwardHeaders(request) || !isLoopbackAddress(ip)) {
             return error("Forbidden: shutdown is loopback-only", 403);
           }
-          await flushAllStateBeforeExit();
-          // 响应发出后再停服自退;100ms 让 200 先落到壳侧。
-          setTimeout(() => {
-            originRelay.stopAll();
-            stopListeners(listeners);
-            process.exit(0);
-          }, 100);
+          // 200 的契约是「全部状态已刷盘」：await 到 flush 结束再回；与信号路径共用同一套
+          // 停机编排（顺序/幂等见 shutdown.ts）。接收口以 graceful 方式停止，保留这条响应
+          // 连接，退出由编排在 200 落地后延迟执行。
+          await gracefulShutdown.run({ fromHttp: true });
           return json({ ok: true });
         }
         // Web 鉴权（阶段 5.2）：仅在配置了访问密码时生效。auth/token 端点先于
@@ -252,6 +274,12 @@ function serveOn(hostname: string, port: number) {
         }
         if (url.pathname === "/api/asr/realtime" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
           const upgraded = server.upgrade(request, { data: { kind: "asr" } as any });
+          return upgraded ? undefined : error("WebSocket upgrade failed", 400);
+        }
+        // SSH 终端:与 /api/asr/realtime 同形状的双向流,鉴权闸已在上方生效。
+        // data.kind 是 websocket 回调里区分两类会话的唯一依据(见 ssh/terminal-session.ts)。
+        if (url.pathname === "/api/ssh/terminal" && request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+          const upgraded = server.upgrade(request, { data: { kind: "ssh-terminal" } as any });
           return upgraded ? undefined : error("WebSocket upgrade failed", 400);
         }
         if (url.pathname.startsWith("/api/")) {
@@ -273,7 +301,14 @@ function serveOn(hostname: string, port: number) {
     },
     websocket: {
       message(ws, data) {
-        if ((ws.data as { kind?: string } | undefined)?.kind !== "asr") return;
+        const kind = (ws.data as { kind?: string } | undefined)?.kind;
+        // SSH 终端:帧协议全是文本帧(JSON),二进制帧一律忽略——键盘输入只会以字符串发出,
+        // 见 ssh/terminal-session.ts 的协议注释。
+        if (kind === "ssh-terminal") {
+          if (typeof data === "string") handleTerminalFrame(ws, data);
+          return;
+        }
+        if (kind !== "asr") return;
         if (typeof data === "string") {
           // 批次二 R5-6:裸 JSON.parse 会让恶意/损坏的文本帧抛进 uncaughtException
           // 安全网(进程不死但每帧一条错误中心记录)。解析失败静默丢帧即可——
@@ -296,7 +331,11 @@ function serveOn(hostname: string, port: number) {
         sendAsrAudio(session, buffer);
       },
       close(ws) {
-        if ((ws.data as { kind?: string } | undefined)?.kind === "asr") stopAsrRealtimeSession(ws);
+        const kind = (ws.data as { kind?: string } | undefined)?.kind;
+        // 前端断开 = 没人再看这一屏:终端 channel 立刻收掉,引用计数一放,
+        // 空闲扫描才会把底层连接回收(不 dispose 会把连接钉在池里直到超时)。
+        if (kind === "ssh-terminal") disposeTerminalSession(ws);
+        if (kind === "asr") stopAsrRealtimeSession(ws);
       },
     },
   });
@@ -487,15 +526,35 @@ async function flushAllStateBeforeExit(): Promise<void> {
   bootCleanExit();
 }
 
-async function shutdown() {
-  originRelay.stopAll();
-  stopListeners(listeners);
-  // 工作区 bash 残留子进程清扫(M1-5)：detached 进程组不随宿主退出，不杀会变孤儿。
-  killTrackedDetachedChildren();
-  // 本地 stdio MCP 子进程随宿主一起退出，避免留下孤儿进程。
-  closeAllStdioClients();
-  await flushAllStateBeforeExit();
-  process.exit(0);
+// HTTP 端点与信号共用同一套停机编排：停接收 → 停生产者(生成/IM) → 清 detached →
+// 关 stdio MCP/SSH → 刷盘/checkpoint/解锁 → 退出。幂等与顺序由 shutdown.ts 锁定。
+const gracefulShutdown = createGracefulShutdown({
+  stopIngress(closeActiveConnections) {
+    originRelay.stopAll();
+    stopListeners(listeners, closeActiveConnections);
+  },
+  async stopProducers() {
+    // 先掐掉在跑的生成：它们的流式写盘与本次 flush 抢同一批会话，停下来再刷才完整。
+    for (const conversationId of [...generating.keys()]) {
+      abortGeneration(conversationId, "interrupted");
+    }
+    // IM 适配器持有出站长连接,也要在刷盘前停:否则进程退了而 QQ 侧还认为机器人在线。
+    await stopAllImAdapters();
+  },
+  killDetachedChildren: killTrackedDetachedChildren,
+  closeStdioAndSsh() {
+    // 本地 stdio MCP 子进程随宿主一起退出;SSH 连接池带凭据长驻,退出前主动收线。
+    closeAllStdioClients();
+    closeAllSshConnections();
+  },
+  flushAll: flushAllStateBeforeExit,
+  exit(code) {
+    process.exit(code);
+  },
+});
+
+function shutdown(): void {
+  void gracefulShutdown.run();
 }
 
 process.on("SIGINT", shutdown);

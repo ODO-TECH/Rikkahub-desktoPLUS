@@ -3,12 +3,16 @@
 
 import type { State } from "../foundation/types";
 import type { Settings } from "../foundation/types/settings";
+import { defaultImAccess } from "../foundation/types/settings/im-access";
+import { defaultSubagentConfig } from "../foundation/types/settings/subagent-config";
 import { id } from "../foundation/utils";
 import { RUNNING_IN_CONTAINER } from "../foundation/platform";
 import { DEFAULT_AUTO_MODEL_ID, defaultProviders } from "../model-providers";
 import { DEFAULT_SYSTEM_TTS_ID, defaultTtsProviders } from "../media/tts";
 import { defaultAssistant } from "../assistants";
 import { defaultRequestStats } from "../api/logs";
+import { DEFAULT_MEMORY_VECTOR_SETTINGS } from "../memory/vector-settings";
+import { DEFAULT_MEMORY_EXPERIMENT_SETTINGS } from "../memory/experiment/config";
 import {
   DEFAULT_COMPRESS_PROMPT,
   DEFAULT_OCR_PROMPT,
@@ -80,6 +84,10 @@ export function defaultSettings(): Settings {
       uiFontSize: null,
       pasteLongTextAsFile: false,
       pasteLongTextThreshold: 1000,
+      // PC 端「粘贴超长文本转 txt」独立字段:安卓同名设置默认关、且会随备份导入覆盖,
+      // 不能复用。PC 默认开、阈值 5000,导出安卓时剥离。
+      pcPasteLongTextAsFile: true,
+      pcPasteLongTextThreshold: 5000,
       // 朗读过滤开关(台账 §4.1):字段名 byte-match Android displaySetting,跨端备份透传。
       // 默认关 —— 角色扮演用户按需开「只读引号内」只念台词、「不读括号」跳过注释。
       ttsOnlyReadQuoted: false,
@@ -101,11 +109,18 @@ export function defaultSettings(): Settings {
     imageGenerationModelId: "",
     ocrModelId: "",
     compressModelId: DEFAULT_AUTO_MODEL_ID,
+    // 自动压缩默认关:它会静默调用压缩模型(可能计费),只在用户主动打开后生效。
+    // 关闭时上下文接近上限仍由最后一条回复后的提示条提醒手动压缩。
+    chatAutoCompact: false,
+    // 子智能体(PC-only):默认关。开关/并发/任务上限/token 预算/子面工具,见
+    // foundation/types/settings/subagent-config.ts(区间校验与默认值单源)。
+    subagent: defaultSubagentConfig(),
     promptOptimizeModelId: "",
     // 全局嵌入 / 重排场景档:默认未配置(空串),由用户在「设置 › 模型 › 场景模型」里
     // 从已添加的 EMBEDDING / RERANK 模型中选。两者都是「报错档」语义:没选 = 相关功能不可用。
     embeddingModelId: "",
     rerankModelId: "",
+    memoryModelId: "",
     promptOptimizePrompt: DEFAULT_PROMPT_OPTIMIZE_PROMPT,
     titlePrompt: DEFAULT_TITLE_PROMPT,
     translatePrompt: DEFAULT_TRANSLATION_PROMPT,
@@ -165,6 +180,7 @@ export function defaultSettings(): Settings {
     dismissedSearchServiceTypes: [],
     mcpServers: [],
     sshDevices: [],
+    imAccess: defaultImAccess(),
     modeInjections: [
       {
         type: "mode",
@@ -236,6 +252,9 @@ export function defaultSettings(): Settings {
     },
     webServerJwtEnabled: false,
     preferredPort: null,
+    // 受限沙盒默认关(S2b):开启即"agent 只能写工作区与数据目录,其余位置只读"——
+    // 重启时经 workspace/restricted-launch.ts 标注目录并降级自重启,改动才会生效。
+    sandboxRestricted: false,
     workspaceLastPermissionPreset: null,
     shellPath: "",
     keybindings: {
@@ -255,7 +274,13 @@ export function defaultSettings(): Settings {
     memorySettings: {
       globalEnabled: true,
       writeStrategy: "ask",
+      dedupEnabled: true,
+      memoryModelThinkingEnabled: false,
     },
+    // 特性 C：默认关闭——零网络请求，注入行为与未引入时逐字节一致。
+    memoryVectorSettings: { ...DEFAULT_MEMORY_VECTOR_SETTINGS },
+    // 实验：记忆与上下文的失真/遗忘。默认全关 + dry-run，关闭时零副作用。
+    memoryExperimentSettings: { ...DEFAULT_MEMORY_EXPERIMENT_SETTINGS },
   };
 }
 

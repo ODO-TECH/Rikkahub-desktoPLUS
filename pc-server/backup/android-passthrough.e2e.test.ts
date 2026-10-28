@@ -70,7 +70,7 @@ function buildStoredZip(entries: Array<{ name: string; data: Buffer }>): Buffer 
 describe("安卓独有字段透传(产品决策②)", () => {
   test("APP zip 导入 → /settings 可见 → PC 导出 zip 的 settings.json 原样携带", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rkh-passthrough-e2e-"));
-    const proc = Bun.spawn(["bun", serverEntry, "--port", "18260", "--no-open"], {
+    const proc = Bun.spawn([process.execPath, serverEntry, "--port", "18260", "--no-open"], {
       env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir, RIKKAHUB_ANALYTICS: "0" },
       stdout: "pipe",
       stderr: "pipe",
@@ -136,7 +136,16 @@ describe("安卓独有字段透传(产品决策②)", () => {
     } finally {
       proc.kill();
       await proc.exited;
-      rmSync(dataDir, { recursive: true, force: true });
+      // Windows 在进程退出后短暂仍持有临时目录句柄(杀软/索引器与 SQLite 收尾),EBUSY 重试。
+      for (let attempt = 0; ; attempt++) {
+        try {
+          rmSync(dataDir, { recursive: true, force: true });
+          break;
+        } catch (error) {
+          if (attempt >= 9) throw error;
+          await Bun.sleep(100);
+        }
+      }
     }
   }, 60_000);
 });

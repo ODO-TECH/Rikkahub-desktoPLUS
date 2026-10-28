@@ -35,7 +35,8 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 function spawnPcServer() {
-  return Bun.spawn(["bun", "run", "server.ts"], {
+  // 直接起 server.ts(理由同 request-chain-smoke:`bun run` 包装层会让 kill() 留下孤儿服务器)。
+  return Bun.spawn([process.execPath, "server.ts"], {
     cwd: serverDir,
     env: {
       ...process.env,

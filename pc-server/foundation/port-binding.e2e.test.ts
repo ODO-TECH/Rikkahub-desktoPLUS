@@ -19,7 +19,7 @@ function freePort(): number {
 }
 
 function spawnServer(args: string[]) {
-  return Bun.spawn(["bun", serverEntry, ...args, "--no-open"], {
+  return Bun.spawn([process.execPath, serverEntry, ...args, "--no-open"], {
     env: { ...process.env, RIKKAHUB_PC_DATA_DIR: mkdtempSync(join(tmpdir(), "rkh-port-binding-e2e-")) },
     stdout: "pipe",
     stderr: "pipe",

@@ -212,6 +212,7 @@ interface NonChatCallInput {
   kind: NonChatModelType;
   body: Record<string, JsonValue>;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 /** 两条线路共用一次出站：凭据解析（订阅轨锁内刷新）→ 模型级 customBodies →
@@ -235,7 +236,7 @@ async function callNonChat(input: NonChatCallInput): Promise<any> {
       method: "POST",
       headers,
       body: JSON.stringify(finalBody),
-      timeoutMs: NON_CHAT_TIMEOUT_MS,
+      timeoutMs: input.timeoutMs ?? NON_CHAT_TIMEOUT_MS,
       signal: input.signal,
     });
   } catch (err) {
@@ -294,7 +295,7 @@ export async function callEmbeddings(
   providerItem: Provider,
   modelItem: Model,
   texts: string[],
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<EmbeddingsResult> {
   const body = embeddingsRequestBody(modelItem.modelId, texts);
   const raw = await callNonChat({
@@ -303,6 +304,7 @@ export async function callEmbeddings(
     kind: "EMBEDDING",
     body,
     signal: opts?.signal,
+    timeoutMs: opts?.timeoutMs,
   });
   return parseEmbeddingsPayload(raw, texts.length);
 }
@@ -313,7 +315,7 @@ export async function callRerank(
   modelItem: Model,
   query: string,
   documents: string[],
-  opts?: { signal?: AbortSignal; topN?: number },
+  opts?: { signal?: AbortSignal; topN?: number; timeoutMs?: number },
 ): Promise<RerankResult> {
   const body = rerankRequestBody(modelItem.modelId, query, documents, opts?.topN);
   const raw = await callNonChat({
@@ -322,6 +324,7 @@ export async function callRerank(
     kind: "RERANK",
     body,
     signal: opts?.signal,
+    timeoutMs: opts?.timeoutMs,
   });
   return parseRerankPayload(raw, documents.length);
 }

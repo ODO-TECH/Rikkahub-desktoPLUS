@@ -61,6 +61,24 @@ For each element, specify:
 Keep the original reading order and layout structure as much as possible.
 Do not interpret or translate—only transcribe and describe what is visually present.`;
 
+/** 链式摘要超预算后的二次浓缩提示词。与 DEFAULT_COMPRESS_PROMPT 分开:输入已经是
+ *  摘要而非对话,要求"合并重复、保住事实",避免模型把它当新对话再归纳一遍。 */
+export const DEFAULT_CONDENSE_SUMMARY_PROMPT = `You are a context compaction assistant. The text below is an existing summary of an earlier conversation that has grown beyond its budget. Condense it further.
+
+Requirements:
+1. Preserve every fact, decision, name, number, preference, and open task that may matter later
+2. Remove repetition and low-value phrasing; merge overlapping points
+3. Keep the summary in the same language as the input
+4. Target approximately {target_tokens} tokens
+5. Output the summary directly without explanations or meta-commentary
+6. Keep the opening indicator that marks this as a summary of the earlier conversation
+
+{additional_context}
+
+<summary>
+{content}
+</summary>`;
+
 export const DEFAULT_COMPRESS_PROMPT = `You are a conversation compression assistant. Compress the following conversation into a concise summary.
 
 Requirements:

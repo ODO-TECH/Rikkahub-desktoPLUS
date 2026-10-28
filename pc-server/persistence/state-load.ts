@@ -3,7 +3,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, Provider, State, StoredFile, WriteStrategy } from "../foundation/types";
+import type { AssistantMemoryFile, Conversation, GlobalMemoryFile, JsonValue, MemoryWriteScope, Provider, State, StoredFile, WriteStrategy } from "../foundation/types";
 import { getStringArray, id, isRecord, mergeById, uniqueStrings } from "../foundation/utils";
 import { assistantMemoryPath, dataDir, filesDir, globalMemoryPath, pendingMemoryPath, skillsDir, statePath } from "../foundation/paths";
 import { normalizeProxyConfig, normalizePreferredPort } from "../foundation/net";
@@ -23,6 +23,8 @@ import { setStartupPhase } from "../foundation/startup-gate";
 import { countConversations } from "../conversations/read-queries";
 import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
 import { memorySqlReady } from "../memory/sqlite";
+import { normalizeMemoryVectorSettings } from "../memory/vector-settings";
+import { normalizeMemoryExperimentSettings } from "../memory/experiment/config";
 import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, OAUTH_PROVIDER_IDS, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
 import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
 import { normalizeTtsProviders } from "../media/tts";
@@ -34,6 +36,8 @@ import {
   normalizeMediaUploadS3Config,
 } from "../app-config/media-generation-config";
 import { normalizeSshDevices } from "../ssh/devices";
+import { normalizeSubagentConfig } from "../foundation/types/settings/subagent-config";
+import { normalizeImAccess } from "../im/config";
 import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } from "../backup/file-refs";
 import { writeExtractedTextSidecar } from "../files/index";
 import { rebuildFtsFromNodeTable } from "../conversations/fts";
@@ -113,8 +117,10 @@ export function normalizeState(input: Partial<State>): State {
   // 用户删掉的预置项重启即复活。墓碑住 settings、由删除端点写入、保存/重加撤销,随备份
   // 天然往返(pc-backup 带走、安卓 zip 忽略未知键)。只拦"缺省补齐"——显式存在于列表的
   // 条目永远保留(备份恢复带回的旧列表以在场为准)。老数据无该字段 → 空墓碑,行为不变。
-  normalized.settings.dismissedProviderIds = uniqueStrings(getStringArray(normalized.settings.dismissedProviderIds));
-  normalized.settings.dismissedAssistantIds = uniqueStrings(getStringArray(normalized.settings.dismissedAssistantIds));
+  // 子智能体设置(PC-only):存量 state 无该字段或字段损坏 → 逐字段回落默认;
+  // 写入侧区间校验在 API,这里只做加载宽容归一。
+  normalized.settings.subagent = normalizeSubagentConfig((parsedSettings as unknown as Record<string, unknown>).subagent);
+  normalized.settings.dismissedProviderIds = uniqueStrings(getStringArray(normalized.settings.dismissedProviderIds));  normalized.settings.dismissedAssistantIds = uniqueStrings(getStringArray(normalized.settings.dismissedAssistantIds));
   const dismissedProviderIds = new Set(normalized.settings.dismissedProviderIds);
   const dismissedAssistantIds = new Set(normalized.settings.dismissedAssistantIds);
   normalized.settings.providers = mergeById(
@@ -174,14 +180,58 @@ export function normalizeState(input: Partial<State>): State {
         writeStrategy: ws === "always_assistant" || ws === "always_global" || ws === "readonly"
           ? (ws as WriteStrategy)
           : "ask",
+        dedupEnabled: (userMs as unknown as Record<string, unknown>).dedupEnabled !== false,
+        memoryModelThinkingEnabled: (userMs as unknown as Record<string, unknown>).memoryModelThinkingEnabled === true,
       };
     } else {
       const allDisabled = normalized.settings.assistants.length > 0
         && normalized.settings.assistants.every((a) => !a.enableMemory);
-      normalized.settings.memorySettings = { globalEnabled: !allDisabled, writeStrategy: "ask" };
+      normalized.settings.memorySettings = {
+        globalEnabled: !allDisabled,
+        writeStrategy: "ask",
+        dedupEnabled: true,
+        memoryModelThinkingEnabled: false,
+      };
     }
   }
+  // 写入策略下沉到助手：老数据无 memoryWriteScope 时按全局 writeStrategy 迁移，
+  // 新助手由 defaultAssistant 给出 tool_default_global。每一档都保持老行为语义。
+  {
+    const legacyScopeByStrategy: Record<WriteStrategy, MemoryWriteScope> = {
+      ask: "tool_default_global",
+      always_assistant: "always_assistant",
+      always_global: "always_global",
+      readonly: "readonly",
+    };
+    normalized.settings.assistants = normalized.settings.assistants.map((assistant) => {
+      const rawScope = (assistant as unknown as Record<string, unknown>).memoryWriteScope;
+      const scope: MemoryWriteScope = rawScope === "always_global"
+        || rawScope === "always_assistant"
+        || rawScope === "tool_default_global"
+        || rawScope === "tool_default_assistant"
+        || rawScope === "readonly"
+        ? rawScope
+        : legacyScopeByStrategy[normalized.settings.memorySettings.writeStrategy];
+      const rawTurns = Number((assistant as unknown as Record<string, unknown>).memoryOrganizeEveryNTurns);
+      return {
+        ...assistant,
+        memoryWriteScope: scope,
+        autoOrganizeMemory: (assistant as unknown as Record<string, unknown>).autoOrganizeMemory === true,
+        memoryOrganizeEveryNTurns: Number.isFinite(rawTurns) ? Math.min(20, Math.max(1, Math.round(rawTurns))) : 5,
+      };
+    });
+  }
+  // 记忆场景模型（去重/整理共用）:老 state 无此键 → 空串（未配置）。
+  if (typeof normalized.settings.memoryModelId !== "string") normalized.settings.memoryModelId = "";
   normalized.settings.displaySetting = { ...defaults.displaySetting, ...(normalized.settings.displaySetting ?? {}) };
+  // 特性 C：记忆向量设置的字段级规范化（老 state 无此键 → 默认关闭；非法数值逐项夹取）。
+  normalized.settings.memoryVectorSettings = normalizeMemoryVectorSettings(
+    (parsedSettings as unknown as Record<string, unknown>).memoryVectorSettings,
+  );
+  // 实验：记忆与上下文。老 state 无此键 → 全部关闭（含 dry-run），行为不变。
+  normalized.settings.memoryExperimentSettings = normalizeMemoryExperimentSettings(
+    (parsedSettings as unknown as Record<string, unknown>).memoryExperimentSettings,
+  );
   // Backfill keybindings:以默认表为基底,逐 action 用用户保存的条目覆盖。保证新增 action 自动补
   // 默认、过滤未知 action、且每条 entry 字段完整(即使用户手改 state.json 造成残缺,默认值兜底)。
   const keybindingDefaults = defaults.keybindings as Record<string, JsonValue>;
@@ -338,6 +388,8 @@ export function normalizeState(input: Partial<State>): State {
   normalized.settings.defaultMediaImageModel = normalizeMediaModelRef(normalized.settings.defaultMediaImageModel);
   normalized.settings.defaultMediaVideoModel = normalizeMediaModelRef(normalized.settings.defaultMediaVideoModel);
   normalized.settings.sshDevices = normalizeSshDevices(normalized.settings.sshDevices);
+  // 外部接入(IM):老 state 无字段 → 未绑定未启用,零出站连接。
+  normalized.settings.imAccess = normalizeImAccess(normalized.settings.imAccess);
   // Kelivo 兼容备份：默认关闭（它与「全部数据」完整备份不对齐），只有显式开启才生效。
   normalized.settings.exportKelivoBackup = normalized.settings.exportKelivoBackup === true;
   // 「全部数据」是独立的备份模式（不是把 12 项勾满）：缺省开启；开启时导出/同步忽略
