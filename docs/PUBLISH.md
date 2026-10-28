@@ -38,7 +38,7 @@ README、关于页、侧栏与崩溃报告按钮里的链接都按 `ODO-TECH/Rik
 
 GitHub 仓库页右上角的 Description 建议直接填：
 
-> RikkaHub Desktop 的社区增强分支：Windows 原生 WebView2 壳、SQLite 本地数据、stdio MCP、SSH 远程设备、Kelivo 同步与 12 项备份，并提供飞牛 OS / Docker 自托管部署。
+> RikkaHub Desktop 的社区增强分支：Windows 原生 WebView2 壳、SQLite 本地数据、stdio MCP、SSH 远程工作区、Kelivo 同步与 12 项备份，并提供飞牛 OS / Docker 自托管部署。
 
 Topics 建议：`llm` `ai-client` `desktop-app` `docker` `self-hosted` `bun` `react` `tauri`
 `webview2` `mcp` `sqlite` `ssh` `nas` `fnos` `windows` `linux`。

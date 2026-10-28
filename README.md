@@ -60,7 +60,7 @@ Windows 便携版在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub
 | 2 | MCP | 新增本地 stdio 传输与 JSON 导入；移除 SSE |
 | 3 | 本地数据 | 会话、消息、记忆迁入 SQLite，提供存储概览 |
 | 4 | Windows 桌面 | 新增 WebView2 原生壳（非 Electron），冷启动约 6.3 s → 1.9 s |
-| 5 | SSH | 新增远程设备管理、连接测试与单次命令执行 |
+| 5 | SSH | 新增远程设备与授权目录管理、SFTP 文件面、交互式终端，并作为 AI 工作区接入对话 |
 | 6 | Kelivo | 支持 8 类数据导入与 schema v3 格式导出 |
 | 7 | 备份 | 12 项 `backupScope` 统一管理本地 / WebDAV / S3 / Kelivo |
 | 8 | 网络 | 端口设置移入数据管理，支持保存并重启 |
@@ -106,12 +106,15 @@ Windows 便携版在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub
 - 使用系统自带的 `csc.exe`（.NET Framework 4.8）单文件编译，不需要 Visual Studio。
 - Tauri 壳保留（上游形态；Linux 打包与 NSIS 安装包依赖它），两种壳可共存。
 
-### 5. SSH 远程设备
+### 5. SSH 远程工作区
 
-- 接口：设备增删改、排序、连接测试、单次命令执行（`ssh/device`、`ssh/reorder`、`ssh/test`、`ssh/exec`）。
-- 支持密码与私钥（可带 passphrase）两种认证方式；基于 `ssh2`。
-- 凭据保存在本地设置 `settings.sshDevices`（`state.json`），不随 Android 备份导出。
-- 当前不提供交互式 shell、SFTP 与端口转发。
+- 入口在「设置 › 拓展 › SSH」：管理设备（密码或私钥，私钥可带 passphrase，基于 `ssh2`）与每台设备被授权访问的远程目录；首次连接需确认主机密钥，密钥变更即拒连。
+- 工作区绑定：创建工作区时选一台设备的一个已授权目录，工作区记录只保存设备 id 与目录 id，不复制凭据。
+- 界面：会话右侧面板可浏览、预览、编辑、上传、下载远程文件（SFTP），并可开一条交互式终端（`/api/ssh/terminal`）。远程目录不做改名、宿主文件管理器定位与项目 AGENTS.md。
+- AI 对话：SSH 工作区可作为会话工作区，工具只有 `read` 与 `bash`（改文件由 shell 完成），与移动端同一套能力面；命令超时上限 600 s。
+- 连接与限额：同设备连接进池复用、空闲 5 分钟回收；单次列目录 500 条，界面读文件 512 KiB、写 2 MiB、下载 64 MiB。
+- 凭据只保存在本地设置 `settings.sshDevices`（`state.json`）：PC→PC 备份（`pc-backup.json`）带着它做跨机恢复，Android 兼容导出（`settings.json`）整段剥离——安卓的 SSH 配置逐工作区存放，且凭据是 Keystore 密文。
+- 不提供端口转发。
 
 ### 6. Kelivo 同步与数据互传
 
@@ -145,6 +148,14 @@ Kelivo 的 8 类选项由同一份 `backupScope` 派生，避免两套开关各�
 - 端口设置位于「设置 → 数据管理 → Web 服务」，直接输入端口号，提供「保存」与「保存并重启」。
 - 桌面默认端口 `17455`；容器内固定 `11451`（喜）。
 - 默认只监听回环地址（`127.0.0.1` 与 `::1`）；需要局域网或反向代理访问时，用 `--host 0.0.0.0` 或 `RIKKAHUB_HOST` 显式开放，并同时设置访问密码。
+
+### 9. 受限沙盒
+
+一句话承诺：**agent 只能写入工作区与数据目录，其余位置一律只读。** 两种部署各用各的机制兑现同一份承诺，应用只声明一次、实测一次：
+
+- **Windows**：「设置 › 网络 › Web 服务 › 受限沙盒」开关（默认关）。开启并重启后，后端把工作区与 `pc-data` 标成低完整性可写区，再以低完整性令牌自重启——此后区外写入被 Windows 内核直接拒绝（no-write-up 规则），与审批无关。全程免提权、无 UAC 弹窗；关闭并重启即还原标签。
+- **容器**：边界就是挂载表（`:rw` 只给工作区，其余 `:ro` 或不挂载 + 只读根 fs），应用内开关不参与。
+- 不粉饰：后端启动时向区外写探针文件实测，`GET /api/app/sandbox` 与工作区权限下拉里如实显示「已生效 / 未生效 / 无法判定」；边界生效时审批卡不再承诺"允许一次就能写区外"。
 
 ## 冷启动优化
 
@@ -239,15 +250,21 @@ Tauri NSIS 流程、内嵌 bash bundle 的生成与便携版目录布局见 [doc
 把仓库放到 NAS 上（例如 `/vol1/1000/docker/rikkahub-desktop-plus`），在仓库根目录执行：
 
 ```bash
+cp .env.example .env        # 填入 RIKKAHUB_PASSWORD
 docker compose up -d --build
 docker compose logs -f
 ```
 
+访问密码是 compose 的必填项：没设置时 `docker compose up` 直接报错退出，不会起一个不鉴权的服务（服务端在无密码时对 `/api/*` 不做鉴权，端口又对整个局域网开放）。
+
 首次构建要在容器内克隆 pi 引擎、编译前后端，耗时数分钟到十几分钟；之后复用构建缓存，`docker compose up -d` 几秒即可。
 构建阶段能访问 GitHub 时无需额外配置；NAS 出网受限时，取消 `docker-compose.yml` 里 `build.args` 的注释并填入代理。
 
-启动完成后打开 `http://<NAS 地址>:11451`，在「设置 → 数据管理 → Web 服务」里设置访问密码。
-不设密码时，同一网段内任何人都能读写会话与 API Key。
+镜像以 uid/gid `1000` 非 root 运行。`docker run` 首次启动前先对齐宿主目录归属：
+
+```bash
+mkdir -p pc-data && sudo chown -R 1000:1000 pc-data
+```
 
 不用 compose 时：
 
@@ -284,24 +301,26 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
 | `skills/`、`fonts/` | 技能与自定义字体 |
 | `workspaces/` | 托管型工作区 |
 | `memory/`、`AGENTS.md` | 记忆快照与全局工作区指引 |
-| `logs/`、`tmp/`、`updates/`、`pi-agent/` | 取证日志、暂存区、更新缓存、引擎工作目录 |
+| `logs/`、`tmp/`、`updates/`、`pi-agent/`、`home/` | 取证日志、暂存区、更新缓存、引擎工作目录、容器内 `HOME` |
 
 ### 挂载 NAS 目录作为工作区
 
-需要让 agent 读写 NAS 上的真实目录时，把宿主目录挂到容器内的 `/workspace/<名字>`：
+容器的安全边界就是挂载表：`:rw` = agent 可读可写，`:ro` = 只能读，没挂 = 看不见。所以「工作区可写、其他只读」这个档位在容器里就写成：
 
 ```yaml
     volumes:
       - ./pc-data:/app/pc-data
-      - /vol1/1000/documents:/workspace/docs
+      - /vol1/1000/agent/workspace:/workspace:rw     # 唯一推荐可写的工作区
+      - /vol1/1000/documents:/data/documents:ro      # 其余一律只读
 ```
 
-`docker compose up -d` 后，用 `docker exec rikkahub-plus ls -la /workspace/docs` 确认能看到文件。
-然后在应用里新建**文件夹型工作区**，路径填 **容器内路径** `/workspace/docs`，而不是 NAS 上的宿主路径；创建后会弹出信任授权窗口。
+`docker compose up -d` 后，用 `docker exec rikkahub-plus ls -la /workspace` 确认能看到文件。
+然后在应用里新建**文件夹型工作区**，路径填 **容器内路径** `/workspace`，而不是 NAS 上的宿主路径；创建后会弹出信任授权窗口。
 
 - 多目录就加多行，容器内路径不要重名；只读挂载加 `:ro`。
+- 每多一个 `:rw` 挂载，可写范围就扩大一块——代码里的路径检查补不回来。
 - 路径含空格或中文时整行加引号。
-- 容器默认以 root 运行，挂载目录里新建的文件在 NAS 上归 root。要归属飞牛普通用户，用 compose 里的 `user: "1000:1000"`，先 `chown` 宿主目录，并同时设置 `HOME: "/tmp"`。
+- 镜像以 uid `1000` 运行；宿主目录归属不同时 `sudo chown -R 1000:1000 <宿主目录>`，或用 compose 的 `RIKKAHUB_UID` / `RIKKAHUB_GID` 改运行身份。
 - 备份与迁移只覆盖 `pc-data/`，挂载目录不在备份范围内，需要 NAS 侧自行快照。
 - 「完全访问」档位下写入不逐条审批，只挂载确实需要的目录。
 
@@ -309,7 +328,9 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `RIKKAHUB_PASSWORD` | 空 | Web 访问密码；留空 = 不鉴权 |
+| `RIKKAHUB_PASSWORD` | **compose 必填** | Web 访问密码；未设置时 compose 拒绝启动 |
+| `RIKKAHUB_BIND_ADDR` | `0.0.0.0` | 仅 compose：宿主监听地址；改 `127.0.0.1` 只能本机/隧道访问 |
+| `RIKKAHUB_UID` / `RIKKAHUB_GID` | `1000` | 容器运行身份；改后同步 `chown` |
 | `RIKKAHUB_HTTP_PORT` | `11451` | 仅 compose：宿主机映射端口 |
 | `PORT` | `11451` | 容器内监听端口；改动需同步端口映射 |
 | `RIKKAHUB_ANALYTICS` | `0` | 镜像默认关闭匿名统计；设 `1` 会向**上游**端点上报 |
@@ -322,6 +343,7 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
 ### Linux 适配点
 
 - 运行时为 `debian:bookworm-slim`，agent 的 bash 工具走 `/bin/bash`，不再因 distroless 缺 shell 而停用。
+- 默认非 root（uid 1000）：根文件系统只读、capability 全部去掉、`no-new-privileges`；运行期唯一写入点是挂载的 `pc-data`。
 - `zip` / `unzip` 在 `PATH` 上，备份导出与 ZIP 导入可用；`curl` 支撑健康检查。
 - 内置字体通过 fontconfig 注册，`fc-list` 能枚举 HarmonyOS Sans、Noto Serif SC 等。
 - 健康检查每 30 秒请求 `/api/health`；该端点不含用户数据，设置密码后仍可探测，容器不会假死。
@@ -364,7 +386,7 @@ pc-data/
 └── logs/                   # 仅在上次异常退出时保留取证日志
 ```
 
-备份导出时另生成 Android 兼容的会话库，与活库在表名和 schema 上分离。导出内容由 `backupScope` 的 12 项决定，可分别写入本地 zip、WebDAV、S3 与 Kelivo；导出不含 SSH 凭据、界面 origin 记录与设备 ID。
+备份导出时另生成 Android 兼容的会话库，与活库在表名和 schema 上分离。导出内容由 `backupScope` 的 12 项决定，可分别写入本地 zip、WebDAV、S3 与 Kelivo；Android 兼容的那份设置不含 SSH 设备表（凭据）、界面 origin 记录与设备 ID，`pc-backup.json`（PC→PC）则原样保留设置以支持跨机恢复。
 
 ## 配置参考
 
@@ -394,7 +416,7 @@ pc-data/
 ## 已知限制
 
 - **macOS 不受支持。** 没有 Mac 设备，无法构建、签名或验证产物，相关定义仅为上游遗留。
-- **SSH 能力有限。** 仅支持设备管理与单次命令执行，没有交互式 shell、SFTP、端口转发。
+- **SSH 不是沙箱。** 边界止于授权目录（路径按词法归一、不跟随符号链接），远端是一台真实机器；远程目录不支持改名、宿主定位与项目 AGENTS.md，也没有端口转发。
 - **MiMo 没有实时语音。** 仅听写，无实时通话模式。
 - **SSE 已移除。** 依赖 SSE 语义的第三方配置需改为 Streamable HTTP。
 - **Kelivo 导出不含附件。**
@@ -451,7 +473,7 @@ Included in this branch:
 - **Local MCP over stdio** — subprocess servers with `command` / `args` / `env` / `cwd`, and JSON import from Claude Desktop / Cursor / VS Code / Cline (imports disabled by default). The SSE transport has been removed; legacy configs are normalized to Streamable HTTP.
 - **SQLite-backed local data** — conversations, message nodes, FTS5 index, assistant memory, pending memory and workspaces, with a one-time migration that keeps a rollback path, plus a storage-overview panel.
 - **Native Windows shell** — WinForms + the system Edge WebView2 runtime (not Electron, no bundled Chromium), cutting cold start from ~6.3 s to ~1.9 s.
-- **SSH remote devices** — create/update/reorder/test and one-shot command execution; no interactive shell, SFTP or tunnelling.
+- **SSH remote workspaces** — device and authorized-directory management with host-key trust, SFTP browsing / editing / upload / download, an interactive terminal, and AI use as a workspace (`read` + `bash` only); no port forwarding.
 - **Optional Kelivo sync** — 8 import categories, schema-v3 export, attachments excluded.
 - **12-item `backupScope`** — a single set of switches governing local, WebDAV, S3 and Kelivo backups.
 - **Docker / Linux NAS deployment** — a `debian:bookworm-slim` runtime with bash, zip/unzip and fontconfig, a `docker-compose.yml` tuned for fnOS, a fixed container port of 11451, and `/workspace/<name>` mounts for NAS folders used as agent workspaces.
