@@ -3,10 +3,12 @@
 
 import { formatKeyLocal, getStringArray, isRecord } from "../foundation/utils";
 import type { Assistant, JsonValue, MemorySettings } from "../foundation/types";
+import type { SubagentConfig } from "../foundation/types/settings/subagent-config";
 import { isMcpToolEnabledForAssistant } from "./approval";
 import { listSkills } from "./skills";
 import { ASK_USER_TOOL_DESCRIPTION, ASK_USER_TOOL_NAME, askUserQuestionsSchema } from "./ask-user";
 import { inlineMcpToolSchema } from "./schema-inline";
+import { canAssistantWriteMemory } from "../memory/write-policy";
 
 export function openAiSearchTools(enableWebSearch: boolean) {
   return enableWebSearch
@@ -98,33 +100,68 @@ export function openAiSkillTools(assistant: Assistant, listSkillsImpl = listSkil
   ];
 }
 
-export function openAiLocalTools(assistant: Assistant, memorySettings: MemorySettings) {
+export function openAiLocalTools(
+  assistant: Assistant,
+  memorySettings: MemorySettings,
+  options?: { structuredIntake?: boolean },
+) {
   const enabled = new Set((assistant.localTools ?? []).map((tool) => isRecord(tool) ? String(tool.type ?? "") : String(tool)));
+  const structuredIntake = options?.structuredIntake === true;
   const tools = [];
-  // save_memory(1.3.2):模型只负责"提议"记忆,不感知层级(全局/助手对模型透明)。暴露条件:
-  //   (助手层 enableMemory 或 全局层 globalEnabled)至少一个开
-  //   且 writeStrategy !== "readonly"(只读模式不暴露,模型只看注入的已有记忆)
-  // 替代旧的 memory_tool(create/edit/delete)——v1 废弃模型 edit/delete,定位歧义从根本上绕开(N3)。
-  const canWriteMemory = (assistant.enableMemory || memorySettings.globalEnabled)
-    && memorySettings.writeStrategy !== "readonly";
+  // save_memory(1.3.2 / 助手级策略):写入范围由 assistant.memoryWriteScope 决定。
+  //   readonly 不暴露；全局层与助手层都关也不暴露。
+  //   tool_default_* 档把 scope 参数暴露给模型，其余档位不给（避免模型产生无法兑现的意图）。
+  const canWriteMemory = canAssistantWriteMemory(assistant);
+  const modelPicksScope = canWriteMemory
+    && memorySettings.globalEnabled
+    && assistant.enableMemory
+    && (assistant.memoryWriteScope === "tool_default_global" || assistant.memoryWriteScope === "tool_default_assistant");
+  const defaultScopeLabel = assistant.memoryWriteScope === "tool_default_assistant" ? "this assistant's memory" : "global memory";
   if (canWriteMemory) {
     tools.push({
       type: "function" as const,
       function: {
         name: "save_memory",
         description: `Propose a memory to remember for future conversations.
-The user will later confirm whether and where to save it (you won't see this step).
 Use this when you notice durable facts worth remembering: preferred name, preferences,
 plans, work context, chat style, etc.
 Do NOT store sensitive info (ethnicity, religion, sexual orientation, political views,
 criminal records). Prefer checking the injected <memories> list first; if a similar one
-exists, propose the updated content anyway and the user will reconcile.
+exists, propose the updated content anyway — duplicates are merged automatically.
+${structuredIntake ? "Classify what you save: setting = durable identity or rule; habit = recurring behavior; event = one-off occurrence that may fade. Keep facets sparse (time/place/person/event/tags), only filling what the conversation supports. Set explicit_remember only when the user explicitly asks you to remember it.\n" : ""}${modelPicksScope ? `Destination defaults to ${defaultScopeLabel}; set scope only when the user explicitly wants the other scope.` : ""}
 Today is ${formatKeyLocal(new Date())}.
 Do not mention to the user that you are saving a memory.`,
         parameters: {
           type: "object",
           properties: {
             content: { type: "string", description: "The memory content to propose" },
+            ...(modelPicksScope
+              ? { scope: { type: "string", enum: ["global", "assistant"], description: "Where this memory belongs. Omit to use the default." } }
+              : {}),
+            ...(structuredIntake
+              ? {
+                kind: {
+                  type: "string",
+                  enum: ["setting", "habit", "event", "unclassified"],
+                  description: "Memory class. Omit when unsure (unclassified).",
+                },
+                facets: {
+                  type: "object",
+                  description: "Sparse structured facets. Omit fields the conversation does not support.",
+                  properties: {
+                    time: { type: "string", description: "When it happened or applies" },
+                    place: { type: "string", description: "Where it happened" },
+                    person: { type: "string", description: "People involved" },
+                    event: { type: "string", description: "What happened" },
+                    tags: { type: "array", items: { type: "string" }, description: "Short topic tags" },
+                  },
+                },
+                explicit_remember: {
+                  type: "boolean",
+                  description: "True only when the user explicitly asked to remember this.",
+                },
+              }
+              : {}),
           },
           required: ["content"],
         },
@@ -221,4 +258,47 @@ export function openAiMcpTools(assistant: Assistant, mcpServers: JsonValue[]) {
           },
         })).filter((tool) => tool.function.name !== "mcp__");
     });
+}
+
+/** subagent_dispatch 声明(PC 专属;总开关关闭时返回空数组,与 search_web 同一守卫语义)。
+ *  参数命名对齐社区 fork(ExTV/rikkahub-agent):`model_id` 而非 modelId。子任务在独立
+ *  上下文中运行,只把摘要带回主对话;对父循环而言本工具仍是一次普通 sequential 调用。 */
+export function openAiSubagentTool(settings: SubagentConfig) {
+  if (!settings.enabled) return [];
+  return [
+    {
+      type: "function" as const,
+      function: {
+        name: "subagent_dispatch",
+        description: `Dispatch one or more subagents to work on tasks autonomously. Each subagent runs in a fresh, isolated context and cannot see this conversation, so every prompt must be fully self-contained (goal, background, constraints, expected output). Only a concise summary is returned, not the full transcript.
+Use mode "single" for exactly one task; use "parallel" for independent tasks that can run simultaneously (max ${settings.maxConcurrency} at a time, max ${settings.maxTasksPerCall} tasks per call).
+Subagents share this conversation's workspace: they can read and write files there, and their file changes are visible to you. Do not delegate tasks that depend on each other's output — do them yourself in order. Subagents cannot dispatch further subagents.
+Optional model_id picks the model for a task (e.g. a cheaper model for simple subtasks); omit it to use the current model.`,
+        parameters: {
+          type: "object",
+          properties: {
+            mode: {
+              type: "string",
+              enum: ["single", "parallel"],
+              description: "single = exactly one task; parallel = multiple independent tasks at once",
+            },
+            tasks: {
+              type: "array",
+              description: `Tasks to dispatch (1-${settings.maxTasksPerCall}).`,
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string", description: "Short human-readable title shown in the UI" },
+                  prompt: { type: "string", description: "Complete, self-contained instructions for this subagent" },
+                  model_id: { type: "string", description: "Optional model id for this task; defaults to the current model" },
+                },
+                required: ["title", "prompt"],
+              },
+            },
+          },
+          required: ["mode", "tasks"],
+        },
+      },
+    },
+  ];
 }

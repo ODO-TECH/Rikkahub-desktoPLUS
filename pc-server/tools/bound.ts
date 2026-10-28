@@ -4,11 +4,13 @@
 import type { Assistant, Model } from "../foundation/types";
 import { shouldUseExternalWebSearch } from "../inference-engine/message-builder";
 import { state } from "../persistence/json-store";
+import { memoryExperimentFeature } from "../memory/experiment/gate";
 import {
   openAiLocalTools as openAiLocalToolsCore,
   openAiMcpTools as openAiMcpToolsCore,
   openAiSearchTools as openAiSearchToolsCore,
   openAiSkillTools as openAiSkillToolsCore,
+  openAiSubagentTool as openAiSubagentToolCore,
 } from "./definitions";
 import { listSkills } from "./skills";
 
@@ -25,11 +27,18 @@ export function openAiSkillTools(assistant: Assistant) {
 }
 
 export function openAiLocalTools(assistant: Assistant) {
-  return openAiLocalToolsCore(assistant, state.settings.memorySettings);
+  return openAiLocalToolsCore(assistant, state.settings.memorySettings, {
+    structuredIntake: memoryExperimentFeature("structuredIntake"),
+  });
 }
 
 export function openAiMcpTools(assistant: Assistant) {
   return openAiMcpToolsCore(assistant, state.settings.mcpServers);
+}
+
+/** 子智能体派遣工具(PC 专属):全局开关控制声明,不按助手细分(v1 裁决)。 */
+export function openAiSubagentTool() {
+  return openAiSubagentToolCore(state.settings.subagent);
 }
 
 /** 会话级函数工具全集（M1-4）：四家装配点（orchestrator ×4 + conversation-encoding）
@@ -45,5 +54,6 @@ export function conversationFunctionTools(assistant: Assistant, model?: Model | 
     ...openAiLocalTools(assistant),
     ...openAiSkillTools(assistant),
     ...openAiMcpTools(assistant),
+    ...openAiSubagentTool(),
   ];
 }

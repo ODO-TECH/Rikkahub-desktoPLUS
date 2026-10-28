@@ -14,6 +14,8 @@ import { GOOGLE_SAFETY_SETTINGS, apiContentFromParts, apiContentText, appendAssi
 import { responsesHistoryReasoningAllowed } from "../model-providers/request-dialect";
 import { isEmptyAssistantPlaceholder } from "./parts";
 import { enrichMessages, templateVariables } from "./message-enrichment";
+import { findEffectiveCompaction, parseEngineCompactions, pinnedMessagesBefore } from "./engine-compaction";
+import { readDynamicRecallBlock } from "../memory/dynamic-recall";
 
 // 消息模板/时间提醒/lorebook+模式注入/滞回截断 已上收至 message-enrichment.ts
 // (引擎无关层);本文件只负责"富化产物 → 三家 Provider 请求体"的编码。
@@ -73,7 +75,15 @@ export function buildGoogleRequestBody(messagesForApi: ApiMessage[], modelItem: 
 //
 // 本函数现在只做"选路 + system 装配 + 空占位剔除",消息加工(模板/提醒/注入/截断)
 // 全部委托 message-enrichment.enrichMessages——pi 工作区引擎吃同一份裁决。
-function conversationTransformedMessages(conversation: Conversation, assistant: Assistant) {
+// 导出给自动压缩预检(conversations/auto-compaction.ts)复用:阈值必须按模型真实
+// 收到的同一份富化产物估算(含 system / 摘要 / 注入),不能只数原始消息。
+export function conversationTransformedMessages(
+  conversation: Conversation,
+  assistant: Assistant,
+  /** dynamicRecall=true 时把按最新用户消息检索的易变召回块追加到该 USER 消息末尾。
+   *  只给真实生成/压缩估算开；辅助调用（标题、翻译等）保持关闭，不带实验注入。 */
+  options?: { dynamicRecall?: boolean },
+) {
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
   // 1.5.0 跟进安卓 Migration_16_17:truncateIndex("清除上下文"分割线)机制废弃,
   // 上下文裁剪只剩两条正交机制——助手级 contextMessageLimit 切片 + 压缩对话历史。
@@ -110,11 +120,29 @@ function conversationTransformedMessages(conversation: Conversation, assistant: 
     ? message("SYSTEM", [{ type: "text", text: systemParts.join("\n\n") }])
     : null;
 
+  // 压缩(P9 双引擎统一):聊天引擎与 pi 共用同一份会话级记录——切点仍在选中路径的
+  // 最新一条生效(编辑/fork 删掉切点行 → 记录自动失效,退回全量原文,绝不丢历史)。
+  // 与 pi 的差别只在摘要承载方式:pi 把它交给引擎 appendCompaction,聊天引擎把摘要
+  // 合成一条 USER 行注入序列最前(enrichMessages 的 compactionSummary)。
+  const compaction = findEffectiveCompaction(
+    parseEngineCompactions(conversation.engineCompactions),
+    selectedMessages,
+    () => true,
+  );
+  // 阶段四:钉住的消息只补"切点之前"那部分——切点之后的钉住消息本来就在窗口里
+  // 逐字可见,再注入一遍就是重复内容。工具型消息的纯文本可能为空,Skip。
+  const pinned = compaction
+    ? pinnedMessagesBefore(selectedMessages, compaction.cutMessageId)
+        .map((msg) => ({ role: msg.role, text: textFromParts(msg.parts).trim() }))
+        .filter((msg) => msg.text.length > 0)
+    : [];
   const enriched = enrichMessages(selectedMessages, {
     conversation,
     assistant,
     model: picked.model,
-    // 聊天引擎无持久摘要,无压缩切点锚;工作区引擎路径传 effectiveEngineCompaction 切点(P9)。
+    windowStartMessageId: compaction?.cutMessageId,
+    compactionSummary: compaction?.summary,
+    pinnedMessages: pinned,
     timeReminderAnchor: systemMessage ?? undefined,
   });
 
@@ -131,7 +159,31 @@ function conversationTransformedMessages(conversation: Conversation, assistant: 
     internalMessages.push(message("SYSTEM", [{ type: "text", text: systemWithInjections }]));
   }
   internalMessages.push(...enriched.messages);
+  if (options?.dynamicRecall) {
+    // 易变召回块贴在最新 USER 消息末尾:Google / Responses 会丢弃序列中段的
+    // system 消息,尾部 SYSTEM 在三家方言里并不可靠;用户消息是唯一处处保真的插槽。
+    for (let index = internalMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = internalMessages[index]!;
+      if (candidate.role !== "USER") continue;
+      const block = readDynamicRecallBlock(conversation.id, assistant, candidate.id);
+      if (block) internalMessages[index] = appendMessageText(candidate, block);
+      break;
+    }
+  }
   return { messages: internalMessages, picked };
+}
+
+/** 把一段注入文本追加到消息最后一个 text part（返回副本，不改富化产物/落库消息）。 */
+function appendMessageText(msg: Message, extra: string): Message {
+  const parts = [...msg.parts];
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index]!;
+    if (part.type !== "text") continue;
+    parts[index] = { ...part, text: part.text ? `${part.text}\n\n${extra}` : extra };
+    return { ...msg, parts };
+  }
+  parts.push({ type: "text", text: extra });
+  return { ...msg, parts };
 }
 
 export function conversationMessagesForApi(
@@ -141,8 +193,10 @@ export function conversationMessagesForApi(
   // 控制是否把历史 assistant 消息的 reasoning_content 回传给上游。默认 true，
   // 与安卓 ChatCompletionsAPI.buildMessages 的默认值一致。
   includeHistoryReasoning: boolean = true,
+  /** 真实生成才置 true：把易变召回块追加到最新 USER 消息（见 S9）。 */
+  dynamicRecall: boolean = false,
 ) {
-  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant);
+  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall });
 
   const items: ApiMessage[] = [];
   for (const selected of transformedMessages) {
@@ -179,7 +233,13 @@ export function conversationAssistantHistoryParts(
   return parts;
 }
 
-export function conversationResponseApiInput(conversation: Conversation, assistant: Assistant) {  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant);
+export function conversationResponseApiInput(
+  conversation: Conversation,
+  assistant: Assistant,
+  /** 真实生成才置 true：易变召回块追加到最新 USER 输入项。 */
+  dynamicRecall: boolean = false,
+) {
+  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall });
   // 历史思考项回传方言：仅官方 OpenAI 主机（第三方 Responses 端点形态各异，火山
   // 直接 400，见 responsesHistoryReasoningAllowed 头注）；另尊重 provider 级
   // includeHistoryReasoning 开关（与 chat-completions 路径 e63d017 同语义——

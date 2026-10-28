@@ -11,20 +11,25 @@ import { filesDir } from "../foundation/paths";
 import { saveState, state } from "../persistence/json-store";
 import { addLog } from "../api/logs";
 import { broadcastMemoryUpdate } from "../api/sse";
-import { memoryStore } from "../memory";
+import { writeAssistantMemory } from "../memory/write";
+import { assertionFromToolArgs } from "../memory/experiment/assertions";
+import { memoryExperimentFeature } from "../memory/experiment/gate";
+import { runMemoryIntake } from "../memory/experiment/intake";
 import { runScrapeWeb, runSearchWeb } from "../search";
 import { callMcpTool, resolveMcpToolServer } from "./mcp";
 import { ensureFreshMcpToken } from "./mcp-oauth";
 import { mcpToolFailureError } from "./mcp-health";
 import { runAskUserTool, runClipboardTool, runGetTimeInfoTool, runTextToSpeechTool } from "./local";
 import { readSkillBody, safeSkillFile } from "./skills";
+import { runSubagentDispatch, type SubagentDispatchInput } from "./subagent";
 import { isWorkspaceToolName } from "../workspace/approval";
 import { runWorkspaceTool } from "../workspace/runtime";
 
-/** save_memory 工具执行(1.3.2)。模型只提议 content,应用按 writeStrategy 决定落地方式:
- *  - always_assistant + 助手层启用 → 直接存助手层
- *  - always_global + 全局层启用 → 直接存全局层
- *  - ask(默认)、或 always_* 但对应层未启用(M3 矛盾组合降级)→ 进待确认队列
+/** save_memory 工具执行(1.3.2 / 助手级策略):模型可提出 content 与可选 scope,
+ *  落点由 assistant.memoryWriteScope 决定(always_* / tool_default_* / readonly),
+ *  再经去重引擎(NEW / MERGE / SKIP)后落库或进待确认队列。
+ *  实验「结构化提取」开启时额外接受 kind / facets / explicit_remember,统一走 intake
+ *  (幂等键、审计);关闭时 tool schema 里也没有这些参数,行为与旧版一致。
  *  ★ 返回值不含 pending: true —— 生成不在此暂停(区别于 ask_user 的审批挂起机制,§6.2)。 */
 async function runSaveMemoryTool(
   assistant: Assistant,
@@ -33,35 +38,43 @@ async function runSaveMemoryTool(
 ): Promise<Record<string, JsonValue>> {
   const content = String(args.content ?? "").trim();
   if (!content) throw new Error("content is required");
-  const ms = state.settings.memorySettings;
-  const strategy = ms.writeStrategy;
-
-  if (strategy === "always_assistant" && assistant.enableMemory) {
-    const mem = memoryStore.addMemory({ scope: "assistant", assistantId: assistant.id, content, source: "ai" });
-    broadcastMemoryUpdate();
-    return { status: "saved", scope: "assistant", content: mem.content };
+  if (memoryExperimentFeature("structuredIntake")) {
+    const assertion = assertionFromToolArgs(args, {
+      ...(context?.conversationId ? { conversationId: context.conversationId } : {}),
+      ...(context?.messageNodeId ? { messageNodeId: context.messageNodeId } : {}),
+    });
+    const intake = await runMemoryIntake({ assistant, assertion, context });
+    if (intake.status !== "disabled") {
+      broadcastMemoryUpdate();
+      if (intake.status === "readonly") return { status: "disabled" };
+      if (intake.status === "queued") return { status: "queued", pendingId: intake.pendingId ?? "" };
+      if (intake.status === "deduped") return { status: "deduped" };
+      if (intake.status === "overflow") return { status: "overflow" };
+      return {
+        status: intake.status,
+        scope: intake.scope ?? "global",
+        content: assertion.content,
+        kind: assertion.kind,
+        ...(assertion.explicitRemember ? { explicitRemember: true } : {}),
+      };
+    }
   }
-  if (strategy === "always_global" && ms.globalEnabled) {
-    const mem = memoryStore.addMemory({ scope: "global", content, source: "ai" });
-    broadcastMemoryUpdate();
-    return { status: "saved", scope: "global", content: mem.content };
-  }
-
-  // 进待确认队列。context 从 executeToolCall 透传(流式路径含当前会话 + 节点),用于前端确认
-  // 面板标注来源会话(标题快照)。非流式路径 context 缺失 → conversationId 留空(仅丧失来源追溯,
-  // 不影响核心入队/确认流程)。
-  const result = await memoryStore.enqueuePending({
-    conversationId: context?.conversationId ?? "",
-    conversationTitle: context?.conversationTitle,
-    assistantId: assistant.id,
-    assistantName: assistant.name,
+  const result = await writeAssistantMemory({
+    assistant,
     content,
-    messageNodeId: context?.messageNodeId,
+    requestedScope: args.scope,
+    context,
   });
   broadcastMemoryUpdate();
-  if (result === null) return { status: "deduped" };       // M7:与现有 pending 完全相同,跳过
-  if (result === "overflow") return { status: "overflow" }; // M7:队列已满,徽章变体高亮提醒
-  return { status: "queued", pendingId: result.pendingId };
+  if (result.status === "readonly") return { status: "disabled" };
+  if (result.status === "deduped") return { status: "deduped" };
+  if (result.status === "overflow") return { status: "overflow" };
+  if (result.status === "queued") return { status: "queued", pendingId: result.pendingId ?? "" };
+  return {
+    status: result.status,
+    scope: result.scope ?? "global",
+    content: result.memory?.content ?? content,
+  };
 }
 
 export async function executeToolCall(
@@ -81,6 +94,22 @@ export async function executeToolCall(
     throw new Error(`Invalid tool arguments JSON for ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (name === "save_memory") return runSaveMemoryTool(assistant, args, context);
+  // 子智能体派遣(PC 专属):审批发生在子智能体内部的工具调用上,dispatch 本身免审
+  // (与搜索类工具同级)。关闭后拒执的语义同上——历史残留 tool_call 不因开关关闭而执行。
+  if (name === "subagent_dispatch") {
+    if (!state.settings.subagent.enabled) {
+      throw new Error(
+        "Subagent dispatch is currently disabled. Stop calling subagent_dispatch and do the work yourself, or ask the user to enable subagents in settings.",
+      );
+    }
+    // 引擎注入的按次 runner 优先（聊天引擎面由协调器按 cwd 装配）；pi 引擎不走这条
+    // 分发（自带 customTool 闭包）。都没有则退回全局注册的执行器。
+    const runner = context?.createSubagentRunner?.();
+    return runSubagentDispatch(args as unknown as SubagentDispatchInput, state.settings.subagent, {
+      ...(runner ? { runner } : {}),
+      ...(context?.signal ? { signal: context.signal } : {}),
+    });
+  }
   // 工作区工具（pi 移植层）：会话必须绑定工作区，守卫链在 runtime 内（同 search_web
   // 关闭后拒执的语义：历史残留调用招拒绝文案回灌模型）。
   if (isWorkspaceToolName(name)) return runWorkspaceTool(name, args, context);

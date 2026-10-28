@@ -12,6 +12,7 @@ import { clearMessageQueue } from "./message-queue";
 import { findAssistant as findAssistantCore } from "../assistants";
 import { fillContextLimit } from "../inference-engine/providers";
 import { finishToolParts } from "../inference-engine/parts";
+import { findEffectiveCompaction, parseEngineCompactions, pinnedMessagesBefore } from "../inference-engine/engine-compaction";
 
 /** 删会话路径的中止(唯一调用方 deleteConversationsById):意图 deleted——队列随会话清除,
  *  旧流收尾无事可做。 */
@@ -143,7 +144,7 @@ export function summaryAsText(msg: Message) {
 }
 /** 工具 part 的文本量(入参 JSON + 输出 text/error 条目)——工具往返在后续轮次全量进
  *  提示词,不计=agent/MCP 重度会话严重低估(影响压缩触发与用量显示,§9.8)。 */
-function toolPartsTextVolume(parts: MessagePart[]) {
+export function toolPartsTextVolume(parts: MessagePart[]) {
   let volume = "";
   for (const part of parts) {
     if (!isRecord(part) || part.type !== "tool") continue;
@@ -160,11 +161,32 @@ function toolPartsTextVolume(parts: MessagePart[]) {
 }
 
 export function estimatePromptTokensForConversation(conversation: Conversation) {
-  return selectedConversationMessages(conversation).reduce((sum, msg) => {
+  const messages = selectedConversationMessages(conversation);
+  // 压缩记录生效时,模型真实看到的只有"摘要 + 切点及之后"——估算必须同口径,否则
+  // 压缩后 UI 的上下文用量纹丝不动,用户会以为压缩没生效(非破坏性压缩的原文仍在
+  // DB,但不再进提示词)。切点失效(记录被编辑/删除)时 findEffectiveCompaction 返回
+  // null,自然退回全量文本。
+  const compaction = findEffectiveCompaction(
+    parseEngineCompactions(conversation.engineCompactions),
+    messages,
+    () => true,
+  );
+  const cutIndex = compaction ? messages.findIndex((msg) => msg.id === compaction.cutMessageId) : -1;
+  const visible = cutIndex > 0 ? messages.slice(cutIndex) : messages;
+  const historyTokens = visible.reduce((sum, msg) => {
     // 原口径保留:助手回答文本不计(历史近似),但挂在助手消息里的工具往返必须计。
     const textTokens = msg.role !== "ASSISTANT" ? estimateTokens(textFromParts(msg.parts)) : 0;
     return sum + textTokens + estimateTokens(toolPartsTextVolume(msg.parts));
   }, 0);
+  // 阶段四:切点前被钉住的消息会随摘要行原样再注入一次,记账口径必须跟上——否则
+  // 钉的消息越多,用量显示与自动压缩阈值就越低估,反而更容易一头撞上硬上限。
+  const pinnedTokens = compaction
+    ? pinnedMessagesBefore(messages, compaction.cutMessageId).reduce((sum, msg) => {
+        const text = textFromParts(msg.parts);
+        return sum + (text ? estimateTokens(text) : 0);
+      }, 0)
+    : 0;
+  return historyTokens + (compaction ? estimateTokens(compaction.summary) : 0) + pinnedTokens;
 }
 
 export function ensureUsage(msg: Message, conversation?: Conversation) {

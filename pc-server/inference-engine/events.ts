@@ -2,6 +2,7 @@
 // 纪律：本文件只定义类型与回调契约，不写具体实现，避免被 server.ts 的细节污染。
 
 import type { JsonValue, Message, MessageNode, StreamHooks, ToolApprovalState, ToolOutputEntry } from "../foundation/types";
+import type { SubagentChildRunner } from "../tools/subagent";
 
 /** 本次生成的流式落点(活视图)。steer 边界分裂会把落点换到新开的 continuation 节点,
  *  因此所有消费方(事件应用器 / 工具循环的 hooks / 引擎桥)必须在每次使用时现读
@@ -127,6 +128,10 @@ export interface ToolContext {
   /** 执行中部分输出回写（bash 流式输出，M1-5）：写回当前 tool part 的 output，
    *  走现有 node_update 关键帧管线（pi 内核 100ms 节流 + touchStream 33ms 合帧）。 */
   onToolPartialOutput?: (output: ToolOutputEntry[]) => void;
+  /** 聊天引擎的子智能体桥：每次 dispatch 现取一个新 runner（独立 dispatchId →
+   *  独立审批 scope）。pi 引擎不用它（子工具在 pi-engine/subagent-tools 里自带
+   *  runner 闭包）；工作区/无工作区会话由协调器按各自 cwd 注入。 */
+  createSubagentRunner?: () => SubagentChildRunner;
 }
 
 /** 工具执行的标准化返回值。

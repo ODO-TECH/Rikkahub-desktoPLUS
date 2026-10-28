@@ -76,3 +76,8 @@ export function removeSteeringMessage(conversationId: string, itemId: string): v
 export function clearSteeringChannel(conversationId: string): void {
   channels.delete(conversationId);
 }
+
+/** 运行态整体替换(备份导入)时全量作废——旧会话的补发不得漂进新状态。 */
+export function clearAllSteeringChannels(): void {
+  channels.clear();
+}

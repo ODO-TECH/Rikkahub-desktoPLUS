@@ -25,6 +25,18 @@ export interface ApprovalFlowContext {
   /** 域4-1:通知/状态摘要用的工具名与审批对象摘要(命令/路径,截断后)。 */
   toolName?: string;
   summary?: string;
+  /** 审批作用域(缺省 = conversationId)。子智能体各领自己的 scope,收尾清扫互不
+   *  波及;卡与等待者仍挂在父会话上,前端/API 无感。 */
+  approvalScope?: string;
+}
+
+/** 离开等待态时注销注册表。并发子审批(子智能体)共用会话键:只有条目属于本次
+ *  toolCallId(或旧条目无归属字段)才删,绝不把兄弟仍在等待的琥珀态误删。 */
+function releaseAwaiting(conversationId: string, toolCallId: string) {
+  const entry = awaitingApproval.get(conversationId);
+  if (!entry) return;
+  if (entry.toolCallId !== undefined && entry.toolCallId !== toolCallId) return;
+  awaitingApproval.delete(conversationId);
 }
 
 /** 走完审批生命周期。approval 为非 pending(auto 等)时立即返回 false(免审执行);
@@ -33,6 +45,7 @@ export interface ApprovalFlowContext {
  *  中止 → 卡收敛 denied(绝不悬 pending)再上抛 AbortError,pi 记 error tool result。 */
 export async function gateToolApproval(approval: ToolApprovalState, ctx: ApprovalFlowContext): Promise<boolean> {
   if (approval.type !== "pending") return false;
+  const approvalScope = ctx.approvalScope ?? ctx.conversationId;
   ctx.sink({ kind: "tool_approval_updated", toolCallId: ctx.toolCallId, approvalState: approval });
   // 域4-1:等待期间注册会话级"等待审批"态——SSE 重连快照据此恢复琥珀态点,桌面
   // 通知据此知道"哪个会话在等用户"。engine_status 帧由协调器 sink 直通 SSE 状态条;
@@ -40,6 +53,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
   // 路径离开等待都必须注销,绝不残留"假等待"。
   awaitingApproval.set(ctx.conversationId, {
     startedAt: Date.now(),
+    toolCallId: ctx.toolCallId,
     ...(ctx.toolName ? { toolName: ctx.toolName } : {}),
     ...(ctx.summary ? { summary: ctx.summary } : {}),
   });
@@ -56,9 +70,9 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
   });
   let decision: { approved: boolean; reason?: string };
   try {
-    decision = await waitForToolApproval(ctx.conversationId, ctx.toolCallId, ctx.signal);
+    decision = await waitForToolApproval(ctx.conversationId, ctx.toolCallId, ctx.signal, approvalScope);
   } catch (err) {
-    awaitingApproval.delete(ctx.conversationId);
+    releaseAwaiting(ctx.conversationId, ctx.toolCallId);
     ctx.sink({ kind: "engine_status", status: { busy: false } });
     ctx.sink({
       kind: "tool_approval_updated",
@@ -67,7 +81,7 @@ export async function gateToolApproval(approval: ToolApprovalState, ctx: Approva
     });
     throw err;
   }
-  awaitingApproval.delete(ctx.conversationId);
+  releaseAwaiting(ctx.conversationId, ctx.toolCallId);
   ctx.sink({ kind: "engine_status", status: { busy: false } });
   if (!decision.approved) {
     ctx.sink({

@@ -17,6 +17,7 @@ import {
   type WorkspaceToolName,
 } from "../workspace/approval";
 import { getWorkspace } from "../workspace";
+import { sandboxBoundaryActive } from "../workspace/sandbox";
 
 type ConversationWorkspacePick = Pick<Conversation, "workspaceId" | "workspaceCwd">;
 
@@ -50,6 +51,8 @@ function workspaceApprovalDecision(
     cwd: lexicalWorkspaceCwd(workspace.root, conversation?.workspaceCwd),
     // §6.7:技能库 pc-data/skills/ 免审批可写(AI 装/改技能不弹窗)。
     approvalExemptWritePrefixes: [skillsDir],
+    // 实测边界生效时,区外写入批准了也会被操作系统拒绝——卡片直接说明,不装样子。
+    sandboxBoundaryActive: sandboxBoundaryActive(),
   });
   if (reason === null) return { pending: false };
   return { pending: true, ...(reason ? { reason } : {}) };

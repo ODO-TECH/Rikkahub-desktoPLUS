@@ -66,6 +66,8 @@ export interface PiWorkspaceToolsContext {
   assistant: Assistant;
   /** 审批状态迁移事件下沉(pending/approved/denied 卡状态,与桥共用同一应用器)。 */
   sink: GenerationEventSink;
+  /** 审批作用域(缺省 = conversationId)。子智能体各领独立 scope,收尾清扫互不误杀。 */
+  approvalScopeId?: string;
 }
 
 /** 内核产出 → pi AgentToolResult。content 形状与 pi TextContent/ImageContent 同构
@@ -111,6 +113,7 @@ function buildTool(
         signal,
         toolName: name,
         ...(approvalSummary ? { summary: approvalSummary } : {}),
+        ...(ctx.approvalScopeId ? { approvalScope: ctx.approvalScopeId } : {}),
       });
       const result = await executeWorkspaceToolCore(name, args, {
         conversationId: ctx.conversation.id,

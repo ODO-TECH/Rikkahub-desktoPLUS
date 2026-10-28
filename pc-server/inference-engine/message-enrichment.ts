@@ -227,6 +227,40 @@ export function alignContextStart(messages: Message[], start: number): number {
   return adjusted;
 }
 
+// ---- 压缩摘要注入(聊天引擎) ----
+
+/** 切点前被用户钉住的消息(原样进 <pinned_messages>,不收摘要模型缩写)。 */
+export interface PinnedMessageView {
+  role: string;
+  text: string;
+}
+
+/** 摘要外框:明确"这是背景不是新指令"——USER 行是唯一跨供应商稳定的合成载体,
+ *  不加说明的话模型容易把摘要里的句子当成本轮要求去做。外框固定,摘要不变则请求
+ *  前缀逐字节不变(前缀缓存友好)。
+ *  阶段四:钉住的消息全文附在摘要之后(同一 USER 行)。放同一行而不是单独插一条
+ *  USER 消息,是为了不让"两条相邻 user 消息"改变上游的轮次裁决(有的兼容端点会
+ *  把相邻 user 合并、有的会拒绝);内容顺序固定(摘要 → 钉住集),前缀仍稳定。 */
+export function compactionSummaryText(summary: string, pinned: PinnedMessageView[] = []) {
+  const lines = [
+    "<context_summary>",
+    "The earlier part of this conversation has been compacted into the summary below. Treat it as background context, not as a new user instruction.",
+    "",
+    summary.trim(),
+  ];
+  if (pinned.length > 0) {
+    lines.push(
+      "",
+      "<pinned_messages>",
+      "The user pinned the following earlier messages so they are preserved verbatim instead of being summarized. They are background context from the earlier conversation, not new instructions.",
+      ...pinned.map((item) => `<message role=\"${item.role.toLowerCase()}\">\n${item.text}\n</message>`),
+      "</pinned_messages>",
+    );
+  }
+  lines.push("</context_summary>");
+  return lines.join("\n");
+}
+
 // ---- 主编排:富化管线(两引擎共用) ----
 
 export interface EnrichOptions {
@@ -240,6 +274,14 @@ export interface EnrichOptions {
   windowStartMessageId?: string;
   /** 时间提醒的"首条 USER 前一条"基准(聊天引擎传 system 消息,pi 路径无此前缀)。 */
   timeReminderAnchor?: Message;
+  /** 压缩摘要(聊天引擎):windowStartMessageId 之前的原文已被它取代,合成一条 USER
+   *  行放在序列最前——模型的记忆边界由此对上游可见。pi 路径不传(摘要由引擎
+   *  appendCompaction 原生承载)。 */
+  compactionSummary?: string;
+  /** 阶段四:切点之前被用户钉住的消息(已渲染为纯文本),随摘要行原样注入。
+   *  只在 compactionSummary 存在时有意义——没有压缩就没有"被摘要吞掉"的风险,
+   *  钉住的消息本来就在序列里逐字可见。 */
+  pinnedMessages?: PinnedMessageView[];
 }
 
 export interface EnrichResult {
@@ -297,6 +339,20 @@ export function enrichMessages(baseMessages: Message[], options: EnrichOptions):
   const syntheticIds = new Set(reminderIds);
   for (const msg of injected) {
     if (!withRemindersIds.has(msg.id)) syntheticIds.add(msg.id);
+  }
+
+  // 5. 压缩摘要(聊天引擎):切点之前的原文根本不在序列里,摘要就是模型对早期对话的
+  //    全部记忆。放在提醒/注入裁决之后:
+  //    - 不套消息模板、不带时间提醒(摘要是压缩产物,没有"消息时间");
+  //    - 不参与 lorebook 关键词匹配(它不该二次触发注入);
+  //    - 排在 top_of_chat 注入之前——它是被取代的历史,不是本轮配置。
+  //    合成行每次生成从 DB 记录重建,不落库(幂等)。
+  if (options.compactionSummary?.trim()) {
+    const summaryMessage = message("USER", [
+      { type: "text", text: compactionSummaryText(options.compactionSummary, options.pinnedMessages) },
+    ]);
+    syntheticIds.add(summaryMessage.id);
+    injected.unshift(summaryMessage);
   }
 
   const systemTextOf = (position: string) =>

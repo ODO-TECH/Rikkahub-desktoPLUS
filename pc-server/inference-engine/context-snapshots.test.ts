@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Assistant } from "../foundation/types";
-import { frozenContextBlocks, invalidateContextSnapshots } from "./context-snapshots";
+import { recallCacheGeneration } from "../memory/recall-cache";
+import { frozenContextBlocks, invalidateContextSnapshots, invalidateConversationContext } from "./context-snapshots";
 
 function fakeAssistant(overrides: Partial<Assistant> = {}): Assistant {
   return { id: "assistant-1", enableMemory: true, enableRecentChatsReference: true, ...overrides } as Assistant;
@@ -53,6 +54,17 @@ describe("frozenContextBlocks", () => {
     frozenContextBlocks(fakeAssistant({ enableMemory: false }), "conv-1", build);
     frozenContextBlocks(fakeAssistant({ enableRecentChatsReference: false }), "conv-1", build);
     expect(state.calls).toBe(4);
+  });
+
+  test("失效推进召回代际:全局清空影响所有会话,单会话重匹配只影响自己", () => {
+    const beforeOne = recallCacheGeneration("conv-1");
+    const beforeTwo = recallCacheGeneration("conv-2");
+    invalidateConversationContext("conv-1");
+    expect(recallCacheGeneration("conv-1")).not.toBe(beforeOne);
+    expect(recallCacheGeneration("conv-2")).toBe(beforeTwo);
+    const beforeGlobal = recallCacheGeneration("conv-2");
+    invalidateContextSnapshots();
+    expect(recallCacheGeneration("conv-2")).not.toBe(beforeGlobal);
   });
 
   test("超过 200 条上限淘汰最旧,活跃条目不受影响", () => {

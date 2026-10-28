@@ -57,7 +57,12 @@ import type { JsonValue, Message, MessagePart, Model, ToolOutputEntry } from "..
 import { isRecord } from "../foundation/utils";
 import { UNRESOLVED_TOOL_RESULT_TEXT, openAiToolOutput } from "../tools/format";
 import { parseDataUrl } from "../inference-engine/message-builder";
+import { findEffectiveCompaction, type EngineCompactionRecord } from "../inference-engine/engine-compaction";
 import { piPromptInputFromParts } from "./attachments";
+
+// 压缩记录的类型与"哪条生效"的算法已上收 engine-compaction(引擎中性单源);
+// 本文件只保留 pi 专属的可编码性谓词并转成 effectiveEngineCompaction。
+export type { EngineCompactionRecord };
 
 // ----- 保真注解读取 -----
 
@@ -396,17 +401,6 @@ function encodesToEntries(message: Message, model: Model): boolean {
 
 // ----- 主入口 -----
 
-/** DB 压缩记录(conversation 级 engineCompactions 元素)。压缩记录是引擎中性的会话级
- *  状态(T3 泛化:压缩是引擎无关能力,任何 run-and-suspend 引擎都可压缩,结构不再绑死
- *  pi)。 */
-export interface EngineCompactionRecord {
-  /** 切点:从这条消息(含)起保留原文,之前的历史被 summary 取代。 */
-  cutMessageId: string;
-  summary: string;
-  tokensBefore: number;
-  createdAt?: string;
-}
-
 export interface PiHistoryEncodeResult {
   /** DB messageId → 灌注生成的 pi entry id 列表(压缩切点映射用;合成行不在内)。 */
   entryIdsByMessageId: Map<string, string[]>;
@@ -488,12 +482,5 @@ export function effectiveEngineCompaction(
   history: Message[],
   model: Model,
 ): EngineCompactionRecord | null {
-  return (
-    compactions
-      .filter((record) => {
-        const cut = history.find((msg) => msg.id === record.cutMessageId);
-        return cut !== undefined && encodesToEntries(cut, model);
-      })
-      .at(-1) ?? null
-  );
+  return findEffectiveCompaction(compactions, history, (cut) => encodesToEntries(cut, model));
 }

@@ -52,6 +52,9 @@ export interface PiGenerationContext {
   reasoningLevel?: string | null;
   /** 会话身份(审批等待者清扫的归属键;引擎上下文与身份无关,纯由 history 决定)。 */
   conversationId: string;
+  /** 审批作用域(缺省 = conversationId)。子智能体子生成领各自的 scope:收尾清扫
+   *  只清自己的等待者,不误杀并发兄弟/父生成仍在等待的审批卡。 */
+  approvalScopeId?: string;
   /** 会话工作目录(工作区边界内的绝对路径)。 */
   cwd: string;
   /** P9:选中路径上的历史消息(富化全序列,含合成行——提醒/聊天位注入,
@@ -218,7 +221,8 @@ export async function runPiGeneration(ctx: PiGenerationContext): Promise<PiGener
     session.dispose();
     // 审批等待者兜底清扫:正常路径下等待者随用户决定/中止即刻注销,这里只防实现
     // 疏漏把 execute 的 Promise 泄漏成永久悬挂(approval-gate 头注)。
-    clearToolApprovalWaiters(ctx.conversationId);
+    // 按本生成的作用域清扫:子智能体的子生成不拥有父会话的等待者。
+    clearToolApprovalWaiters(ctx.conversationId, ctx.approvalScopeId);
   }
 
   const capturedCompactions = captureRoundCompactions(manager, seededEntryIds, seeded.entryIdsByMessageId);

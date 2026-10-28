@@ -29,6 +29,10 @@ export interface ToolApprovalDecision {
 
 interface Waiter {
   conversationId: string;
+  /** 等待者归属的审批作用域。主生成 = conversationId 自身;子生成(子智能体)领各自的
+   *  scope,收尾清扫互不波及。决议不按 scope 查找(见 resolveToolApproval),scope 只
+   *  用于"谁能清扫谁"。 */
+  scope: string;
   resolve: (decision: ToolApprovalDecision) => void;
   reject: (err: unknown) => void;
   cleanup: () => void;
@@ -36,20 +40,23 @@ interface Waiter {
 
 const waiters = new Map<string, Waiter>();
 
-function keyOf(conversationId: string, toolCallId: string): string {
+function keyOf(scope: string, conversationId: string, toolCallId: string): string {
   // \u0000 作分隔符(ID 里不可能出现);用转义写法,字面 NUL 会让 rg 把文件当二进制跳过。
-  return `${conversationId}\u0000${toolCallId}`;
+  return `${scope}\u0000${conversationId}\u0000${toolCallId}`;
 }
 
 /** 登记一次审批等待。用户决定 → resolve;signal 中止 → reject AbortError(调用方负责
- *  把卡收敛为 denied 后再上抛,见 pi-engine/workspace-tools.ts)。 */
+ *  把卡收敛为 denied 后再上抛,见 pi-engine/workspace-tools.ts)。
+ *  scope 缺省 = conversationId(主生成路径,行为与 scope 引入前逐字节一致)。 */
 export function waitForToolApproval(
   conversationId: string,
   toolCallId: string,
   signal?: AbortSignal,
+  scope?: string,
 ): Promise<ToolApprovalDecision> {
+  const effectiveScope = scope ?? conversationId;
   return new Promise<ToolApprovalDecision>((resolve, reject) => {
-    const key = keyOf(conversationId, toolCallId);
+    const key = keyOf(effectiveScope, conversationId, toolCallId);
     const onAbort = () => {
       waiters.delete(key);
       reject(new DOMException("Generation stopped", "AbortError"));
@@ -70,6 +77,7 @@ export function waitForToolApproval(
     signal?.addEventListener("abort", onAbort, { once: true });
     waiters.set(key, {
       conversationId,
+      scope: effectiveScope,
       resolve: (decision) => {
         cleanup();
         resolve(decision);
@@ -84,25 +92,31 @@ export function waitForToolApproval(
 }
 
 /** 用户决定送达。返回 true = 有在途等待者被唤醒(生成在跑,API 不应再触发续跑);
- *  false = 无在途等待(孤儿审批:生成已死/已重启,API 仅记录状态)。 */
+ *  false = 无在途等待(孤儿审批:生成已死/已重启,API 仅记录状态)。
+ *  按 conversationId+toolCallId 跨 scope 查找:toolCallId 由引擎侧生成且全局唯一,
+ *  前端/API 回传时无需携带 scope(子智能体的审批卡与主生成同端点)。 */
 export function resolveToolApproval(
   conversationId: string,
   toolCallId: string,
   decision: ToolApprovalDecision,
 ): boolean {
-  const key = keyOf(conversationId, toolCallId);
-  const waiter = waiters.get(key);
-  if (!waiter) return false;
-  waiters.delete(key);
-  waiter.resolve(decision);
-  return true;
-}
-
-/** 生成收尾兜底:清扫该会话的全部在途等待(正常路径下等待者已随决定/中止注销,
- *  此处只防实现疏漏导致的 Promise 泄漏)。 */
-export function clearToolApprovalWaiters(conversationId: string): void {
   for (const [key, waiter] of waiters) {
     if (waiter.conversationId !== conversationId) continue;
+    if (!key.endsWith(`\u0000${toolCallId}`)) continue;
+    waiters.delete(key);
+    waiter.resolve(decision);
+    return true;
+  }
+  return false;
+}
+
+/** 生成收尾兜底:清扫在途等待(正常路径下等待者已随决定/中止注销,此处只防实现
+ *  疏漏导致的 Promise 泄漏)。传 scope 只清该作用域——子生成用各自的 scope,收尾
+ *  不会误杀并发兄弟(或父生成)仍在等待的审批。不传 = 该会话全部作用域(旧语义)。 */
+export function clearToolApprovalWaiters(conversationId: string, scope?: string): void {
+  for (const [key, waiter] of waiters) {
+    if (waiter.conversationId !== conversationId) continue;
+    if (scope !== undefined && waiter.scope !== scope) continue;
     waiters.delete(key);
     waiter.reject(new DOMException("Generation finished", "AbortError"));
   }

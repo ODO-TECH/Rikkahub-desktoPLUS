@@ -6,9 +6,9 @@
 
 import { describe, expect, test, beforeAll } from "bun:test";
 import type { Assistant, Conversation, Message, State } from "../foundation/types";
-import { message } from "../foundation/utils";
+import { message, textFromParts } from "../foundation/utils";
 import { setState } from "../persistence/json-store";
-import { enrichMessages, encodableMessages, truncationStartFor, alignContextStart } from "./message-enrichment";
+import { compactionSummaryText, enrichMessages, encodableMessages, truncationStartFor, alignContextStart } from "./message-enrichment";
 
 beforeAll(() => {
   setState({
@@ -339,5 +339,50 @@ describe("alignContextStart(对齐安卓 limitContext 工具对对齐)", () => {
     expect(alignContextStart(base, 1)).toBe(0);
     const result = enrichMessages(base, { conversation: conversation(), assistant: a, model });
     expect(result.messages).toHaveLength(4);
+  });
+});
+
+describe("压缩摘要与钉住消息注入(阶段四)", () => {
+  test("摘要行附带 <pinned_messages>:钉住全文原样在场,外框注明是旧对话背景", () => {
+    const base = [
+      userMessage("old", "2026-08-22T10:00:00Z"),
+      userMessage("new", "2026-08-22T10:01:00Z"),
+    ];
+    const result = enrichMessages(base, {
+      conversation: conversation(),
+      assistant: assistant(),
+      model,
+      windowStartMessageId: base[1].id,
+      compactionSummary: "SUMMARY_BODY",
+      pinnedMessages: [
+        { role: "USER", text: "PINNED_FACT_42" },
+        { role: "ASSISTANT", text: "PINNED_ANSWER" },
+      ],
+    });
+    const summaryRow = result.messages[0]!;
+    expect(result.syntheticIds.has(summaryRow.id)).toBe(true);
+    const text = textFromParts(summaryRow.parts);
+    expect(text).toContain("<context_summary>");
+    expect(text).toContain("SUMMARY_BODY");
+    expect(text).toContain("<pinned_messages>");
+    expect(text).toContain('<message role="user">');
+    expect(text).toContain('<message role="assistant">');
+    expect(text).toContain("PINNED_FACT_42");
+    expect(text).toContain("PINNED_ANSWER");
+    expect(text).toContain("not new instructions");
+    // 顺序固定:摘要 → 钉住块;外框始终收尾(前缀缓存友好)。
+    expect(text.indexOf("SUMMARY_BODY")).toBeLessThan(text.indexOf("PINNED_FACT_42"));
+    expect(text.trimEnd().endsWith("</context_summary>")).toBe(true);
+  });
+
+  test("无钉住消息 → 不出现 pinned_messages(请求体形状与旧版逐字节一致)", () => {
+    const text = compactionSummaryText("SUMMARY_BODY");
+    expect(text).not.toContain("pinned_messages");
+    expect(text).toBe(compactionSummaryText("SUMMARY_BODY", []));
+  });
+
+  test("钉住块用消息原文(不转义),role 统一小写", () => {
+    const text = compactionSummaryText("s", [{ role: "USER", text: "a < b & c" }]);
+    expect(text).toContain('<message role="user">\na < b & c\n</message>');
   });
 });

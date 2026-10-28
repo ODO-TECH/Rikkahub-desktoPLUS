@@ -12,6 +12,8 @@
 // 换键自动重建;进程重启自然重建——厂商缓存 TTL 分钟~小时级,跨重启本就冷。
 import type { Assistant } from "../foundation/types";
 import { buildMemoryPrompt, buildRecentChatsPrompt } from "../memory";
+import { clearConversationRecall, clearRecallCache } from "../memory/recall-cache";
+import { clearDynamicRecall, clearDynamicRecallCache } from "../memory/dynamic-recall";
 import { state } from "../persistence/json-store";
 
 /** [记忆块, 最近会话块](可为空串)。 */
@@ -28,7 +30,7 @@ function snapshotKey(assistant: Assistant, conversationId: string): string {
 }
 
 function defaultBuild(assistant: Assistant, conversationId: string): ContextBlocks {
-  return [buildMemoryPrompt(assistant), buildRecentChatsPrompt(assistant, conversationId)];
+  return [buildMemoryPrompt(assistant, conversationId), buildRecentChatsPrompt(assistant, conversationId)];
 }
 
 /** 会话首次编码时构建并冻结记忆/最近会话区块,之后复用。build 参数仅供单测注入。 */
@@ -55,7 +57,20 @@ export function frozenContextBlocks(
 }
 
 /** 设置页手动改记忆/备份导入替换记忆时调用:清空全部快照,下一轮编码重建。
- *  这是明确的用户动作,应立即生效,代价只是一次缓存冷启动。 */
+ *  这是明确的用户动作,应立即生效,代价只是一次缓存冷启动。召回缓存同生命周期。 */
 export function invalidateContextSnapshots(): void {
   snapshots.clear();
+  clearRecallCache();
+  // S9 易变块同属"按记忆召回"的派生缓存，一起失效。
+  clearDynamicRecallCache();
+}
+
+/** 会话侧「重新匹配记忆」：只清这一个会话的冻结快照与召回选择，其他会话不受影响。 */
+export function invalidateConversationContext(conversationId: string): void {
+  clearConversationRecall(conversationId);
+  clearDynamicRecall(conversationId);
+  const prefix = `${conversationId}|`;
+  for (const key of snapshots.keys()) {
+    if (key.startsWith(prefix)) snapshots.delete(key);
+  }
 }

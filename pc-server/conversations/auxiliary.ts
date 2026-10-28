@@ -1,8 +1,8 @@
 // conversations/auxiliary.ts — 辅助生成（标题/建议/翻译/提示词优化/OCR/会话压缩）
 // 纪律：纯搬迁自 server.ts（阶段 5.3g），行为不变。
 
-import type { Assistant, AuxiliaryTextOptions, Conversation, Message, MessagePart, Model } from "../foundation/types";
-import { applyPlaceholders, id, isRecord, localeDisplayName, message, textFromParts, uniqueStrings } from "../foundation/utils";
+import type { Assistant, AuxiliaryTextOptions, Conversation, JsonValue, Message, MessagePart, Model } from "../foundation/types";
+import { applyPlaceholders, estimateTokens, isRecord, localeDisplayName, textFromParts, uniqueStrings } from "../foundation/utils";
 import { state } from "../persistence/json-store";
 import { broadcastConversation, broadcastEngineStatus } from "../api/sse";
 import { DEFAULT_AUTO_MODEL_ID, applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
@@ -30,6 +30,7 @@ import {
 } from "../inference-engine/providers";
 import {
   DEFAULT_COMPRESS_PROMPT,
+  DEFAULT_CONDENSE_SUMMARY_PROMPT,
   DEFAULT_OCR_PROMPT,
   DEFAULT_SUGGESTION_PROMPT,
   DEFAULT_TITLE_PROMPT,
@@ -41,7 +42,9 @@ import { compressing } from "./generation-state";
 import { getConversation, persistConversation, selectedConversationMessages } from "./index";
 import { reportError } from "../observability/app-errors";
 import { findAssistant, summaryAsText } from "./helpers";
+import { findEffectiveCompaction, isPinnedMessage, mergeCompactionSummary, parseEngineCompactions } from "../inference-engine/engine-compaction";
 import { agentSummaryAsText, buildAgentCompactionContext, extractAgentActivity } from "../workspace/compaction";
+import { isRuntimeEpochCurrent, runtimeEpoch } from "./runtime-epoch";
 
 export function cleanAuxiliaryText(text: string, fallback = "") {
   const cleaned = text.replace(/^["“”'‘’]+|["“”'‘’]+$/g, "").trim();
@@ -497,33 +500,88 @@ export function markCompactionBoundary(conversation: Conversation): void {
   tail.annotations.push({ type: "compaction_boundary" });
 }
 
-export async function compressConversation(conversation: Conversation, additionalPrompt = "", targetTokens = 2000, keepRecentMessages = 32, signal?: AbortSignal) {
+/** 聊天引擎压缩切点标记(非破坏性):画在"切点前一条消息"下方,标出模型记忆边界——
+ *  切点及之后逐字可见,之前只剩摘要。时间线原文一条不删,与工作区 pi 的切点语义一致;
+ *  区别只在锚点归属(pi 的切点记录由引擎捕获,聊天引擎由 compressConversation 落库)。
+ *  只保留最新一条:再次压缩后旧线指向的边界已被新摘要覆盖,留着会误导。切点是首条
+ *  消息时无前驱可锚(线无处可画),不打标记。 */
+export function markCompactionCut(conversation: Conversation, cutMessageId: string): void {
+  for (const node of conversation.messages) {
+    for (const msg of node.messages) {
+      if (!Array.isArray(msg.annotations)) continue;
+      const kept = msg.annotations.filter((item) => !(isRecord(item) && item.type === "compaction_cut"));
+      if (kept.length !== msg.annotations.length) msg.annotations = kept;
+    }
+  }
+  const cutIndex = conversation.messages.findIndex((node) => node.messages.some((msg) => msg.id === cutMessageId));
+  if (cutIndex <= 0) return;
+  const previous = conversation.messages[cutIndex - 1];
+  const anchor = previous.messages[previous.selectIndex] ?? previous.messages[0];
+  if (!anchor) return;
+  anchor.annotations ??= [];
+  anchor.annotations.push({ type: "compaction_cut" });
+}
+
+/** 链式摘要预算:目标长度的 2 倍(默认 2000 → 4000),下限 1k 保护极小目标。
+ *  链式摘要每压一次就多背一份新摘要,不设上限时 N 次压缩后摘要本身会重新吃满
+ *  上下文。超过预算做一次二次浓缩;只做一遍——模型不听话时不无限追打,信息完整
+ *  优先于严格达标。 */
+export function compactionSummaryBudget(targetTokens: number): number {
+  return Math.max(1024, Math.floor(targetTokens * 2));
+}
+
+/** 压缩来源标记(阶段三):自动压缩在状态帧里带 reason,UI 显示"正在自动压缩上下文"
+ *  而不是把维护动作伪装成用户手动操作。手动路径不传,行为不变。 */
+export interface CompressConversationOptions {
+  autoReason?: "threshold" | "overflow";
+}
+
+export async function compressConversation(conversation: Conversation, additionalPrompt = "", targetTokens = 2000, keepRecentMessages = 32, signal?: AbortSignal, options?: CompressConversationOptions) {
+  // 导入替换运行态(备份恢复/安卓库导入)同样要作废压缩:压缩端点持的是旧实例、
+  // 旧切点记录,落库会把新库里的同一会话覆盖成旧快照。代际在入口一次捕获,分块间
+  // 与最终落库闸门各复检一次(与 signal 取消同级)。
+  const epoch = runtimeEpoch();
   const allMessages = selectedConversationMessages(conversation);
   if (allMessages.length === 0) throw new Error("当前会话没有可压缩的消息");
-  // 审计防线快照:压缩是"按开头快照整体覆盖 messages"的破坏性替换,期间任何写入
-  // (发消息/重新生成/删除节点等)都会在覆盖时被静默吞掉。API 三写入口已 409 互斥,
-  // 这里再记引用+长度,落库前比对——防住未来新增的绕过入口的写路径(fail-safe:
-  // 宁可压缩作废重来,不可丢用户数据)。
+  // 审计防线快照:压缩期间任何写入(发消息/重新生成/删除节点等)都要作废本次结果——
+  // 下面要改的是会话级压缩记录与切点注解,写错会让模型看到错误的历史边界。API 三写入口
+  // 已 409 互斥,这里再记引用+长度,落库前比对,防住未来新增的绕过入口的写路径。
   const messagesRefBefore = conversation.messages;
   const messagesLengthBefore = conversation.messages.length;
+
+  // 链式压缩(非破坏性改造的核心):上一次切点之后才是"还没被摘要的原文"。
+  // ① 绝不把已被摘要吸收的原文再压一遍——那会让摘要重复膨胀,且第二次压缩的成本
+  //    随会话总长度增长(压缩本该只花在新增段上);
+  // ② 新摘要 = 上一次摘要 + 本次摘要,因为生效记录只有最新一条(见 engine-compaction),
+  //    不链式拼接就会在第二次压缩时把早期上下文整段丢掉。
+  const recordsBefore = parseEngineCompactions(conversation.engineCompactions);
+  const previousCut = findEffectiveCompaction(recordsBefore, allMessages, () => true);
+  const previousCutIndex = previousCut ? allMessages.findIndex((msg) => msg.id === previousCut.cutMessageId) : 0;
+  const previousSummary = previousCut?.summary.trim() ?? "";
+  const compressible = allMessages.slice(Math.max(0, previousCutIndex));
+  // 切点必须落在一条真实消息上:全量压缩没有锚点可指,模型也会丢掉"当前对话最后一句"
+  // 的语境。只剩一条时确实没得压,明确拒绝而不是产生一个空压缩。
+  if (compressible.length < 2) throw new Error("当前会话上下文过短，暂不需要压缩。");
 
   // 内测反馈(310K 会话 /compact 报"消息数量不足"):按条数保留的语义对"少而长"的会话
   // 不成立——20 条超长消息的会话 token 巨大,却因条数 ≤ 默认保留 32 条被整体划进保留区,
   // 直接拒绝。压缩的目的是省上下文,"保留最近 N 条"是手段不是目的:条数不足时自动降级
-  // 为保留一半(至少压掉一半旧消息),恒可压。单条消息 floor(1/2)=0 → 全压成摘要,同样成立。
-  let effectiveKeepRecent = keepRecentMessages;
-  if (effectiveKeepRecent > 0 && allMessages.length <= effectiveKeepRecent) {
-    effectiveKeepRecent = Math.floor(allMessages.length / 2);
+  // 为保留一半(至少压掉一半旧消息)。保留数下限 1(切点锚点),keepRecentMessages=0
+  // 表示"尽量压",同样落 1。
+  let effectiveKeepRecent = keepRecentMessages > 0 ? keepRecentMessages : 1;
+  if (effectiveKeepRecent >= compressible.length) {
+    effectiveKeepRecent = Math.max(1, Math.floor(compressible.length / 2));
   }
+  const compressibleBeforeCut = compressible.slice(0, compressible.length - effectiveKeepRecent);
+  const cutMessageId = compressible[compressible.length - effectiveKeepRecent].id;
 
-  let messagesToCompress: Message[];
-  let messagesToKeep: Message[];
-  if (effectiveKeepRecent > 0) {
-    messagesToCompress = allMessages.slice(0, -effectiveKeepRecent);
-    messagesToKeep = allMessages.slice(-effectiveKeepRecent);
-  } else {
-    messagesToCompress = allMessages;
-    messagesToKeep = [];
+  // 阶段四:钉住的消息不进摘要模型。它们的全文由编码层以 <pinned_messages> 原样注入
+  // 每轮请求,若再让摘要模型缩写一遍就是双重表达(摘要里的转述还可能和原文打架)。
+  // 切点与保留窗口不动——钉住的只是"摘要输入的排除项",不是"保留窗口的例外":
+  // 钉住的消息若落在切点之后本来就逐字可见,落在之前才经注入保留,两种位置语义一致。
+  const pinnedExcluded = compressibleBeforeCut.filter((msg) => !isPinnedMessage(msg));
+  if (pinnedExcluded.length === 0) {
+    throw new Error("待压缩的消息都已钉住，没有可摘要的内容。请先取消钉住，或等对话继续推进后再压缩。");
   }
 
   const splitMessages = (messages: Message[]): Message[][] => {
@@ -537,13 +595,22 @@ export async function compressConversation(conversation: Conversation, additiona
   // 思想)。chat 会话(workspaceId 空)走原路径,逐字节不变。
   const isAgent = Boolean(conversation.workspaceId);
   const summarize = isAgent ? (msg: Message) => agentSummaryAsText(msg, summaryAsText(msg)) : summaryAsText;
-  const chunks = splitMessages(messagesToCompress);
+  const chunks = splitMessages(pinnedExcluded);
   const summaries: string[] = [];
+  // 压缩模型未配置(空/AUTO 哨兵)或已被删除 → 回退会话模型。不能直接把哨兵交给
+  // findModel:它查不到就兜底"第一个供应商 + 猜 auto→gpt-4o-mini",对不提供该模型的
+  // 服务商必 400(与标题/建议同一根因)。二次浓缩复用同一选择结果。
+  const compressionModelId = modelExists(state.settings.compressModelId)
+    ? state.settings.compressModelId
+    : conversationModelIdFor(conversation);
+  // 压缩前规模的展示口径:被压缩段进摘要模型的文本量(与 pi tokensBefore 同用途)。
+  let summarizedTokens = 0;
   // 失败/取消的 UI 收尾无需在此处理:进度在 engine-status 帧里(compress 端点 finally
   // 统一广播 busy:false),不再有落在会话对象上的瞬态标签需要清理。
   for (const chunk of chunks) {
     // R7-4:每个分块前查取消——用户中途取消不再烧后续分块的 LLM 轮次。
     if (signal?.aborted) throw new DOMException("Compression cancelled", "AbortError");
+    if (!isRuntimeEpochCurrent(epoch)) throw new Error("运行态已在压缩期间被导入替换，压缩结果作废");
     // 分块进度走 engine-status 帧(状态条统一渲染"正在压缩上下文 (n/m) · 已处理 xx秒")。
     // 原实现借 chatSuggestions 建议条展示进度文本——挪用了建议区的语义位,且文案
     // 无法 i18n;进度本就是引擎状态的一部分,并入 engine-status 后该 hack 退役。
@@ -551,6 +618,7 @@ export async function compressConversation(conversation: Conversation, additiona
     broadcastEngineStatus(conversation.id, {
       busy: true,
       phase: "compacting",
+      ...(options?.autoReason ? { reason: options.autoReason } : {}),
       progress: { current: summaries.length + 1, total: chunks.length },
       ...(compressing.has(conversation.id) ? { startedAt: compressing.get(conversation.id) } : {}),
     });
@@ -558,17 +626,16 @@ export async function compressConversation(conversation: Conversation, additiona
       additionalPrompt.trim() ? `Additional instructions from user: ${additionalPrompt.trim()}` : "",
       isAgent ? buildAgentCompactionContext(extractAgentActivity(chunk)) : "",
     ].filter(Boolean);
+    const chunkText = chunk.map(summarize).join("\n\n");
+    summarizedTokens += estimateTokens(chunkText);
     const prompt = applyPlaceholders(state.settings.compressPrompt || DEFAULT_COMPRESS_PROMPT, {
-      content: chunk.map(summarize).join("\n\n"),
+      content: chunkText,
       target_tokens: String(targetTokens),
       additional_context: contextSections.join("\n\n"),
       locale: localeDisplayName(),
     });
-    // 压缩模型未配置(空/AUTO 哨兵)或已被删除 → 回退会话模型。不能直接把哨兵交给
-    // findModel:它查不到就兜底"第一个供应商 + 猜 auto→gpt-4o-mini",对不提供该模型的
-    // 服务商必 400(与标题/建议同一根因)。
     summaries.push(cleanAuxiliaryText(await fetchAuxiliaryText(
-      modelExists(state.settings.compressModelId) ? state.settings.compressModelId : conversationModelIdFor(conversation),
+      compressionModelId,
       prompt,
       "compression",
       {
@@ -578,22 +645,79 @@ export async function compressConversation(conversation: Conversation, additiona
       },
     )));
   }
-  // R7-4:落库前最后一道闸——取消后 LLM 结果作废,绝不改写会话(压缩是破坏性替换,
-  // 取消语义必须硬保证)。
+  // R7-4:取消后 LLM 结果作废,绝不改写会话(压缩是破坏性替换,取消语义必须硬保证)。
   if (signal?.aborted) throw new DOMException("Compression cancelled", "AbortError");
-  // 批6复审 G1:会话在压缩期间被删除/被导入替换时结果同样作废——下方 persistConversation
-  // 是无条件 upsert,会把已删会话复活成"只剩摘要"的僵尸。
+
+  // 非破坏性落点:历史原文一条不删,只追加一条压缩记录 + 打切点标记。切点之前的原文
+  // 由编码层按摘要重放(conversation-encoding / pi context-encoder 同一 record 语义),
+  // UI 时间线与搜索索引全量保留。旧实现整体替换 messages,摘要行会顶掉所有原文并让
+  // FTS 重建后搜不到历史——这是本次改造要消除的静默数据损失。
+  const freshSummary = summaries.map((summary) => summary.trim()).filter(Boolean).join("\n\n");
+  if (!freshSummary) throw new Error("压缩未产生有效摘要");
+  // 链式拼接见上方 ②:只有最新记录生效,不带上一次摘要就会在第二次压缩时丢掉早期上下文。
+  // 摘要模型复述上一版时合并层会去掉重复段落,避免记录里堆出同一段文字。
+  let chainedSummary = mergeCompactionSummary(previousSummary, freshSummary);
+
+  // 摘要长度预算:链式摘要超过目标 2 倍时再浓缩一遍。不设这一步,每次压缩都会把
+  // 上一份摘要原样背进新记录,长期会话的摘要会线性膨胀、最终重新挤占上下文。
+  // 二次浓缩失败不毁掉已完成的主压缩;取消必须向上传播(否则会带着过期结果落库)。
+  if (estimateTokens(chainedSummary) > compactionSummaryBudget(targetTokens)) {
+    // 不带 progress:这是分块计划之外的一步,给 total+1 会让进度条从 100% 倒退。
+    // 去掉进度后状态条显示"正在压缩上下文",计时继续走,语义准确。
+    broadcastEngineStatus(conversation.id, {
+      busy: true,
+      phase: "compacting",
+      ...(options?.autoReason ? { reason: options.autoReason } : {}),
+      ...(compressing.has(conversation.id) ? { startedAt: compressing.get(conversation.id) } : {}),
+    });
+    try {
+      const condensed = cleanAuxiliaryText(await fetchAuxiliaryText(
+        compressionModelId,
+        applyPlaceholders(DEFAULT_CONDENSE_SUMMARY_PROMPT, {
+          content: chainedSummary,
+          target_tokens: String(targetTokens),
+          additional_context: additionalPrompt.trim()
+            ? `Additional instructions from user: ${additionalPrompt.trim()}`
+            : "",
+          locale: localeDisplayName(),
+        }),
+        "compression",
+        { stream: true, signal, conversationId: conversation.id },
+      )).trim();
+      // 只在真的变短时采纳:模型复述/扩写时保留原摘要,不制造"二次压缩反而膨胀"。
+      if (condensed && estimateTokens(condensed) < estimateTokens(chainedSummary)) {
+        chainedSummary = condensed;
+      }
+    } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        throw new DOMException("Compression cancelled", "AbortError");
+      }
+      // 二次浓缩是增强不是主流程:失败时保留链式摘要(可能超预算,但信息完整)。
+    }
+  }
+
+  // R7-4/批6/审计:二次浓缩也可能耗时,所有落库闸门在最后统一复检。
+  // 取消后 LLM 结果作废;会话被删除/被导入替换时结果同样作废(persistConversation 是
+  // 无条件 upsert,会把已删会话复活成"只剩摘要"的僵尸);期间有写入(push 改长度 /
+  // delete-filter 换引用)则整体作废,绝不覆盖。
+  if (signal?.aborted) throw new DOMException("Compression cancelled", "AbortError");
+  if (!isRuntimeEpochCurrent(epoch)) throw new Error("运行态已在压缩期间被导入替换，压缩结果作废");
   if (getConversation(conversation.id) !== conversation) throw new Error("会话已被删除,压缩结果作废");
-  // 审计防线:期间有写入(push 改长度 / delete-filter 换引用)则整体作废,绝不覆盖。
   if (conversation.messages !== messagesRefBefore || conversation.messages.length !== messagesLengthBefore) {
     throw new Error("会话在压缩期间发生变更,压缩结果作废,请重试");
   }
 
-  conversation.messages = [
-    ...summaries.filter(Boolean).map((summary) => ({ id: id(), messages: [message("USER", [{ type: "text", text: summary }])], selectIndex: 0 })),
-    ...messagesToKeep.map((msg) => ({ id: id(), messages: [JSON.parse(JSON.stringify(msg))], selectIndex: 0 })),
-  ];
-  markCompactionBoundary(conversation);
+  conversation.engineCompactions = [
+    ...recordsBefore,
+    {
+      cutMessageId,
+      summary: chainedSummary,
+      // 展示口径:本次新摘要覆盖的原文 token(不含旧摘要,避免第二次压缩后数值虚高)。
+      tokensBefore: summarizedTokens,
+      createdAt: new Date().toISOString(),
+    },
+  ] as unknown as JsonValue[];
+  markCompactionCut(conversation, cutMessageId);
   conversation.chatSuggestions = [];
   conversation.updateAt = Date.now();
   persistConversation(conversation);

@@ -63,4 +63,41 @@ describe("approval-gate 等待/决定汇合", () => {
     await expect(other).resolves.toEqual({ approved: true });
     expect(pendingToolApprovalCount()).toBe(0);
   });
+
+  test("按 scope 清扫只杀本作用域,同会话并发兄弟等待者照常唤醒(子智能体场景)", async () => {
+    const parent = waitForToolApproval("conv-f", "call-8");
+    const childA = waitForToolApproval("conv-f", "call-9", undefined, "conv-f#sub-1");
+    const childB = waitForToolApproval("conv-f", "call-10", undefined, "conv-f#sub-2");
+    // 子 A 收工:不得波及子 B 与父生成
+    clearToolApprovalWaiters("conv-f", "conv-f#sub-1");
+    await expect(childA).rejects.toMatchObject({ name: "AbortError" });
+    expect(pendingToolApprovalCount()).toBe(2);
+    expect(resolveToolApproval("conv-f", "call-10", { approved: true })).toBe(true);
+    await expect(childB).resolves.toEqual({ approved: true });
+    expect(resolveToolApproval("conv-f", "call-8", { approved: false, reason: "拒绝" })).toBe(true);
+    await expect(parent).resolves.toEqual({ approved: false, reason: "拒绝" });
+    expect(pendingToolApprovalCount()).toBe(0);
+  });
+
+  test("不传 scope 的清扫保持旧语义:清该会话全部作用域", async () => {
+    const parent = waitForToolApproval("conv-g", "call-11");
+    const child = waitForToolApproval("conv-g", "call-12", undefined, "conv-g#sub-1");
+    clearToolApprovalWaiters("conv-g");
+    await expect(parent).rejects.toMatchObject({ name: "AbortError" });
+    await expect(child).rejects.toMatchObject({ name: "AbortError" });
+    expect(pendingToolApprovalCount()).toBe(0);
+  });
+
+  test("同 toolCallId 不同 scope 互不顶替;决议跨 scope 命中", async () => {
+    const a = waitForToolApproval("conv-h", "call-13", undefined, "conv-h#sub-1");
+    const b = waitForToolApproval("conv-h", "call-13", undefined, "conv-h#sub-2");
+    expect(pendingToolApprovalCount()).toBe(2);
+    // 先登记者先被唤醒(Map 插入序),另一个继续等;再决议一次命中后者。
+    expect(resolveToolApproval("conv-h", "call-13", { approved: true })).toBe(true);
+    await expect(a).resolves.toEqual({ approved: true });
+    expect(pendingToolApprovalCount()).toBe(1);
+    expect(resolveToolApproval("conv-h", "call-13", { approved: false, reason: "第二个" })).toBe(true);
+    await expect(b).resolves.toEqual({ approved: false, reason: "第二个" });
+    expect(pendingToolApprovalCount()).toBe(0);
+  });
 });

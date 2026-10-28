@@ -39,6 +39,7 @@ import { getStringArray, renderTemplate } from "../foundation/utils";
 import { piAgentDir, skillsDir, globalAgentsPath } from "../foundation/paths";
 import { readGlobalAgentsFile } from "../agents/global-agents";
 import { frozenContextBlocks } from "../inference-engine/context-snapshots";
+import { prepareMemoryRecall } from "../memory/recall";
 import { PI_THINKING_BUDGETS } from "./model-bridge";
 import { templateVariables } from "../inference-engine/message-enrichment";
 import { buildSearchContext } from "../search";
@@ -153,6 +154,10 @@ export async function createPiSessionResources(options: {
   cwd: string;
   /** 工作区边界根(AGENTS.md 过滤基准)。 */
   root: string;
+  /** 项目层 AGENTS.md 是否参与(默认 true)。远程工作区传 false:对齐安卓端
+   *  WorkspaceReminderTransformer——远端目录里恰好有个同名文件就把它当指令,等于让
+   *  服务器端任意用户写的文件接管本会话;全局层(pc-data/AGENTS.md)照常注入。 */
+  includeProjectAgentsFiles?: boolean;
   /** P8 注入面统一:lorebook/模式注入的系统位文本(before/after_system_prompt),
    *  追加在人设/记忆之后、stableGuidanceLines 之前——与聊天引擎 systemParts 同位。 */
   extraAppendSystemPrompt?: string[];
@@ -161,7 +166,7 @@ export async function createPiSessionResources(options: {
    *  不传 = pi 默认 20000(生成会话的 threshold/overflow 自动压缩用)。 */
   compactionKeepRecentTokens?: number;
 }): Promise<PiSessionResources> {
-  const { conversation, assistant, model, cwd, root, extraAppendSystemPrompt, compactionKeepRecentTokens } = options;
+  const { conversation, assistant, model, cwd, root, extraAppendSystemPrompt, compactionKeepRecentTokens, includeProjectAgentsFiles = true } = options;
   // inMemory:零文件 I/O(不读不写任何 settings.json);projectTrusted:false 是给
   // resource-loader 的发现逻辑看的(.pi/SYSTEM.md 门控)。压缩面 P5 接管:threshold/
   // overflow 自动压缩显式开启(数值与 pi 默认一致,但不再依赖库默认值漂移),
@@ -178,6 +183,8 @@ export async function createPiSessionResources(options: {
     { projectTrusted: false },
   );
   const enabledSkills = new Set(getStringArray(assistant.enabledSkills));
+  // 特性 C：pi 链路与聊天引擎共用同一份召回冻结；必须在 buildPiAppendSystemPrompt 之前。
+  await prepareMemoryRecall(conversation, assistant);
   // 技能库目录是我们的家,确保存在(与 tools/skills.listSkills 同款自愈)——否则冷启动
   // 未开过技能页时,pi 每轮 reload 都会对 additionalSkillPaths 报"path does not exist"。
   mkdirSync(skillsDir, { recursive: true });
@@ -197,7 +204,11 @@ export async function createPiSessionResources(options: {
     }),
     agentsFilesOverride: ({ agentsFiles }) => {
       // 项目层:词法边界过滤(pi 默认 agentDir 全局件不在工作区内,天然被滤)。
-      const project = agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root));
+      // 远程工作区整层关掉(includeProjectAgentsFiles=false):cwd 是本机宿主目录,那儿本来
+      // 就不该有项目指令;即便有,也不该由一个"用户在远端机器上的目录"派生出来。
+      const project = includeProjectAgentsFiles
+        ? agentsFiles.filter((file) => isAbsolute(file.path) && isWithinRoot(file.path, root))
+        : [];
       // 全局层:virtual file 注入首位(SDK 官方宿主姿势)——渲染走 pi 原生
       // <project_instructions> 管线,与项目层同格式;reload 时点定格,内容只在
       // 每轮生成装配时读(用户编辑下轮生效,与技能开关同语义)。

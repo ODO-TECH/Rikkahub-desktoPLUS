@@ -631,7 +631,12 @@ export async function migrateConversationsIntoDbBatched(
  *  却指向不存在的工作区(绑定悬空)。pc_workspace 与 pc_conversation 同驻一个活库,故
  *  此处一并 ATTACH 复制;导入侧在同库事务内重灌。硬约束:此表只进 pc dump,绝不进
  *  安卓 rikka_hub.db(安卓 workspaces 表同名不同构),PC→APP 边界不受影响。
- *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。 */
+ *  表按存在性探测(不读 format 号),老 dump(format 1,无该表)导入时跳过工作区重灌。
+ *
+ *  ssh 型工作区随表带出的只有两个引用 id(凭据在 settings 侧,永不进本 dump)。换机恢复
+ *  后那台设备若不存在,工作区会如实显示"设备已不存在,去 拓展 › SSH 重新添加"并置为不可用
+ *  ——绑定悬空是可恢复状态,不是数据丢失,因此照旧带出而不是过滤掉整行(会话仍要能打开)。
+ *  新增两个可空列不改 format 号:老 dump 读出的行缺列为 null,新表读老库靠列名交集,双向兼容。 */
 export function exportPcConversationsDump(targetPath: string): number {
   if (!conversationsDb) return -1;
   const db = conversationsDb;
@@ -670,6 +675,8 @@ export function exportPcConversationsDump(targetPath: string): number {
         root              TEXT NOT NULL DEFAULT '',
         permission_preset TEXT NOT NULL,
         trusted_at        INTEGER,
+        ssh_device_id     TEXT,
+        ssh_dir_id        TEXT,
         create_at         INTEGER NOT NULL,
         update_at         INTEGER NOT NULL,
         last_access_at    INTEGER NOT NULL
@@ -685,7 +692,17 @@ export function exportPcConversationsDump(targetPath: string): number {
       "SELECT name FROM main.sqlite_master WHERE type='table' AND name='pc_workspace'",
     ).get();
     if (hasWorkspaceTable) {
-      db.exec("INSERT INTO pcdump.pc_workspace SELECT id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at FROM main.pc_workspace");
+      // 列名取两侧交集,不写死清单:迁移前的活库(PRAGMA 里没有 ssh_* 两列)也要能备份成功,
+      // 而 pcdump 侧的表结构永远由本函数自己建。绑过 ssh 工作区的库必然已经走过
+      // workspace/index.ts 的懒迁移,交集对它而言就是全列,不会静默丢绑定。
+      const mainColumns = new Set(
+        (db.prepare("PRAGMA main.table_info(pc_workspace)").all() as { name: string }[]).map((column) => column.name),
+      );
+      const dumpColumns = (db.prepare("PRAGMA pcdump.table_info(pc_workspace)").all() as { name: string }[])
+        .map((column) => column.name)
+        .filter((column) => mainColumns.has(column));
+      const list = dumpColumns.join(", ");
+      db.exec(`INSERT INTO pcdump.pc_workspace (${list}) SELECT ${list} FROM main.pc_workspace`);
     }
     return (db.prepare("SELECT COUNT(*) AS n FROM pcdump.pc_conversation").get() as { n: number }).n;
   } finally {
@@ -728,14 +745,25 @@ export function resetConversationsDbTo(conversations: Conversation[], workspaces
     if (workspaces) {
       db.exec(`CREATE TABLE IF NOT EXISTS pc_workspace (
         id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, root TEXT NOT NULL DEFAULT '',
-        permission_preset TEXT NOT NULL, trusted_at INTEGER, create_at INTEGER NOT NULL, update_at INTEGER NOT NULL, last_access_at INTEGER NOT NULL
+        permission_preset TEXT NOT NULL, trusted_at INTEGER, ssh_device_id TEXT, ssh_dir_id TEXT,
+        create_at INTEGER NOT NULL, update_at INTEGER NOT NULL, last_access_at INTEGER NOT NULL
       )`);
+      // 懒迁移同型于 workspace/index.ts:目标库可能是 ssh 列之前建的(本函数只 IF NOT EXISTS,
+      // 不会补列)。不补的话,下面带 ssh_* 两列的 INSERT 直接报 no such column,整份备份导入失败。
+      const columns = new Set(
+        (db.prepare("PRAGMA table_info(pc_workspace)").all() as { name: string }[]).map((column) => column.name),
+      );
+      for (const column of ["ssh_device_id", "ssh_dir_id"]) {
+        if (!columns.has(column)) db.exec(`ALTER TABLE pc_workspace ADD COLUMN ${column} TEXT`);
+      }
       db.exec("DELETE FROM pc_workspace");
       const ins = db.prepare(
-        "INSERT INTO pc_workspace (id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO pc_workspace (id, name, type, root, permission_preset, trusted_at, ssh_device_id, ssh_dir_id, create_at, update_at, last_access_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       for (const w of workspaces) {
-        ins.run(w.id, w.name, w.type, w.root, w.permission_preset, w.trusted_at, w.create_at, w.update_at, w.last_access_at);
+        // 老 dump(format 2 无 ssh 两列)读出的行这里就是 undefined → 归一成 null:
+        // 恢复出来的 ssh 工作区若真丢了引用,绑定解析会报"设备不存在"并置为不可用,而不是崩溃。
+        ins.run(w.id, w.name, w.type, w.root, w.permission_preset, w.trusted_at, w.ssh_device_id ?? null, w.ssh_dir_id ?? null, w.create_at, w.update_at, w.last_access_at);
       }
     }
   });

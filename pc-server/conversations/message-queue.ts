@@ -185,6 +185,31 @@ export function editQueuedMessage(conversationId: string, itemId: string, parts:
   return true;
 }
 
+/** 取消所有等待专属回复的排队项(用户停止 / 生成失败时调用)。这些项若留在冻结或
+ *  暂停的队列里,等待方会永久悬挂;若之后被 resume 派发,又会变成无人接收的静默生成。
+ *  只移除 waitingReply 项,普通键盘排队保持原样;等待方恰好 resolve null。 */
+export function cancelWaitingQueuedMessages(conversationId: string): QueuedGeneration[] {
+  const q = queues.get(conversationId);
+  if (!q) return [];
+  const removed = q.items.filter((item) => item.waitingReply);
+  if (removed.length === 0) return [];
+  q.items = q.items.filter((item) => !item.waitingReply);
+  for (const item of removed) deliverQueuedReply(conversationId, item.id, null);
+  return removed;
+}
+
+/** 全量清空(运行态整体替换:备份导入)。所有等待方恰好 resolve 一次 null,
+ *  否则导入后 IM/语音的串行链会永久悬挂。返回被清空的会话 id 列表。 */
+export function clearAllMessageQueues(): string[] {
+  const ids = Array.from(queues.keys());
+  queues.clear();
+  for (const [key, resolve] of Array.from(queuedReplyWaiters)) {
+    queuedReplyWaiters.delete(key);
+    resolve(null);
+  }
+  return ids;
+}
+
 /** 清空会话队列(会话删除/导入作废时调用)。幂等。挂起的语音回复等待一并 resolve null。 */
 export function clearMessageQueue(conversationId: string): void {
   queues.delete(conversationId);

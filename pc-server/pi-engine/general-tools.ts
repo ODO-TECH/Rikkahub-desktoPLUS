@@ -49,6 +49,8 @@ export interface PiGeneralToolsContext {
    *  已声明内置 search 时外挂让位。pi 引擎当前不接内置搜索(只挂外挂),传它是为了与
    *  聊天引擎同一注入源同一判定——未来 pi 接内置搜索或新引擎照抄时零成本继承。 */
   model?: Model | null;
+  /** 审批作用域(缺省 = conversationId)。子智能体子生成领独立 scope。 */
+  approvalScopeId?: string;
 }
 
 /** entries → pi AgentToolResult。模型面文本与聊天引擎 resolvedToolOutput 同源
@@ -92,6 +94,7 @@ function buildGeneralTool(
         signal,
         toolName: name,
         ...(approvalSummary ? { summary: approvalSummary } : {}),
+        ...(ctx.approvalScopeId ? { approvalScope: ctx.approvalScopeId } : {}),
       });
       const raw = await executeToolCall(
         { id: toolCallId, function: { name, arguments: argsJson } },

@@ -47,6 +47,7 @@ export const compressing = new Map<string, number>();
  *  与 compressing 同哲学:engine-status 帧是瞬态语义(重连即重置),审批挂起可能跨
  *  切页/失焦存活很久,没有这份注册表,SSE 重连后"等待审批"的琥珀态就丢失、桌面
  *  通知也无从恢复。由 approval-flow.gateToolApproval 在进入/离开等待时维护;
- *  生成终局(finally busy:false)兜底清除。一个会话同时只挂一张审批卡(sequential),
- *  故单值而非集合。 */
-export const awaitingApproval = new Map<string, { startedAt: number; toolName?: string; summary?: string }>();
+ *  生成终局(finally busy:false)兜底清除。单值而非集合:主生成 sequential,一个
+ *  会话同时只挂一张卡;并发子智能体(子审批共用会话键)时保留最后登记的那张,
+ *  注销按 toolCallId 归属判定,不会提前清掉兄弟的等待态。 */
+export const awaitingApproval = new Map<string, { startedAt: number; toolCallId?: string; toolName?: string; summary?: string }>();
