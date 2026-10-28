@@ -35,6 +35,19 @@ export function peekPreferredPort(): number | null {
   return peekPreferredPortIn(statePath);
 }
 
+/** S2b 受限沙盒:降级自重启的决定必须在 dataDir 锁之前做出,而 state 要到 bootstrap
+ *  才装载——与端口同款,对 state.json 做"只窥探开关"的轻量读取。任何失败按关处理
+ *  (降级启动绝不能因读不到设置而误触发)。 */
+export function peekSandboxRestricted(): boolean {
+  try {
+    if (!existsSync(statePath)) return false;
+    const parsed = JSON.parse(readFileSync(statePath, "utf8")) as { settings?: { sandboxRestricted?: unknown } };
+    return parsed.settings?.sandboxRestricted === true;
+  } catch {
+    return false;
+  }
+}
+
 let pendingThrottledSave: ReturnType<typeof setTimeout> | null = null;
 let lastSaveStateMs = 0;
 const STREAM_SAVE_INTERVAL_MS = 200;

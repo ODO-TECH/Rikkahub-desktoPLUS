@@ -11,6 +11,9 @@ import { systemDenyDirs } from "./boundary";
 import type { PcWorkspaceRow, Workspace, WorkspacePermissionPreset, WorkspaceStatus, WorkspaceType } from "../foundation/types";
 import { id as newId } from "../foundation/utils";
 import { getConversation, getConversationsDb, persistConversation } from "../conversations";
+import { resolveSshBinding, sshBindingAvailable } from "../ssh/workspace-binding";
+import type { SshWorkspaceTarget } from "../ssh/workspace-binding";
+import { SshInputError } from "../ssh/errors";
 import { scheduleThrottledSaveState, state } from "../persistence/json-store";
 import { reportError } from "../observability/app-errors";
 
@@ -24,6 +27,13 @@ const WORKSPACE_NAME_MAX = 80;
 
 const ensuredDbs = new WeakSet<Database>();
 
+/** ssh 型绑定的两个引用列(2.x 起):老库懒迁移用 PRAGMA 探列名,不认运气。 */
+const SSH_BINDING_COLUMNS = ["ssh_device_id", "ssh_dir_id"] as const;
+
+function columnNames(handle: Database, table: string): string[] {
+  return (handle.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((column) => column.name);
+}
+
 function db(): Database {
   const handle = getConversationsDb();
   if (!handle) throw new Error("conversations db not open");
@@ -36,14 +46,29 @@ function db(): Database {
         root              TEXT NOT NULL DEFAULT '',
         permission_preset TEXT NOT NULL,
         trusted_at        INTEGER,
+        ssh_device_id     TEXT,
+        ssh_dir_id        TEXT,
         create_at         INTEGER NOT NULL,
         update_at         INTEGER NOT NULL,
         last_access_at    INTEGER NOT NULL
       );
     `);
+    // 懒迁移:建 ssh 工作区之前建的库没有这两列。ADD COLUMN 只改元数据、不动行,
+    // 与"老库里全是 managed/folder 行"互不干扰(缺省 NULL,由 rowToWorkspace 收敛)。
+    const existing = new Set(columnNames(handle, "pc_workspace"));
+    for (const column of SSH_BINDING_COLUMNS) {
+      if (!existing.has(column)) handle.exec(`ALTER TABLE pc_workspace ADD COLUMN ${column} TEXT`);
+    }
     ensuredDbs.add(handle);
   }
   return handle;
+}
+
+/** 工作区宿主目录(= tmp/ 的父目录)。远程工作区用它当引擎的本地 cwd:pi 的会话 cwd
+ *  必须是一个真实的本机目录(它要在那儿做 fs 行走与保留名清扫),而工作区的边界根在远端,
+ *  两者不是同一个东西——runtime.ts 里 engineCwd 与 root/cwd 分列就是这个分歧的形状。 */
+export function workspaceHostDir(workspaceId: string): string {
+  return hostDir(workspaceId);
 }
 
 // ----- 目录布局 -----
@@ -70,7 +95,9 @@ function managedRoot(workspaceId: string): string {
 // (RIKKAHUB_PC_DATA_DIR / 便携安装挪盘)后边界根自愈,不留死绝对路径。
 
 function normalizeType(raw: string): WorkspaceType {
-  return raw === "folder" ? "folder" : "managed";
+  if (raw === "folder") return "folder";
+  if (raw === "ssh") return "ssh";
+  return "managed";
 }
 
 function normalizePreset(raw: string): WorkspacePermissionPreset {
@@ -80,21 +107,45 @@ function normalizePreset(raw: string): WorkspacePermissionPreset {
 
 function rowToWorkspace(row: PcWorkspaceRow): Workspace {
   const type = normalizeType(row.type);
+  const sshDeviceId = row.ssh_device_id ?? null;
+  const sshDirId = row.ssh_dir_id ?? null;
+  // ssh 型的边界根不属于自己的表:每次由「拓展 › SSH」的授权目录派生(见 ssh/workspace-binding.ts)。
+  // 派生不出来(设备删了/目录撤了)时退回落库的那份路径快照——它不再参与任何边界判定
+  // (绑定断了工作区就不可用),只是让界面还能显示"这个工作区本来指向哪里"。
+  const binding = type === "ssh" ? resolveSshBinding(sshDeviceId, sshDirId) : null;
+  const root = type === "managed"
+    ? managedRoot(row.id)
+    : binding?.target ? binding.target.root : row.root;
   return {
     id: row.id,
     name: row.name,
     type,
-    root: type === "managed" ? managedRoot(row.id) : row.root,
+    root,
     permissionPreset: normalizePreset(row.permission_preset),
     trustedAt: row.trusted_at ?? null,
+    sshDeviceId: type === "ssh" ? sshDeviceId : null,
+    sshDirId: type === "ssh" ? sshDirId : null,
     createAt: row.create_at,
     updateAt: row.update_at,
     lastAccessAt: row.last_access_at,
   };
 }
 
-/** 运行时健康状态(计算,不落库):根目录丢失 = missing(对齐安卓 BROKEN,不静默删记录)。 */
+/** 远程绑定的不可用原因(仅 ssh 型;其余型返回 null)。工具挂载与引擎选路读它,界面用它解释
+ *  "看起来正常却一个工具都没有"的工作区。文案是英文——同一份字符串会进模型错误文案(runtime.ts)。 */
+export function workspaceUnavailableReasonOf(workspace: Workspace | null): string | null {
+  if (!workspace) return null;
+  if (workspace.type !== "ssh") return null;
+  return resolveSshBinding(workspace.sshDeviceId, workspace.sshDirId).reason;
+}
+
+/** 运行时健康状态(计算,不落库):根目录丢失 = missing(对齐安卓 BROKEN,不静默删记录)。
+ *  ssh 型的"丢失"只看配置层绑定(设备/授权目录/主机密钥),不探网络——列表页与每轮挂载判定
+ *  都在这条路径上,探测留给「测试连接」与工具执行自己报错。远端临时不可达不是 missing。 */
 export function workspaceStatus(workspace: Workspace): WorkspaceStatus {
+  if (workspace.type === "ssh") {
+    return resolveSshBinding(workspace.sshDeviceId, workspace.sshDirId).reason ? "missing" : "ready";
+  }
   try {
     return statSync(workspace.root).isDirectory() ? "ready" : "missing";
   } catch {
@@ -141,6 +192,34 @@ export function findWorkspaceByRoot(root: string): Workspace | null {
   return null;
 }
 
+/** ssh 型的 1:1 不变式半边(与 folder 型同一条理由:会话/权限/宿主目录挂在工作区实体上,
+ *  同一远程目录开出两个平行工作区会把历史切成两半)。比较的是两个引用 id 而不是路径——
+ *  改了授权目录的路径写法就等于换了一个绑定,这由设置层负责解释,这里不做跨语义归一。 */
+export function findWorkspaceBySshBinding(deviceId: string, dirId: string): Workspace | null {
+  for (const workspace of listWorkspaces()) {
+    if (workspace.type === "ssh" && workspace.sshDeviceId === deviceId && workspace.sshDirId === dirId) return workspace;
+  }
+  return null;
+}
+
+/**
+ * ssh 型绑定准入:入参只有两个引用 id(凭据与远程路径都活在「拓展 › SSH」,工作区一行都不存)。
+ * 判据全交给 ssh/workspace-binding.ts;错误带 errorCode 进 `errors.ssh.*` 的 i18n 通道
+ * (message 是英文兜底——与 ssh/errors.ts 头注那条分工一致)。
+ */
+function requireSshTarget(deviceId: unknown, dirId: unknown): SshWorkspaceTarget {
+  const wantedDevice = String(deviceId ?? "").trim();
+  const wantedDir = String(dirId ?? "").trim();
+  if (!wantedDevice || !wantedDir) {
+    throw new SshInputError("Select an SSH device and one of its authorized remote directories", "ssh.binding_dir_unauthorized");
+  }
+  const binding = resolveSshBinding(wantedDevice, wantedDir);
+  if (!sshBindingAvailable(binding)) {
+    throw new SshInputError(binding.reason ?? "SSH binding is not usable", binding.errorCode ?? "ssh.binding_dir_unauthorized");
+  }
+  return binding.target;
+}
+
 /** folder 型根目录准入校验。返回规范化绝对路径,不合法抛错(错误文案直达 UI)。 */
 export function validateFolderRoot(rawRoot: unknown): string {
   const raw = String(rawRoot ?? "").trim();
@@ -185,11 +264,20 @@ function nextManagedWorkspaceName(): string {
   }
 }
 
-export function createWorkspace(input: { type: WorkspaceType; name?: unknown; root?: unknown }): Workspace {
+export function createWorkspace(input: {
+  type: WorkspaceType;
+  name?: unknown;
+  root?: unknown;
+  sshDeviceId?: unknown;
+  sshDirId?: unknown;
+}): Workspace {
   const now = Date.now();
   const workspaceId = newId();
   let root = "";
+  let sshDeviceId: string | null = null;
+  let sshDirId: string | null = null;
   let trustedAt: number | null = now; // managed 型创建即信任(§3.3)
+  let fallbackName = nextManagedWorkspaceName();
   if (input.type === "folder") {
     root = validateFolderRoot(input.root);
     // 工作区 ↔ 文件夹 1:1 不变式(2.0.0 内测反馈):同一目录重复"创建"= 打开既有
@@ -201,20 +289,37 @@ export function createWorkspace(input: { type: WorkspaceType; name?: unknown; ro
       return getWorkspace(bound.id) ?? bound;
     }
     trustedAt = null; // folder 型必须显式过信任门
+    fallbackName = root.split(sep).filter(Boolean).pop() ?? "工作区";
+  }
+  if (input.type === "ssh") {
+    const target = requireSshTarget(input.sshDeviceId, input.sshDirId);
+    root = target.root;
+    sshDeviceId = target.device.id;
+    // 落库存解析后的规范 id(不是界面传来的原值):findRemoteDir 也认旧式"路径当 id",
+    // 归一之后 1:1 查重的比较才有唯一口径。
+    sshDirId = target.dir.id;
+    // 与 folder 型同一条 open-or-create 不变式:同一设备的同一授权目录只开一个工作区。
+    const bound = findWorkspaceBySshBinding(sshDeviceId, sshDirId);
+    if (bound) {
+      touchWorkspaceAccess(bound.id);
+      return getWorkspace(bound.id) ?? bound;
+    }
+    // 信任门:ssh 型创建即信任——"允许 AI 碰这台机器"已经由「登记授权目录」+「确认主机
+    // 密钥」两个显式动作表达过,工作区绑定不该再弹第三次(详见 ssh/workspace-binding.ts 头注)。
+    fallbackName = root.split("/").filter(Boolean).pop() || target.label;
   }
   // 默认档位(权限档位改版):一律"默认权限"(balanced);但记住用户上一次的显式选择——
   // 上次切到"完全访问"的用户,新建工作区也从"完全访问"起步。folder 型的风险由信任门把守。
   // state 在启动装载前为 undefined(单测常见),此时按无记忆处理(normalizePreset 回退 balanced)。
   const preset: WorkspacePermissionPreset = normalizePreset(String(state?.settings?.workspaceLastPermissionPreset ?? ""));
-  const fallbackName = input.type === "folder" ? root.split(sep).filter(Boolean).pop() ?? "工作区" : nextManagedWorkspaceName();
   const name = sanitizeName(input.name, fallbackName);
 
   mkdirSync(workspaceTmpDir(workspaceId), { recursive: true });
   if (input.type === "managed") mkdirSync(managedRoot(workspaceId), { recursive: true });
 
   db().prepare(
-    "INSERT INTO pc_workspace (id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(workspaceId, name, input.type, input.type === "folder" ? root : "", preset, trustedAt, now, now, now);
+    "INSERT INTO pc_workspace (id, name, type, root, permission_preset, trusted_at, ssh_device_id, ssh_dir_id, create_at, update_at, last_access_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(workspaceId, name, input.type, input.type === "managed" ? "" : root, preset, trustedAt, sshDeviceId, sshDirId, now, now, now);
   const created = getWorkspace(workspaceId);
   if (!created) throw new Error("workspace insert failed");
   return created;
@@ -223,8 +328,15 @@ export function createWorkspace(input: { type: WorkspaceType; name?: unknown; ro
 /** B6-①b:重绑支持。patch.root 仅对 folder 型生效(工作区与项目文件夹解耦:实体保留,
  * 指向的目录可换)。managed 型 root 由 dataDir 派生、不落库,不可改绑。
  * folder 型重绑新目录后重置信任门(trusted_at 置空,待用户重确认)——新目录是新边界,
- * 沿用旧信任等于让模型静默获得一片未授权目录的读写权。 */
-export function updateWorkspace(workspaceId: string, patch: { name?: unknown; permissionPreset?: unknown; root?: unknown }): Workspace | null {
+ * 沿用旧信任等于让模型静默获得一片未授权目录的读写权。
+ *
+ * ssh 型的改绑走 patch.sshDeviceId / patch.sshDirId,且**不**重置信任门:换上去的目标必须
+ * 是「拓展 › SSH」里另一个已授权、已确认主机密钥的目录,同意在设置层已经给过;folder 型
+ * 那道门拦的是用户手输的任意本机路径,两者的风险来源不同(见 ssh/workspace-binding.ts 头注)。 */
+export function updateWorkspace(
+  workspaceId: string,
+  patch: { name?: unknown; permissionPreset?: unknown; root?: unknown; sshDeviceId?: unknown; sshDirId?: unknown },
+): Workspace | null {
   const existing = getWorkspace(workspaceId);
   if (!existing) return null;
   const name = patch.name !== undefined ? sanitizeName(patch.name, existing.name) : existing.name;
@@ -243,6 +355,8 @@ export function updateWorkspace(workspaceId: string, patch: { name?: unknown; pe
   }
   let root = existing.type === "folder" ? existing.root : "";
   let trustedAt = existing.trustedAt;
+  let sshDeviceId = existing.type === "ssh" ? existing.sshDeviceId : null;
+  let sshDirId = existing.type === "ssh" ? existing.sshDirId : null;
   if (patch.root !== undefined) {
     if (existing.type !== "folder") throw new Error("仅 folder 型工作区可重新绑定目录");
     const newRoot = validateFolderRoot(patch.root);
@@ -255,8 +369,20 @@ export function updateWorkspace(workspaceId: string, patch: { name?: unknown; pe
       trustedAt = null; // 重绑新目录 → 信任门重置,待用户重确认
     }
   }
-  db().prepare("UPDATE pc_workspace SET name = ?, permission_preset = ?, root = ?, trusted_at = ?, update_at = ? WHERE id = ?")
-    .run(name, preset, root, trustedAt, Date.now(), workspaceId);
+  if (patch.sshDeviceId !== undefined || patch.sshDirId !== undefined) {
+    if (existing.type !== "ssh") throw new Error("仅 SSH 工作区可更换绑定的设备与远程目录");
+    const target = requireSshTarget(patch.sshDeviceId ?? existing.sshDeviceId, patch.sshDirId ?? existing.sshDirId);
+    if (target.device.id !== existing.sshDeviceId || target.dir.id !== existing.sshDirId) {
+      const bound = findWorkspaceBySshBinding(target.device.id, target.dir.id);
+      if (bound && bound.id !== workspaceId) throw new Error(`该远程目录已绑定工作区「${bound.name}」`);
+    }
+    sshDeviceId = target.device.id;
+    sshDirId = target.dir.id;
+    // root 列是那份"本来指向哪里"的显示快照,换绑必须同步——否则绑定失效态会指着旧路径。
+    root = target.root;
+  }
+  db().prepare("UPDATE pc_workspace SET name = ?, permission_preset = ?, root = ?, trusted_at = ?, ssh_device_id = ?, ssh_dir_id = ?, update_at = ? WHERE id = ?")
+    .run(name, preset, root, trustedAt, sshDeviceId, sshDirId, Date.now(), workspaceId);
   return getWorkspace(workspaceId);
 }
 
@@ -277,7 +403,9 @@ export function touchWorkspaceAccess(workspaceId: string): void {
 
 /**
  * 删除工作区:managed 删托管宿主目录(含 files/),folder 只删 tmp 宿主目录、用户
- * 真实目录一个字节不动(§5.2)。归属会话解绑为对话模式(workspaceId 置空,无数据
+ * 真实目录一个字节不动(§5.2);ssh 型同样只删本地 tmp 宿主目录——远端那台机器上的
+ * 任何文件都不因"删除工作区"而改变(授权还留在 拓展 › SSH,由那里单独撤销)。
+ * 归属会话解绑为对话模式(workspaceId 置空,无数据
  * 丢失;是否连会话一起删由 M2 的 UI 决策,后端保守)。
  *
  * 解绑必须走 working set 权威实例(getConversation→改字段→persistConversation),

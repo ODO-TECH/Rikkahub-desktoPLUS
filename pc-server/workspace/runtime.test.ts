@@ -2,10 +2,11 @@
 // workspace/prompt.ts 退役,聊天引擎不再有工作区段)
 // 覆盖:条件挂载(非工作区/不可用/未信任)、执行守卫链(解绑会话/危险命令/知情同意放行)、
 // pi 内核全链路(write→read→edit 经有界 Operations)、审批矩阵经 tools/approval 联动。
-import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { FakeSshServer } from "../test-utils/fake-ssh-server";
 
 // paths.ts 在 import 时刻固化 dataDir——必须先设环境变量再动态加载被测模块。
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-runtime-test-"));
@@ -16,6 +17,15 @@ const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("./index");
 const runtime = await import("./runtime");
 const approval = await import("../tools/approval");
+const store = await import("../persistence/json-store");
+const { workspacesDir } = await import("../foundation/paths");
+const { SHELL_PROBE_COMMAND } = await import("../ssh/command-wrap");
+const { sshPool } = await import("../ssh/pool");
+const {
+  TEST_PASSWORD: SSH_PASSWORD,
+  trustedDevice,
+  withFakeServer,
+} = await import("../test-utils/ssh-fixtures");
 
 const db = conversations.openConversationsDb();
 // working set 注入是模块级全局,会被其他测试文件覆盖(如 continuation-delete-guard 的 beforeAll
@@ -325,4 +335,186 @@ describe("shell runner 硬化(M1-5)", () => {
       runtime.runWorkspaceTool("bash", { command: "sleep 30", timeout: 1 }, { conversationId: conversation.id }),
     ).rejects.toThrow(/timed out after 1 seconds/);
   }, 15_000);
+});
+
+// ssh 工作区(2026-10-26 与移动端对齐)。这一节要钉的是"同一条线换成远程内核"之后
+// 形状不变:挂载面收窄成安卓端那一档(只有 read + bash)、root/cwd 是远端路径而
+// engineCwd 仍是本机宿主目录、守卫链一条不少、越界与不存在的工具都碰不到任何磁盘。
+describe("ssh 工作区运行时", () => {
+  const APP_DIR = { id: "app", name: "应用目录", path: "/srv/app" };
+  const ROOT = "/srv/app";
+  const textOf = (result: { output: Array<Record<string, unknown>> }) =>
+    result.output.map((o) => (typeof o.text === "string" ? o.text : "")).join("");
+
+  let deviceSeq = 0;
+  /** 每台假服务器一条独立设备条目:池按 deviceId 复用,用例之间不能串连接。 */
+  function remoteDevice(server: FakeSshServer) {
+    deviceSeq += 1;
+    return trustedDevice(server, { id: `rt-dev-${deviceSeq}`, dirs: [APP_DIR] });
+  }
+
+  /** 在注入过的设置里跑一段(结束恢复原值,不向后续测试文件泄漏 sshDevices)。 */
+  async function withDevices<T>(devices: unknown[], run: () => Promise<T>): Promise<T> {
+    const prev = store.state;
+    store.setState({ settings: { sshDevices: devices } } as never);
+    try {
+      return await run();
+    } finally {
+      store.setState(prev as never);
+    }
+  }
+
+  /** 建绑到该设备的 ssh 工作区 + 归属会话;必须在设置已注入的闭包里调用(创建时会解析绑定)。 */
+  function bindRemote(deviceId: string) {
+    const workspace = ws.createWorkspace({ type: "ssh", name: "远端", sshDeviceId: deviceId, sshDirId: "app" });
+    return { workspace, conversation: bindConversation(workspace.id) };
+  }
+
+  /** 用例发的每条命令都记账,结束把对应连接从进程级池里丢掉。
+   *  用 close(deviceId) 而不是 closeAll():后者是给进程退出用的,一旦调用这个单例永不复建。 */
+  const usedDeviceIds: string[] = [];
+  afterEach(() => {
+    for (const id of usedDeviceIds.splice(0)) sshPool.close(id);
+  });
+
+  test("挂载面:只有 read 与 bash(本机有没有 bash 都与此无关)", async () => {
+    await withFakeServer({ password: SSH_PASSWORD }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { workspace, conversation } = bindRemote(device.id);
+        expect(runtime.mountedWorkspaceToolNames(workspace)).toEqual(["read", "bash"]);
+        const names = runtime.openAiWorkspaceTools(conversation).map((tool) => (tool.function as { name: string }).name);
+        expect(names).toEqual(["read", "bash"]);
+        // 本地内核那套 write/edit/grep/find/ls 一个都不发(安卓端 fileWriteTools=false)。
+        expect(names).not.toContain("write");
+      });
+    });
+  });
+
+  test("运行时的形状:root/cwd 是远端路径,engineCwd 才是本机目录", async () => {
+    await withFakeServer({ password: SSH_PASSWORD }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { workspace, conversation } = bindRemote(device.id);
+        const resolved = runtime.workspaceRuntimeForConversation(conversation);
+        expect(resolved).not.toBeNull();
+        expect(resolved!.root).toBe(ROOT);
+        expect(resolved!.cwd).toBe(ROOT);
+        expect(resolved!.remote?.label).toBe(`tester@127.0.0.1:${server.port}`);
+        // 引擎的本地 cwd:pi 要在那儿做 fs 行走与保留名清扫,远端路径不能拿去喂它。
+        expect(resolved!.engineCwd).toBe(join(workspacesDir, workspace.id));
+        expect(existsSync(resolved!.engineCwd)).toBe(true);
+        expect(resolved!.engineCwd).not.toBe(resolved!.root);
+      });
+    });
+  });
+
+  test("会话 cwd:区内子目录保留,越界与写法怪异一律自愈回边界根", async () => {
+    await withFakeServer({ password: SSH_PASSWORD }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { conversation } = bindRemote(device.id);
+        const cwdOf = (workspaceCwd: string | null) =>
+          runtime.workspaceRuntimeForConversation({ ...conversation, workspaceCwd })!.cwd;
+        expect(cwdOf("/srv/app/api")).toBe("/srv/app/api");
+        // 相对值按 root 解析(与本地 resolveCwd 的容错同一口径),且不查本机 fs;反斜杠按
+        // remote-path 的统一规则折成正斜杠(这一层不把 \ 当合法文件名字符)。
+        expect(cwdOf("api")).toBe("/srv/app/api");
+        expect(cwdOf(String.raw`sub\dir`)).toBe("/srv/app/sub/dir");
+        // Windows 绝对形态 = 会话原先绑本地工作区留下的残留 cwd:在 POSIX 侧不是路径,
+        // 拼进去只会得到一个永远 cd 不到的目录、每条命令都失败——自愈回边界根。
+        for (const outside of ["/etc", "/srv", "/srv/app/../private", "C:\\Users\\me", "C:/Users/me", "\\\\nas\\share"]) {
+          expect(cwdOf(outside)).toBe(ROOT);
+        }
+      });
+    });
+  });
+
+  test("绑定断了:不挂工具,执行守卫报不可用,且一条 TCP 都不发", async () => {
+    await withFakeServer({ password: SSH_PASSWORD }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      const { conversation } = await withDevices([device], async () => bindRemote(device.id));
+      // 设置里没有这台设备 = 用户在「拓展 › SSH」把它删了。
+      await withDevices([], async () => {
+        expect(runtime.openAiWorkspaceTools(conversation)).toEqual([]);
+        await expect(
+          runtime.runWorkspaceTool("read", { path: "notes.md" }, { conversationId: conversation.id }),
+        ).rejects.toThrow(/Workspace tools are unavailable/);
+        expect(server.connections).toBe(0);
+      });
+    });
+  });
+
+  test("危险命令在远端一样拦:先拦再连,不给远端机会", async () => {
+    await withFakeServer({ password: SSH_PASSWORD }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { conversation } = bindRemote(device.id);
+        await expect(
+          runtime.runWorkspaceTool("bash", { command: "rm -rf /" }, { conversationId: conversation.id }),
+        ).rejects.toThrow(/blocked by safety policy/);
+        expect(server.connections).toBe(0);
+        expect(server.execs).toHaveLength(0);
+      });
+    });
+  });
+
+  test("模型幻觉出来的 write 只会拿到一句「这里只有 read 与 bash」,本机与远端都不落文件", async () => {
+    await withFakeServer({ password: SSH_PASSWORD, fsSeed: { [ROOT]: true } }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { workspace, conversation } = bindRemote(device.id);
+        const before = server.fs.list(ROOT).join(",");
+        await expect(
+          runtime.runWorkspaceTool("write", { path: "hack.txt", content: "x" }, { conversationId: conversation.id }),
+        ).rejects.toThrow(/not available in an SSH workspace/);
+        expect(server.fs.list(ROOT).join(",")).toBe(before);
+        // 宿主目录里也不该多出 hack.txt:远程分支根本不会落到本地内核。
+        expect(existsSync(join(workspacesDir, workspace.id, "hack.txt"))).toBe(false);
+      });
+    });
+  });
+
+  test("端到端:read 走 SFTP、bash 走 exec,两条工具调用共用一条连接", async () => {
+    await withFakeServer({
+      password: SSH_PASSWORD,
+      fsSeed: { [ROOT]: true, [`${ROOT}/notes.md`]: "远端笔记\n" },
+      onExec: (record, channel) => {
+        channel.write(record.command === SHELL_PROBE_COMMAND ? "/bin/bash\n" : "hello from remote");
+        channel.exit(0);
+        channel.close();
+      },
+    }, async (server) => {
+      const device = remoteDevice(server);
+      usedDeviceIds.push(device.id);
+      await withDevices([device], async () => {
+        const { workspace, conversation } = bindRemote(device.id);
+        const read = await runtime.runWorkspaceTool("read", { path: "notes.md" }, { conversationId: conversation.id });
+        expect(textOf(read)).toContain("远端笔记");
+        const bash = await runtime.runWorkspaceTool("bash", { command: "echo hi" }, { conversationId: conversation.id });
+        expect(textOf(bash)).toContain("hello from remote");
+        // 复用:握手只付一次;read 走 SFTP 不占 exec,exec 只有"探测 shell + 命令"两条。
+        expect(server.connections).toBe(1);
+        expect(server.authenticated).toBe(1);
+        expect(server.execs.map((record) => record.command)).toEqual([
+          SHELL_PROBE_COMMAND,
+          expect.stringContaining(`'${ROOT}'`) as unknown as string,
+        ]);
+        // 工作目录给的是远端路径(不是本机宿主目录),外壳与安卓端逐字节一致。
+        expect(server.execs[1].command).toContain('cd -- "$1" && eval "$2"');
+        expect(server.execs[1].command).not.toContain(workspacesDir);
+        // 超长输出落的是本地 tmp/(与命令在哪台机器上跑无关)。
+        expect(existsSync(ws.workspaceTmpDir(workspace.id))).toBe(true);
+        // 凭据纪律:密码不进工具输出,设备身份只以 user@host:port 出现。
+        expect(textOf(bash)).not.toContain(SSH_PASSWORD);
+        expect(textOf(read)).not.toContain(SSH_PASSWORD);
+      });
+    });
+  });
 });

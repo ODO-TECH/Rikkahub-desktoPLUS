@@ -71,6 +71,21 @@ describe("终局判定(参数齐备,三档语义)", () => {
     expect(workspaceCallApprovalReason("write", "balanced", { path: "  " }, CTX)).toBeNull();
   });
 
+  test("系统沙盒边界生效时:区外写入的审批缘由改成'操作系统会拒绝'", () => {
+    // 边界生效 ⇒ 内核/挂载表会直接拒绝区外写入,审批卡不能再说"允许一次就能写"。
+    const ctxSandboxed = { ...CTX, sandboxBoundaryActive: true };
+    const reason = workspaceCallApprovalReason(
+      "write",
+      "balanced",
+      { path: join(tmpdir(), "elsewhere", "x.txt") },
+      ctxSandboxed,
+    );
+    expect(reason).toContain("Blocked by the system sandbox boundary");
+    expect(reason).not.toContain("Writes outside the workspace");
+    // 边界生效不改变区内判定
+    expect(workspaceCallApprovalReason("write", "balanced", { path: "sub/a.txt" }, ctxSandboxed)).toBeNull();
+  });
+
   test("§6.7 免审批可写前缀:balanced 档写入前缀内目录免审,前缀外仍审批", () => {
     // 技能库与工作区边界根不同根(典型:pc-data/skills/ vs workspaces/<id>/files/)
     const SKILLS = join(tmpdir(), "rkh-skills");

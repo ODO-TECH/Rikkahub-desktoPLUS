@@ -1,6 +1,8 @@
 // workspace/workspace.test.ts — 工作区实体管理单测(M1-1)
 // 覆盖:managed/folder 创建与目录生命周期、folder 根目录准入校验、权限档位、
 // 信任门、删除(目录清理 + 归属会话经 working set 权威实例解绑)、列迁移幂等。
+// ssh 型(2026-10-26 与移动端对齐)另覆盖:绑定两个 id、root 由设置派生、创建即信任、
+// 远程目录的 1:1 open-or-create 与改绑冲突、绑定断裂后的失效原因、老库懒加列。
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +16,8 @@ const conversations = await import("../conversations");
 const { configureWorkingSet } = await import("../conversations/working-set");
 const { getConversationMeta } = await import("../conversations/read-queries");
 const ws = await import("./index");
+const store = await import("../persistence/json-store");
+const { TEST_PASSWORD: SSH_PASSWORD, fixtureDevice } = await import("../test-utils/ssh-fixtures");
 
 const db = conversations.openConversationsDb();
 // working set 注入是模块级全局,会被其他测试文件覆盖。在本文件 beforeAll 重注入,
@@ -235,6 +239,35 @@ describe("会话工作区列迁移", () => {
     expect(after.n).toBe(before.n);
     expect(ws.listWorkspaces().length).toBeGreaterThan(0);
   });
+
+  test("ssh 绑定列懒迁移:建 ssh 工作区之前建的库补两列,老行读出 null 而不是崩", () => {
+    // 2.x 之前的库里没有 ssh_device_id / ssh_dir_id。这里把列摘掉模拟那份老库(连一行
+    // 不含新列的老数据),再让生产代码路径自己把它长回来——迁移只能这么验,抄一份
+    // ALTER 语句自测等于什么都没测。
+    db.exec("ALTER TABLE pc_workspace DROP COLUMN ssh_device_id");
+    db.exec("ALTER TABLE pc_workspace DROP COLUMN ssh_dir_id");
+    db.prepare(
+      "INSERT INTO pc_workspace (id, name, type, root, permission_preset, trusted_at, create_at, update_at, last_access_at) VALUES ('legacy-row', '老库工作区', 'managed', '', 'balanced', 1, 1, 1, 1)",
+    ).run();
+
+    // 懒迁移挂在 Database 实例上(WeakSet 记"这个句柄已确保过表结构"),所以必须换一个
+    // 新实例才走得到补列那段——真实启动路径每次都是新实例,老句柄只服务本条用例的 DROP。
+    const reopened = conversations.openConversationsDb();
+    expect(ws.listWorkspaces().length).toBeGreaterThan(0); // 这一句就是触发 db() 的补列
+
+    const columns = (reopened.prepare("PRAGMA table_info(pc_workspace)").all() as { name: string }[]).map((column) => column.name);
+    expect(columns).toContain("ssh_device_id");
+    expect(columns).toContain("ssh_dir_id");
+    // 老行:两个引用列为 null,类型仍按 managed 收敛(NULL 不会被认成 ssh)
+    const legacy = ws.getWorkspace("legacy-row");
+    expect(legacy?.type).toBe("managed");
+    expect(legacy?.sshDeviceId).toBeNull();
+    expect(legacy?.sshDirId).toBeNull();
+    // 补列幂等:再开一个新实例(列已存在)不报错、不丢数据
+    conversations.openConversationsDb();
+    expect(ws.getWorkspace("legacy-row")?.name).toBe("老库工作区");
+    conversations.getConversationsDb()!.prepare("DELETE FROM pc_workspace WHERE id = 'legacy-row'").run();
+  });
 });
 
 describe("工作区 ↔ 文件夹 1:1 不变式(2.0.0 内测反馈)", () => {
@@ -284,5 +317,239 @@ describe("工作区 ↔ 文件夹 1:1 不变式(2.0.0 内测反馈)", () => {
     const m1 = ws.createWorkspace({ type: "managed", name: "inv-m1" });
     const m2 = ws.createWorkspace({ type: "managed", name: "inv-m2" });
     expect(m1.id).not.toBe(m2.id);
+  });
+});
+
+// ssh 型(2026-10-26 与移动端对齐)。入口形态是用户拍板的分歧点:凭据与授权目录都在
+// 「拓展 › SSH」,工作区行里只有两个引用 id——所以这一节的所有用例都先 setState 注入设置,
+// 再断言"工作区表里查不到任何凭据"。
+describe("ssh 工作区绑定", () => {
+  const HOST_KEY = { type: "ssh-ed25519", key: "AAAAB3Nj", fingerprint: "SHA256:test" };
+  const APP = { id: "app", name: "应用目录", path: "/srv/app" };
+  const WEB = { id: "web", name: "站点目录", path: "/srv/web" };
+
+  // 本文件的用例共用一个库:每条用例一套独立的设备 id,否则 open-or-create 会命中
+  // 上一条用例留下的工作区("重复创建返回既有行"反倒像是名字没生效)。
+  let deviceSeq = 0;
+  function deviceWithDirs(dirs: typeof APP[], hostKey: unknown = HOST_KEY) {
+    deviceSeq += 1;
+    return { ...fixtureDevice({ id: `dev-${deviceSeq}`, dirs }), hostKey };
+  }
+
+  /** 在给定设备清单下跑一段用例,结束把设置恢复原值(不向后续文件泄漏 sshDevices)。 */
+  async function withDevices<T>(devices: unknown[], run: () => Promise<T> | T): Promise<T> {
+    const prev = store.state;
+    store.setState({ settings: { sshDevices: devices } } as never);
+    try {
+      return await run();
+    } finally {
+      store.setState(prev as never);
+    }
+  }
+
+  test("创建:root 由授权目录派生、只存两个 id、创建即信任、默认名取目录末段", async () => {
+    const device = deviceWithDirs([APP]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(workspace.type).toBe("ssh");
+      expect(workspace.root).toBe("/srv/app");
+      expect(workspace.sshDeviceId).toBe(device.id);
+      expect(workspace.sshDirId).toBe("app");
+      // 信任门:允许 AI 碰这台机器已由「登记授权目录 + 确认主机密钥」表达过,不再弹第三次。
+      expect(workspace.trustedAt).not.toBeNull();
+      expect(workspace.permissionPreset).toBe("balanced");
+      expect(workspace.name).toBe("app");
+      expect(ws.workspaceStatus(workspace)).toBe("ready");
+      expect(ws.workspaceUnavailableReasonOf(workspace)).toBeNull();
+      // 本机宿主目录照建(引擎的本地 cwd 与超长输出落盘处),远端路径不在本机磁盘上。
+      expect(existsSync(ws.workspaceTmpDir(workspace.id))).toBe(true);
+
+      // 库行里只有两个引用 id:凭据一个字节都不落工作区表。
+      const row = db.prepare("SELECT * FROM pc_workspace WHERE id = ?").get(workspace.id) as Record<string, unknown>;
+      expect(JSON.stringify(row)).not.toContain(SSH_PASSWORD);
+      expect(Object.keys(row)).toEqual(expect.arrayContaining(["ssh_device_id", "ssh_dir_id"]));
+    });
+  });
+
+  test("显式名字优先;root 是远端 POSIX 路径也不 stat(列表页不探网络)", async () => {
+    const device = deviceWithDirs([APP]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", name: "生产服务器", sshDeviceId: device.id, sshDirId: "app" });
+      expect(workspace.name).toBe("生产服务器");
+      // /srv/app 在本机不存在:folder 型那条 stat 规则对 ssh 型不适用,否则列表页会说「目录丢了」。
+      expect(existsSync(workspace.root)).toBe(false);
+      expect(ws.workspaceStatus(workspace)).toBe("ready");
+    });
+  });
+
+  test("授权目录写法归一:带尾斜杠与 .. 的路径派生出同一个边界根", async () => {
+    const device = deviceWithDirs([{ id: "app", name: "", path: "/srv/app///logs/.." }]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(workspace.root).toBe("/srv/app");
+    });
+  });
+
+  test("同一远程目录只开一个工作区:重复创建 = 打开既有;不同目录各开一个", async () => {
+    const device = deviceWithDirs([APP, WEB]);
+    await withDevices([device], () => {
+      const first = ws.createWorkspace({ type: "ssh", name: "先建的", sshDeviceId: device.id, sshDirId: "app" });
+      const before = ws.listWorkspaces().length;
+      const again = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(again.id).toBe(first.id);
+      expect(again.name).toBe("先建的"); // 打开既有工作区不改名
+      expect(ws.listWorkspaces().length).toBe(before);
+      // 界面传旧式「路径当 id」也命中同一条目录(findRemoteDir 的同一条兼容规则)。
+      expect(ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "/srv/app" }).id).toBe(first.id);
+
+      const web = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "web" });
+      expect(web.id).not.toBe(first.id);
+      expect(web.root).toBe("/srv/web");
+      // 另一台设备的同一目录是另一个工作区:查重键是 (设备 id, 目录 id),不是路径。
+      const otherDevice = deviceWithDirs([APP]);
+      store.setState({ settings: { sshDevices: [device, otherDevice] } } as never);
+      try {
+        const twin = ws.createWorkspace({ type: "ssh", sshDeviceId: otherDevice.id, sshDirId: "app" });
+        expect(twin.id).not.toBe(first.id);
+        expect(twin.root).toBe("/srv/app");
+      } finally {
+        store.setState({ settings: { sshDevices: [device] } } as never);
+      }
+    });
+  });
+
+  test("改绑:换授权目录同步 root 且不重置信任;目标已被别的 ssh 工作区绑定则拒", async () => {
+    const device = deviceWithDirs([APP, WEB]);
+    await withDevices([device], () => {
+      const a = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      const same = ws.updateWorkspace(a.id, { sshDeviceId: device.id, sshDirId: "app" });
+      expect(same?.root).toBe("/srv/app");
+      expect(same?.trustedAt).not.toBeNull(); // 换绑不重置信任:新目标同样是已授权、已确认密钥的目录
+      const moved = ws.updateWorkspace(a.id, { sshDeviceId: device.id, sshDirId: "web" });
+      expect(moved?.sshDirId).toBe("web");
+      expect(moved?.root).toBe("/srv/web");
+      // app 现在空着:开一个新工作区,再把它改绑到 a 占着的 web → 拒。
+      const b = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(() => ws.updateWorkspace(b.id, { sshDeviceId: device.id, sshDirId: "web" })).toThrow("已绑定");
+      // 已被占用的目录再"创建"只会 open-or-create,不会开出第二个绑定同一目录的工作区。
+      expect(ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "web" }).id).toBe(a.id);
+    });
+  });
+
+  test("非 ssh 型不接受绑定改绑;ssh 型不接受本机 root 改绑", async () => {
+    const device = deviceWithDirs([APP]);
+    await withDevices([device], () => {
+      const managed = ws.createWorkspace({ type: "managed", name: "nssh" });
+      expect(() => ws.updateWorkspace(managed.id, { sshDeviceId: device.id, sshDirId: "app" })).toThrow("SSH 工作区");
+      const folder = ws.createWorkspace({ type: "folder", root: mkdtempSync(join(tmpdir(), "rkh-ws-ssh-x-")) });
+      expect(() => ws.updateWorkspace(folder.id, { sshDirId: "app" })).toThrow("SSH 工作区");
+      const ssh = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(() => ws.updateWorkspace(ssh.id, { root: join(tmpdir()) })).toThrow("folder");
+    });
+  });
+
+  test("绑定准入的拒:都带 errorCode,原因不含中文与凭据", async () => {
+    const device = deviceWithDirs([{ id: "draft", name: "没填完", path: "   " }, { id: "rel", name: "相对的", path: "srv/app" }]);
+    await withDevices([device], () => {
+      const cases: Array<{ patch: { sshDeviceId?: string; sshDirId?: string }; code: string }> = [
+        // 两个 id 没给全:界面不该让它走到建连,这里当场拒。
+        { patch: { sshDeviceId: "", sshDirId: "" }, code: "ssh.binding_dir_unauthorized" },
+        { patch: { sshDeviceId: device.id, sshDirId: "   " }, code: "ssh.binding_dir_unauthorized" },
+        { patch: { sshDeviceId: "nope", sshDirId: "app" }, code: "ssh.binding_device_missing" },
+        { patch: { sshDeviceId: device.id, sshDirId: "gone" }, code: "ssh.binding_dir_unauthorized" },
+        { patch: { sshDeviceId: device.id, sshDirId: "draft" }, code: "ssh.binding_path_invalid" },
+        { patch: { sshDeviceId: device.id, sshDirId: "rel" }, code: "ssh.binding_path_invalid" },
+      ];
+      for (const { patch, code } of cases) {
+        let caught: unknown = null;
+        try {
+          ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app", ...patch });
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        const error = caught as { message: string; errorCode?: string };
+        expect(error.errorCode).toBe(code);
+        // 原因进模型上下文,也走界面的 errors.<code> 通道:正文是英文,中文由码去查。
+        expect(error.message).not.toMatch(/[\u4e00-\u9fff]/);
+        expect(error.message).not.toContain(SSH_PASSWORD);
+      }
+    });
+  });
+
+  test("主机密钥没确认:创建被拒;创建后取消确认则工作区变失效但记录留着", async () => {
+    const unconfirmed = deviceWithDirs([APP], null);
+    await withDevices([unconfirmed], () => {
+      expect(() => ws.createWorkspace({ type: "ssh", sshDeviceId: unconfirmed.id, sshDirId: "app" })).toThrow(/host key/);
+    });
+    const device = deviceWithDirs([APP]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(ws.workspaceStatus(workspace)).toBe("ready");
+      // 用户在设置里撤销了主机密钥确认(换了台机器)——工作区不可用,但不会静默删记录。
+      store.setState({ settings: { sshDevices: [{ ...device, hostKey: null }] } } as never);
+      try {
+        const loaded = ws.getWorkspace(workspace.id)!;
+        expect(ws.workspaceStatus(loaded)).toBe("missing");
+        expect(ws.workspaceUnavailableReasonOf(loaded)).toMatch(/host key/);
+        expect(loaded.root).toBe("/srv/app"); // target 还在:边界根照由设置派生
+      } finally {
+        store.setState({ settings: { sshDevices: [] } } as never);
+      }
+    });
+  });
+
+  test("设备删了/目录撤了:失效原因与码各归各,root 退回落库快照供界面解释", async () => {
+    const device = deviceWithDirs([APP, WEB]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "web" });
+      expect((db.prepare("SELECT root FROM pc_workspace WHERE id = ?").get(workspace.id) as { root: string }).root).toBe("/srv/web");
+
+      // 设备整台没了(换 id 等于删了重加):派生不出 target,root 用落库的那份快照。
+      store.setState({ settings: { sshDevices: [{ ...deviceWithDirs([APP]), hostKey: HOST_KEY }] } } as never);
+      try {
+        const loaded = ws.getWorkspace(workspace.id)!;
+        expect(ws.workspaceStatus(loaded)).toBe("missing");
+        expect(ws.workspaceUnavailableReasonOf(loaded)).toMatch(/device .* no longer exists/);
+        expect(loaded.root).toBe("/srv/web");
+        expect(loaded.sshDeviceId).toBe(device.id); // 两个引用原样留着,用户把设备加回来就自愈
+      } finally {
+        store.setState({ settings: { sshDevices: [device] } } as never);
+      }
+
+      // 设备还在、只把这条目录的授权撤了:原因换成「不再授权」。
+      store.setState({ settings: { sshDevices: [{ ...device, dirs: [APP] }] } } as never);
+      try {
+        const loaded = ws.getWorkspace(workspace.id)!;
+        expect(ws.workspaceStatus(loaded)).toBe("missing");
+        expect(ws.workspaceUnavailableReasonOf(loaded)).toMatch(/no longer authorized/);
+      } finally {
+        store.setState({ settings: { sshDevices: [device] } } as never);
+      }
+
+      // 设置还没装载(state 为 undefined,单测与启动早期常见)同样不抛,按设备缺失处理。
+      store.setState(undefined as never);
+      try {
+        const loaded = ws.getWorkspace(workspace.id)!;
+        expect(ws.workspaceStatus(loaded)).toBe("missing");
+        expect(ws.workspaceUnavailableReasonOf(loaded)).toMatch(/device/);
+      } finally {
+        store.setState({ settings: { sshDevices: [] } } as never);
+      }
+    });
+  });
+
+  test("删除 ssh 工作区:本机宿主目录清掉,授权与远端文件都不因删除而改变", async () => {
+    const device = deviceWithDirs([APP]);
+    await withDevices([device], () => {
+      const workspace = ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" });
+      expect(ws.deleteWorkspace(workspace.id)).toBe(true);
+      expect(ws.getWorkspace(workspace.id)).toBeNull();
+      expect(existsSync(join(workspacesDir, workspace.id))).toBe(false);
+      // 授权仍留在设置里:撤销授权是「拓展 › SSH」单独的动作,删工作区不该顺带改掉它。
+      expect(store.state.settings.sshDevices).toHaveLength(1);
+      // 删完可以再开一个(1:1 查重只看现存工作区,不看历史)。
+      expect(ws.createWorkspace({ type: "ssh", sshDeviceId: device.id, sshDirId: "app" }).id).not.toBe(workspace.id);
+    });
   });
 });

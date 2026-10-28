@@ -70,6 +70,10 @@ export interface WorkspaceCallContext {
    *  边界根不同根)。由调用方(tools/approval.ts)注入 paths.skillsDir,本层保持零 fs 依赖。
    *  仅豁免 write/edit;bash 仍走危险命令清单。confirm_each 档不受此豁免影响(恒审批)。 */
   approvalExemptWritePrefixes?: readonly string[];
+  /** 实测边界是否生效(受限档 + 探针确认内核/挂载表在拦)。由调用方注入,本层保持零依赖。
+   *  生效时区外写入会被操作系统直接拒绝,批准也无济于事——卡片据此直接说明"系统边界已拦截",
+   *  而不是给一个必然失败的放行按钮(给做不到的承诺比不给更糟)。 */
+  sandboxBoundaryActive?: boolean;
 }
 
 /** 参数齐备后的终局判定。返回 null=免审;返回字符串=需审批,非空串是给审批卡的缘由
@@ -94,9 +98,11 @@ export function workspaceCallApprovalReason(
   const resolved = resolveToCwd(raw, ctx.cwd);
   // 免审批可写前缀(§6.7):技能库等目录即便越出工作区边界根也豁免。
   if (ctx.approvalExemptWritePrefixes?.some((prefix) => isLexicallyInsideRoot(resolved, prefix))) return null;
-  return isLexicallyOutsideRoot(resolved, ctx.root)
-    ? `Writes outside the workspace: ${resolved}`
-    : null;
+  if (!isLexicallyOutsideRoot(resolved, ctx.root)) return null;
+  if (ctx.sandboxBoundaryActive) {
+    return `Blocked by the system sandbox boundary: writes outside the workspace are rejected by the operating system (${resolved}). Work inside the workspace instead.`;
+  }
+  return `Writes outside the workspace: ${resolved}`;
 }
 
 // 危险命令静态拦截清单。目标是灾难性、不可逆的系统级破坏(整盘/设备/系统目录),

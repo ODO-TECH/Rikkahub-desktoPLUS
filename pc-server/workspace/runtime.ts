@@ -8,6 +8,10 @@
 //     tools/execution 分发到此,安全壳报"工作区不可用")。
 // 审批矩阵在 tools/approval.ts(纯函数在 ./approval.ts);路径边界在 ./boundary.ts;
 // 工具内核是 ./tools/ 下的 pi 原样移植,本层不复制其任何逻辑。
+// SSH 工作区(2026-10-26 与移动端对齐)复用同一条线:声明/执行/审批/事件形状全部不变,
+// 只在 buildWorkspaceTool 处换成 ssh/workspace-tools.ts 的远程内核,并且能力面收窄成
+// 安卓端那一档(只有 read + bash)。分歧集中在 WorkspaceRuntime:root/cwd 是远端路径,
+// engineCwd 才是本机会话目录,remote 携带绑定目标。
 
 import { existsSync, mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -15,7 +19,14 @@ import type { Conversation, JsonValue, TextPart, ToolOutputEntry, Workspace } fr
 import { getConversation } from "../conversations";
 import { addLog } from "../api/logs";
 import { state } from "../persistence/json-store";
-import { getWorkspace, touchWorkspaceAccess, workspaceStatus, workspaceTmpDir } from "./index";
+import {
+  getWorkspace,
+  touchWorkspaceAccess,
+  workspaceHostDir,
+  workspaceStatus,
+  workspaceTmpDir,
+  workspaceUnavailableReasonOf,
+} from "./index";
 import {
   assertInsideWorkspace,
   createBoundedEditOperations,
@@ -26,8 +37,14 @@ import {
   createWideEditOperations,
   createWideReadOperations,
   createWideWriteOperations,
+  WorkspaceBoundaryError,
 } from "./boundary";
 import { findDangerousCommandReason, isWorkspaceToolName, type WorkspaceToolName } from "./approval";
+import { sandboxBoundaryActive } from "./sandbox";
+import { resolveSshBinding } from "../ssh/workspace-binding";
+import type { SshWorkspaceTarget } from "../ssh/workspace-binding";
+import { buildRemoteWorkspaceTool, REMOTE_WORKSPACE_TOOL_NAMES } from "../ssh/workspace-tools";
+import { lexicalNormalize } from "../ssh/remote-path";
 import { createReadTool } from "./tools/read";
 import { createWriteTool } from "./tools/write";
 import { createEditTool } from "./tools/edit";
@@ -67,17 +84,30 @@ export function refreshShellAvailability(): void {
 
 export interface WorkspaceRuntime {
   workspace: Workspace;
-  /** 边界根(绝对路径) */
+  /** 边界根(绝对路径)。本地型是本机目录;ssh 型是**远端**授权目录(POSIX 路径,
+   *  在本机 stat 不到)——所有边界判定走词法子树,不碰 node:fs。 */
   root: string;
-  /** 会话工作目录(恒在 root 边界内;丢失时自愈回 root) */
+  /** 会话工作目录(恒在 root 边界内;丢失时自愈回 root)。ssh 型同 root,是远端路径。 */
   cwd: string;
+  /** 引擎的本地工作目录:pi 的会话 cwd / 保留名清扫落点必须是本机真实目录。本地工作区
+   *  与 cwd 同一个;远程工作区用工作区宿主目录(root/cwd 在那台机器上,不在本机磁盘)。 */
+  engineCwd: string;
+  /** 远程绑定目标;null = 本地工作区(managed/folder)。非 null 时工具走 ssh 内核分支。 */
+  remote: SshWorkspaceTarget | null;
 }
 
-/** 会话可用工作区的三道闸:存在、根目录健在、已过信任门。返回不可用原因(人话,进错误文案)。 */
+/** 会话可用工作区的三道闸:存在、根目录健在、已过信任门;ssh 型再加第四条(配置层绑定完整:
+ *  设备在 / 目录已授权且绝对 / 主机密钥已确认)。返回不可用原因(人话,进错误文案)。 */
 function workspaceUnavailableReason(workspace: Workspace | null): string | null {
   if (!workspace) return "the workspace bound to this conversation no longer exists";
+  // ssh 型不做网络探测:绑定层是纯配置解析(见 ssh/workspace-binding.ts)。远端临时连不上
+  // 不是"工作区不可用"——工具照样挂载,由执行时的真实 SSH 错误说话,提示词层另有 unreachable 文案。
+  const remoteReason = workspaceUnavailableReasonOf(workspace);
+  if (remoteReason) return remoteReason;
   if (workspaceStatus(workspace) === "missing") {
-    return `the workspace root folder is missing (${workspace.root})`;
+    return workspace.type === "ssh"
+      ? `the SSH workspace binding is not usable (${workspace.root})`
+      : `the workspace root folder is missing (${workspace.root})`;
   }
   if (workspace.type === "folder" && workspace.trustedAt == null) {
     return "the workspace folder has not been trusted yet — the user must confirm trust first";
@@ -99,6 +129,47 @@ function resolveCwd(workspace: Workspace, workspaceCwd: string | null | undefine
   }
 }
 
+/** Windows 绝对形态(盘符 X:\ 或 UNC \\server\share)。会话原先绑本地工作区、后来换到远程
+ *  工作区时,库里残留的本机 cwd 就是这个样子——它在 POSIX 侧不是路径,只是会被拼成
+ *  "/srv/app/C:\Users\me" 这种永远 cd 不到的目录,让每条命令都失败。自愈回边界根。 */
+const WINDOWS_ABSOLUTE = /^[a-zA-Z]:[\\/]|^\\\\/;
+
+/** 远程会话 cwd:纯词法(远端目录存在与否不在热路径上问服务器,由工具自己报错)。
+ *  越界与本地同语义——自愈回边界根,而不是让每条命令都撞在 escape 报错上。 */
+function resolveRemoteCwd(root: string, workspaceCwd: string | null | undefined): string {
+  const raw = String(workspaceCwd ?? "").trim();
+  if (!raw || WINDOWS_ABSOLUTE.test(raw)) return root;
+  const absolute = lexicalNormalize(raw.startsWith("/") ? raw : `${root}/${raw}`);
+  return absolute === root || absolute.startsWith(`${root}/`) ? absolute : root;
+}
+
+/** 运行时构造的单一出处:挂载判定与执行分发都走这里,两条路径的 root/cwd/engineCwd/remote
+ *  口径不允许分叉(分叉过一次就是在"声明能用的工具"与"执行时的工作目录"之间制造偏差)。 */
+function buildRuntime(workspace: Workspace, workspaceCwd: string | null | undefined): WorkspaceRuntime {
+  const isRemote = workspace.type === "ssh";
+  const binding = isRemote ? resolveSshBinding(workspace.sshDeviceId, workspace.sshDirId) : null;
+  // 到这里 ssh 绑定必然可用(workspaceUnavailableReason 已过);target 为 null 只可能是
+  // 调用方没先查不可用原因,兜底回落到 workspace.root 让后续守卫报错,不静默造空边界。
+  const remote = binding?.target ?? null;
+  const root = remote?.root ?? workspace.root;
+  const cwd = remote ? resolveRemoteCwd(root, workspaceCwd) : resolveCwd(workspace, workspaceCwd);
+  if (remote) {
+    // 引擎本地目录自愈创建(与 bash 的 tmp/ 同一套路):宿主目录在"创建工作区"时就建了,
+    // 这里只兜住手改库/删过目录的存量状态,免得 pi 对着一个不存在的 cwd 报诊断。
+    const dir = workspaceHostDir(workspace.id);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  }
+  return {
+    workspace,
+    root,
+    cwd,
+    // 本地:引擎 cwd 就是会话 cwd(接入 ssh 之前一字未变);远程:会话 cwd 在那台机器上,
+    // pi 的本地会话目录只能是工作区宿主目录。
+    engineCwd: remote ? workspaceHostDir(workspace.id) : cwd,
+    remote,
+  };
+}
+
 /** 挂载判定(静默):不可用返回 null,不抛——tools 声明装配在每轮请求热路径上。 */
 export function workspaceRuntimeForConversation(
   conversation: Pick<Conversation, "workspaceId" | "workspaceCwd"> | null | undefined,
@@ -107,15 +178,20 @@ export function workspaceRuntimeForConversation(
   if (!workspaceId) return null;
   const workspace = getWorkspace(workspaceId);
   if (workspaceUnavailableReason(workspace)) return null;
-  return { workspace: workspace!, root: workspace!.root, cwd: resolveCwd(workspace!, conversation?.workspaceCwd) };
+  return buildRuntime(workspace!, conversation?.workspaceCwd);
 }
 
 // ----- 工具实例构建(pi 内核 + 有界 Operations) -----
 
 /** pi 默认工具顺序(system-prompt.ts:["read","bash","edit","write"]);声明与提示词共用。
  *  bash 不可用时挂纯 TS 的 grep/find/ls 兜底(2026-08-01 用户拍板:bash 正常时不挂,
- *  防止稀释工具面;pi 的 grep/find/ls 也非默认挂载,此处与 pi 精神一致)。 */
-export function mountedWorkspaceToolNames(): WorkspaceToolName[] {
+ *  防止稀释工具面;pi 的 grep/find/ls 也非默认挂载,此处与 pi 精神一致)。
+ *  远程工作区(传 workspace)是另一套能力面,对齐安卓端 WorkspaceCapabilities(SSH)=
+ *  rootfs=false / terminal=true / localFiles=false / fileWriteTools=false:只有 read 与
+ *  bash,没有 write/edit/grep/find/ls —— 本机 shell 是否存在与它无关,远端 shell 由
+ *  ssh 内核自己探测(提示词层见 ssh/workspace-prompt.ts)。 */
+export function mountedWorkspaceToolNames(workspace?: Workspace | null): WorkspaceToolName[] {
+  if (workspace?.type === "ssh") return [...REMOTE_WORKSPACE_TOOL_NAMES];
   return shellAvailability().available
     ? ["read", "bash", "edit", "write"]
     : ["read", "edit", "write", "grep", "find", "ls"];
@@ -134,6 +210,11 @@ function buildWorkspaceTool(
   runtime: WorkspaceRuntime,
   wideWrite = false,
 ): WorkspaceToolDefinition<unknown, unknown> {
+  // 远程分支:内核在 ssh/workspace-tools.ts(同一契约、换一套手),超长输出仍然落本地
+  // tmp/——落盘的是给模型续读用的文本,与命令在哪台机器上跑无关。
+  const tmpDir = workspaceTmpDir(runtime.workspace.id);
+  if ((runtime.remote || name === "bash") && !existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+  if (runtime.remote) return buildRemoteWorkspaceTool(name, runtime.remote, runtime.cwd, { tempFileDir: tmpDir });
   switch (name) {
     case "read":
       return createReadTool(runtime.cwd, {
@@ -148,9 +229,7 @@ function buildWorkspaceTool(
         operations: wideWrite ? createWideEditOperations(runtime.root) : createBoundedEditOperations(runtime.root),
       }) as WorkspaceToolDefinition<unknown, unknown>;
     case "bash": {
-      // tmp/ 放超长输出落盘;声明装配也走本函数(每轮热路径),existsSync 先挡一层
-      const tmpDir = workspaceTmpDir(runtime.workspace.id);
-      if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+      // tmp/ 放超长输出落盘;上方已按类型统一建好(声明装配也走本函数,每轮热路径)。
       // 透传用户自定义 shellPath(空串→undefined=自动探测);与 shellAvailability 同源。
       // state?. 可选链:测试/未初始化时取 undefined 走自动探测。
       const shellPath = state?.settings?.shellPath || undefined;
@@ -178,7 +257,7 @@ export function openAiWorkspaceTools(
 ): Array<Record<string, JsonValue>> {
   const runtime = workspaceRuntimeForConversation(conversation);
   if (!runtime) return [];
-  return mountedWorkspaceToolNames().map((name) => {
+  return mountedWorkspaceToolNames(runtime.workspace).map((name) => {
     const tool = buildWorkspaceTool(name, runtime);
     return {
       type: "function",
@@ -305,7 +384,10 @@ export interface WorkspaceToolCoreContext {
 }
 
 /** 工作区工具守卫+执行内核(唯一实现,聊天引擎与 pi 引擎共用)。
- *  守卫链:会话归属 → 工作区三道闸 → (bash)shell 可用 + 危险命令拦截 → pi 内核执行。
+ *  守卫链:会话归属 → 工作区四道闸 → (bash)本地才查 shell 可用 + 危险命令拦截 → 内核执行
+ *  (本地 = pi 移植内核;ssh = ssh/workspace-tools.ts 的远程内核)。
+ *  危险命令拦截对两种工作区一视同仁:远端是真实机器,"这条命令会不会毁掉别的东西"
+ *  比本地更值得拦,而不是更不值得。
  *  历史残留调用(会话已解绑/工作区已删)会命中守卫抛错——错误文案回灌模型,
  *  与 search_web 关闭后的守卫语义一致(execution.ts:87)。 */
 export async function executeWorkspaceToolCore(
@@ -323,12 +405,16 @@ export async function executeWorkspaceToolCore(
   const workspace = getWorkspace(conversation.workspaceId);
   const unavailable = workspaceUnavailableReason(workspace);
   if (unavailable) throw new Error(`Workspace tools are unavailable: ${unavailable}.`);
-  const runtime: WorkspaceRuntime = { workspace: workspace!, root: workspace!.root, cwd: resolveCwd(workspace!, conversation.workspaceCwd) };
+  const runtime = buildRuntime(workspace!, conversation.workspaceCwd);
 
   if (name === "bash") {
-    const shell = shellAvailability();
-    if (!shell.available) {
-      throw new Error(`The bash tool is unavailable on this machine: ${shell.error ?? "no bash shell found"}`);
+    // 本机 shell 探针只管本地工作区:远程 bash 的执行手是 ssh 内核(远端 shell 由连接层
+    // 探测并缓存),本机装没装 Git Bash 与它无关。
+    if (!runtime.remote) {
+      const shell = shellAvailability();
+      if (!shell.available) {
+        throw new Error(`The bash tool is unavailable on this machine: ${shell.error ?? "no bash shell found"}`);
+      }
     }
     const command = requireStringArg(args, "command", name);
     const dangerReason = findDangerousCommandReason(command);
@@ -350,7 +436,11 @@ export async function executeWorkspaceToolCore(
     const tool = buildWorkspaceTool(
       name,
       runtime,
-      context?.userApproved === true || runtime.workspace.permissionPreset === "full_access",
+      // 区外写入是否放行到宽界路径。实测边界生效时(Windows 低完整性内核 / 容器只读根 fs)
+      // 操作系统会直接拒绝区外写入,此时再走宽界只是让 UI 弹一句"允许一次"然后被系统打回——
+      // 给做不到的承诺比不给更糟,所以边界生效 ⇒ 一律严界。
+      !sandboxBoundaryActive() &&
+        (context?.userApproved === true || runtime.workspace.permissionPreset === "full_access"),
     );
     let input: unknown;
     switch (name) {
@@ -383,6 +473,12 @@ export async function executeWorkspaceToolCore(
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     });
+    // 系统沙盒边界已生效时，区外写入是被操作系统（Windows 低完整性内核 / 容器只读挂载）
+    // 挡下来的，不只是应用层的判断。给模型补一句"换区内路径"，免得它反复换写法重试。
+    if (err instanceof WorkspaceBoundaryError && sandboxBoundaryActive()) {
+      err.message +=
+        " The system sandbox boundary is active (writes outside the workspace are rejected by the operating system), so retrying with another spelling of the same path will not help — write inside the workspace instead.";
+    }
     throw err;
   }
 }

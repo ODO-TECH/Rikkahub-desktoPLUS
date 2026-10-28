@@ -1054,6 +1054,15 @@ namespace RikkaHubShell
                     if (int.TryParse(line.Substring("RIKKAHUB_PORT:".Length).Trim(), out parsed)) port = parsed;
                     complete();
                 }
+                else if (line.StartsWith("RIKKAHUB_FATAL:", StringComparison.Ordinal))
+                {
+                    // 启动期致命失败(R1-4 单行标记,格式 RIKKAHUB_FATAL:<code>:<message>):
+                    // 不再走下面的退出轮询——直接失败并带上后端给的原文,弹窗立即可见。
+                    string fatal = line.Substring("RIKKAHUB_FATAL:".Length);
+                    int colon = fatal.IndexOf(':');
+                    if (colon >= 0) fatal = fatal.Substring(colon + 1);
+                    ready.TrySetException(new Exception("后端启动失败：" + fatal));
+                }
             };
 
             Process process = new Process();
@@ -1065,7 +1074,27 @@ namespace RikkaHubShell
             {
                 if (!ready.Task.IsCompleted)
                 {
-                    ready.TrySetException(new Exception("后端进程提前退出。"));
+                    // 受限沙盒自重启(S4):准备进程把工作区标成 Low 可写、用低完整性令牌拉起
+                    // 真正的后端后就退出——端口标记永远不会出现在这个进程的输出里。退出
+                    // 不按故障处理,改为轮询探测同一端口(/api/health),探到即 attach。
+                    // 低完整性后端作为孙进程仍在同一 Job 里(kill-on-close 未设 breakaway,
+                    // 子进程自动入 Job),壳退出照常带走它,不会成孤儿。
+                    Task.Factory.StartNew(delegate
+                    {
+                        for (int i = 0; i < 30; i++)
+                        {
+                            if (ready.Task.IsCompleted || quitting) return;
+                            Thread.Sleep(1000);
+                            ServerInfo found = ServerLocator.FindRunning(config, serverExe);
+                            if (found != null)
+                            {
+                                Log.Write("attach to relaunched backend " + found.Origin);
+                                ready.TrySetResult(found);
+                                return;
+                            }
+                        }
+                        ready.TrySetException(new Exception("后端进程提前退出(含受限沙盒自重启的 30 秒等待)。"));
+                    });
                 }
                 else if (!quitting && !restartingBackend)
                 {
