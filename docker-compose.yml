@@ -1,15 +1,41 @@
 # RikkaHub Desktop PLUS —— Docker Compose（飞牛 OS / 通用 Linux NAS）
 #
 # 用法（在仓库根目录，与 Dockerfile 同级）：
+#   export RIKKAHUB_PASSWORD='换成你的密码'     # 或写进 .env（见 .env.example）
 #   docker compose up -d --build
 #   docker compose logs -f
 #   docker compose down
 #
-# 端口说明：TCP 端口上限是 65535，所以需求里的 114514 不是合法端口，镜像契约取
-# 有效前缀 11451。宿主机端口可用 RIKKAHUB_HTTP_PORT 覆盖，容器内始终是 11451。
+# ── 安全模型（先读这段）──────────────────────────────────────────────
+# 容器本身就是这里的安全边界：agent 能碰到的只有「挂载进来的路径」。
+#   · 挂成 :rw  → agent 可读可写
+#   · 挂成 :ro  → agent 只能读
+#   · 没挂      → agent 根本看不见
+# 所以「工作区可写、其他只读」不是应用里的开关，而是下面 volumes 的写法。
+# 每多一个 :rw 挂载，可写范围就扩大一块；要维持这个承诺，区外一律 :ro。
 #
-# 首次启动后打开 http://<NAS 地址>:11451 ，在 设置 → 数据管理 → Web 服务 里设置访问密码。
-# 数据全部落在 ./pc-data，备份/迁移直接打包这个目录即可。
+# 其余固化项：非 root（uid 1000）、只读根文件系统、去掉全部 capability、
+# 禁止 setuid 提权。访问密码是必填项——端口默认对整个局域网开放，没有密码
+# 等于把全部会话与 API Key 公开（服务端在无密码时不做鉴权）。
+#
+# ── 档位声明（与 Windows 共用一份声明）──────────────────────────────
+# RIKKAHUB_SANDBOX=restricted 表示"声明自己处在受限档"：区内读写、区外只读。
+# 容器侧的判定不看目录权限，而看 /proc/self/mounts 的根 fs 挂载标志：
+# 根 fs 为 ro ⇒ 边界在起作用；为 rw ⇒ 没有系统边界。结论记在
+# GET /api/app/sandbox，声明与实测不符时日志会点名。所以：
+#   · 想要"区外只读" ⇒ 除工作区与 pc-data 外，其余挂载一律 :ro；
+#   · 把 read_only 改成 false ⇒ 根 fs 可写 ⇒ 会报"没有边界"，这是实话；
+#   · 想额外验证某个区外代表点，可设 RIKKAHUB_SANDBOX_PROBE_PATH 让服务端
+#     对它做一次写探针（写得进去 = 存在 rw 例外挂载）。
+# Windows 上同一份声明由低完整性（Mandatory Integrity Control）机制兑现，
+# 用 %LOCALAPPDATA%\Temp 的写探针实测；两边策略只声明一次，汇报口径一致。
+#
+# ── 从旧版本升级（必做一次）──────────────────────────────────────────
+# 旧镜像以 root 运行，./pc-data 里的文件归属 root，换成 uid 1000 后会写不进去。
+# 在宿主上执行：
+#   sudo chown -R 1000:1000 ./pc-data
+# 飞牛用户的 uid 不是 1000 时，把下面的 RIKKAHUB_UID / RIKKAHUB_GID 设成实际值，
+# chown 也用同一组数字。
 
 services:
   rikkahub-plus:
@@ -20,30 +46,63 @@ services:
       # args:
       #   HTTPS_PROXY: "http://192.168.1.2:7890"
       #   HTTP_PROXY: "http://192.168.1.2:7890"
-    image: rikkahub-desktop-plus:0.0.6
+    image: rikkahub-desktop-plus:0.1.1
     container_name: rikkahub-plus
     restart: unless-stopped
 
+    # 运行身份。镜像内已建好 uid/gid 1000；改成别的值时记得同步 chown 宿主 ./pc-data，
+    # 并把 HOME 指到该用户可写的位置（镜像默认 HOME=/app/pc-data/home）。
+    user: "${RIKKAHUB_UID:-1000}:${RIKKAHUB_GID:-1000}"
+
     ports:
-      - "${RIKKAHUB_HTTP_PORT:-11451}:11451"
+      # 默认对整个局域网开放（NAS 的常规用法）。只想本机访问就把 RIKKAHUB_BIND_ADDR
+      # 设成 127.0.0.1，再用 SSH 隧道或反代进入。
+      - "${RIKKAHUB_BIND_ADDR:-0.0.0.0}:${RIKKAHUB_HTTP_PORT:-11451}:11451"
 
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
-      # 访问密码。留空 = 不鉴权；NAS 在局域网里也建议设置，否则同网段任何人都能读会话与 API Key。
-      RIKKAHUB_PASSWORD: "${RIKKAHUB_PASSWORD:-}"
+      # 必填。留空时 compose 直接拒绝启动，避免"默认裸奔"——服务端在未设密码时
+      # 对 /api/* 不做任何鉴权。确实要无鉴权（仅限本机、自己清楚后果）：
+      # 删掉下面这行，改成  RIKKAHUB_PASSWORD: ""
+      RIKKAHUB_PASSWORD: "${RIKKAHUB_PASSWORD:?必须先设置访问密码：export RIKKAHUB_PASSWORD='...' 或写入 .env（参考 .env.example）}"
       # 镜像默认不上报匿名统计；显式设 1 可恢复（会发往**上游**的统计端点）。
       # RIKKAHUB_ANALYTICS: "1"
+      # 沙盒档位声明（同一份声明跨平台复用）：
+      #   restricted = 区内读写、区外只读（容器侧由挂载表 + 只读根 fs 兑现）
+      #   full      = 不设边界
+      #   off       = 不声明（默认）
+      # 声明不等于生效：服务端启动会判定一次，结论见 /api/app/sandbox。
+      RIKKAHUB_SANDBOX: "${RIKKAHUB_SANDBOX:-restricted}"
       # 出站代理（容器内 proxy 模式固定为 env，只认这几个变量）：
       # HTTPS_PROXY: "http://192.168.1.2:7890"
       # HTTP_PROXY: "http://192.168.1.2:7890"
       # NO_PROXY: "localhost,127.0.0.1"
 
     volumes:
-      # 唯一持久化目录：设置、SQLite 会话库、附件、技能、字体、工作区、记忆快照。
+      # 唯一必需的持久化目录：设置、SQLite 会话库、附件、技能、字体、托管工作区、记忆快照。
       - ./pc-data:/app/pc-data
-      # 需要让 agent 读写 NAS 上的真实目录时，把宿主目录挂进来，再在应用里添加
-      # “文件夹型工作区”指向 /workspace/<名字>：
-      # - /vol1/1000/documents:/workspace/documents
+      # agent 的工作区：推荐只给这一个目录 :rw，先在宿主上建好再取消注释。
+      # - /vol1/1000/agent/workspace:/workspace:rw
+      # 需要让它读 NAS 上的其他资料，一律 :ro。挂 :rw 会直接扩大可写范围，
+      # 上面那段安全承诺随之失效——除非你就是想给。
+      # - /vol1/1000/documents:/data/documents:ro
+      # 挂好后在应用里添加「文件夹型工作区」指向 /workspace（或 /data/...）。
+
+    # 只读根文件系统：镜像只提供程序与静态资源，运行期唯一的写入点是上面挂的
+    # ./pc-data。/tmp 给临时文件（agent 的暂存已由服务端重定向到 pc-data/tmp，
+    # 这里兜住进程启动早期的原生写入）。
+    # 若容器因此起不来（日志里出现只读文件系统错误），把这行改成 read_only: false 再试，
+    # 其余加固项不受影响。
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m
+
+    # 去掉全部 capability：绑定 11451 不需要特权端口，运行期也不需要 chown。
+    cap_drop:
+      - ALL
+    # setuid/setgid 程序无法再提权。
+    security_opt:
+      - no-new-privileges:true
 
     # 让 PID 1 有 init 进程回收 MCP stdio 子进程，避免长期运行留下僵尸进程。
     init: true
@@ -56,10 +115,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-    # 想让 ./pc-data 里的文件归属飞牛普通用户（而不是 root）时：
-    #   1. sudo chown -R 1000:1000 ./pc-data
-    #   2. 取消下面 user: 的注释（先确认飞牛用户的 uid/gid 确实是 1000）：
-    # user: "1000:1000"
-    # 切到普通用户后还要在 environment 段加一行 HOME: "/tmp"，
-    # 否则 agent 的 ~ 展开会落到不可写的 /root。

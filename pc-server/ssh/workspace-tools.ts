@@ -33,7 +33,7 @@ import { agentTimeout, runSshCommand } from "./client";
 import { SHELL_TIMEOUT_MAX_MS } from "./constants";
 import { SshInputError } from "./errors";
 import { readRemoteBytes } from "./remote-files";
-import { lexicalNormalize } from "./remote-path";
+import { isRemotePathWithinRoot, lexicalNormalize, relativeToRemoteRoot } from "./remote-path";
 import type { SshWorkspaceTarget } from "./workspace-binding";
 
 /** 安卓端工具层单次读上限(WorkspaceTools.MAX_READ_FILE_BYTES = 8MB)。 */
@@ -66,12 +66,10 @@ function remoteReadPath(target: SshWorkspaceTarget, cwd: string, raw: string): {
     );
   }
   const absolute = value.startsWith("/") ? lexicalNormalize(value) : lexicalNormalize(`${cwd}/${value}`);
-  const root = target.root;
-  if (absolute !== root && !absolute.startsWith(`${root}/`)) {
+  if (!isRemotePathWithinRoot(target.root, absolute)) {
     throw new SshInputError(`Path escapes workspace root: ${raw}`, "ssh.path_escape");
   }
-  const relative = absolute === root ? "" : absolute.slice(root.length + 1);
-  return { absolute, relative };
+  return { absolute, relative: relativeToRemoteRoot(target.root, absolute) };
 }
 
 /**

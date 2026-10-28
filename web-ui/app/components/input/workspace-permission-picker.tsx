@@ -148,8 +148,8 @@ function SandboxStateLine({ status }: { status: SandboxStatusDto | null }) {
         </div>
         <div className="mt-0.5 text-muted-foreground">
           {t("workspace_permission.sandbox_enforced_detail")}
-          {status.writableAreas.length > 0
-            ? ` ${t("workspace_permission.sandbox_writable", { areas: status.writableAreas.join("、") })}`
+          {status.rwMounts.length > 0
+            ? ` ${t("workspace_permission.sandbox_rw_mounts", { areas: status.rwMounts.join("、") })}`
             : ""}
         </div>
       </div>

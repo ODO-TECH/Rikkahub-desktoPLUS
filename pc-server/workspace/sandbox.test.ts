@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initSandbox, resetSandboxCacheForTests, sandboxBoundaryActive, sandboxStatus } from "./sandbox";
+import { initSandbox, resetSandboxCacheForTests, sandboxBoundaryActive, sandboxStatus, summarizeLinuxMounts } from "./sandbox";
 
 const originalTier = process.env.RIKKAHUB_SANDBOX;
 const originalProbe = process.env.RIKKAHUB_SANDBOX_PROBE_PATH;
@@ -55,8 +55,27 @@ describe("档位声明", () => {
   });
 });
 
+describe("Linux 挂载解析", () => {
+  test("根 fs ro ⇒ 只读；rw 挂载点原样列出且排除 tmpfs", () => {
+    const summary = summarizeLinuxMounts([
+      "overlay / overlay ro,relatime,lowerdir=/var/lib/docker/overlay2/l/ABC 0 0",
+      "/dev/sda1 /app/pc-data ext4 rw,relatime 0 0",
+      "/dev/sda2 /workspace\\040dir ext4 rw,relatime 0 0",
+      "tmpfs /tmp tmpfs rw,nosuid,size=256m 0 0",
+      "proc /proc proc ro,relatime 0 0",
+    ].join("\n"));
+    expect(summary.rootReadOnly).toBe(true);
+    expect(summary.rwMounts).toEqual(["/app/pc-data", "/workspace dir"]);
+  });
+
+  test("根 fs rw / 无根行 ⇒ 分别报告 false / null", () => {
+    expect(summarizeLinuxMounts("overlay / overlay rw,relatime 0 0").rootReadOnly).toBe(false);
+    expect(summarizeLinuxMounts("tmpfs /tmp tmpfs rw 0 0").rootReadOnly).toBeNull();
+  });
+});
+
 describe("探针实测", () => {
-  test("探针路径不存在 ⇒ unknown（不能新建，也不能当成边界生效）", () => {
+  test.skipIf(process.platform !== "win32")("Windows 探针路径不存在 ⇒ unknown（不能新建，也不能当成边界生效）", () => {
     const missing = join(tmpdir(), "rkh-sandbox-does-not-exist-9f2c");
     setEnv("restricted", missing);
     const status = sandboxStatus();
@@ -79,7 +98,7 @@ describe("探针实测", () => {
     }
   });
 
-  test("探针写成功后不留残文件", () => {
+  test.skipIf(process.platform !== "win32")("Windows 探针写成功后不留残文件", () => {
     const writable = mkdtempSync(join(tmpdir(), "rkh-sandbox-clean-"));
     try {
       setEnv("off", writable);
@@ -89,6 +108,15 @@ describe("探针实测", () => {
     } finally {
       rmSync(writable, { recursive: true, force: true });
     }
+  });
+
+  test.skipIf(process.platform === "win32")("Linux 非容器：无系统边界机制，不因目录权限撤销宽界", () => {
+    setEnv("restricted", "/");
+    const status = sandboxStatus();
+    expect(status.mechanism).toBe("none");
+    expect(status.measured).toBe("not_enforced");
+    expect(status.boundaryActive).toBe(false);
+    expect(status.notes.join(" ")).toContain("没有可用的系统级沙盒机制");
   });
 
   test("区内（数据目录）可写是实测前提，写不进去时结论降级为 unknown", () => {

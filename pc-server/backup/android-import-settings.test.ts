@@ -11,6 +11,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 
 process.env.RIKKAHUB_PC_DATA_DIR = mkdtempSync(join(tmpdir(), "rkh-android-import-settings-"));
 const zipRoot = mkdtempSync(join(tmpdir(), "rkh-android-import-settings-zip-"));
@@ -53,16 +54,18 @@ const ANDROID_SHARED_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "webDavConfig", "s3Config",
 ]);
 
-// ── 最小 stored zip 构造器(仅测试用;readZipEntries/PowerShell 都不校验 CRC) ─────────
+// ── 最小 stored zip 构造器(仅测试用;Linux unzip 严格校验 CRC,不能填 0) ─────────
 function buildStoredZip(entries: Array<{ name: string; data: Buffer }>): Buffer {
   const localChunks: Buffer[] = [];
   const centralChunks: Buffer[] = [];
   let offset = 0;
   for (const entry of entries) {
     const nameBuf = Buffer.from(entry.name, "utf8");
+    const checksum = crc32(entry.data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(checksum, 14);
     local.writeUInt32LE(entry.data.length, 18);
     local.writeUInt32LE(entry.data.length, 22);
     local.writeUInt16LE(nameBuf.length, 26);
@@ -72,6 +75,7 @@ function buildStoredZip(entries: Array<{ name: string; data: Buffer }>): Buffer 
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(checksum, 16);
     central.writeUInt32LE(entry.data.length, 20);
     central.writeUInt32LE(entry.data.length, 24);
     central.writeUInt16LE(nameBuf.length, 28);

@@ -95,8 +95,12 @@ export function createQqAdapter(
   runtime: ImRuntime,
   report: (event: ImAdapterEvent) => void,
 ): ImAdapter {
+  let controller: AbortController | null = null;
+  let stopped = false;
   return {
     async start() {
+      if (stopped) return;
+      stopped = false;
       const bot = new QQBot({
         appId: qq.appId,
         appSecret: qq.appSecret,
@@ -148,21 +152,37 @@ export function createQqAdapter(
       });
 
       const abort = new AbortController();
+      controller = abort;
+      const cancelled = new Promise<FirstOutcome>((resolve) => {
+        if (abort.signal.aborted) {
+          resolve({ kind: "cancelled" });
+          return;
+        }
+        abort.signal.addEventListener("abort", () => resolve({ kind: "cancelled" }), { once: true });
+      });
       // bot.start() 正常路径要到 stop() 才落定,所以它绝不能被 await 住;把它折成一个
-      // 永不 reject 的信号,再和首连事件、超时一起 race。
+      // 永不 reject 的信号,再和首连事件、超时、停机取消一起 race。
       const loop = bot.start(abort.signal).then(
         () => ({ kind: "closed" }) as FirstOutcome,
         (err: unknown) => ({ kind: "failed", error: errMessage(err) }) as FirstOutcome,
       );
 
-      const outcome = await Promise.race([first, loop, after(CONNECT_TIMEOUT_MS)]);
+      const outcome = await Promise.race([first, loop, cancelled, after(CONNECT_TIMEOUT_MS)]);
+      if (outcome.kind === "cancelled" || stopped || abort.signal.aborted) {
+        teardown(bot, abort);
+        if (controller === abort) controller = null;
+        if (currentBot === bot) currentBot = null;
+        return;
+      }
       if (outcome.kind === "failed") {
         teardown(bot, abort);
+        if (controller === abort) controller = null;
         currentBot = null;
         report({ connected: false, error: outcome.error });
         throw new Error(outcome.error || "QQ 网关连接失败");
       }
       if (outcome.kind === "closed") {
+        if (controller === abort) controller = null;
         currentBot = null;
         report({ connected: false, error: "QQ 网关连接已关闭。" });
         return;
@@ -177,6 +197,9 @@ export function createQqAdapter(
     },
 
     async stop() {
+      stopped = true;
+      controller?.abort();
+      controller = null;
       const bot = currentBot;
       currentBot = null;
       replyTargets.clear();
@@ -205,6 +228,7 @@ type FirstOutcome =
   | { kind: "connected" }
   | { kind: "failed"; error: string }
   | { kind: "closed" }
+  | { kind: "cancelled" }
   | { kind: "timeout" };
 
 function after(ms: number): Promise<FirstOutcome> {

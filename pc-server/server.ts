@@ -8,6 +8,7 @@ import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
 import { disposeTerminalSession, handleTerminalFrame } from "./ssh/terminal-session";
 import { error, json } from "./api/request";
+import { healthResponse } from "./api/health";
 import { startAnalytics } from "./app-config/analytics";
 import { bootstrap } from "./bootstrap";
 import { getStartupStatus, isStartupReady, markStartupFailed, markStartupReady } from "./foundation/startup-gate";
@@ -234,6 +235,9 @@ function serveOn(hostname: string, port: number) {
         // 进度页轮询。未就绪时其余 /api 一律 503(shutdown 除外——壳可能在迁移中
         // 退出,flushAllStateBeforeExit 内部有未就绪守卫);静态资源照常放行,
         // 前端才有页面可渲染进度。
+        if (url.pathname === "/api/health") {
+          return healthResponse();
+        }
         if (url.pathname === "/api/startup/status") {
           return json(getStartupStatus());
         }

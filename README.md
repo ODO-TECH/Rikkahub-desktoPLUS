@@ -269,13 +269,17 @@ mkdir -p pc-data && sudo chown -R 1000:1000 pc-data
 不用 compose 时：
 
 ```bash
-docker build -t rikkahub-desktop-plus:0.0.6 .
+docker build -t rikkahub-desktop-plus:0.1.1 .
 docker run -d --name rikkahub-plus --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,nosuid,size=256m \
+  --cap-drop ALL --security-opt no-new-privileges \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.0.6
+  rikkahub-desktop-plus:0.1.1
 ```
+
+`docker run` 不会继承 compose 的加固项，`--read-only` 等参数要自己补齐；完整的安全模型、升级与回滚步骤见 [docs/DOCKER.md](docs/DOCKER.md)。
 
 ### 容器内目录
 
@@ -334,6 +338,8 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
 | `RIKKAHUB_HTTP_PORT` | `11451` | 仅 compose：宿主机映射端口 |
 | `PORT` | `11451` | 容器内监听端口；改动需同步端口映射 |
 | `RIKKAHUB_ANALYTICS` | `0` | 镜像默认关闭匿名统计；设 `1` 会向**上游**端点上报 |
+| `RIKKAHUB_SANDBOX` | compose 设 `restricted` | 沙盒档位声明；容器内按根 fs 挂载标志实测，声明与实测不符会点名 |
+| `RIKKAHUB_SANDBOX_PROBE_PATH` | 空 | 可选：对指定“区外代表点”做写探针，验证 rw 例外挂载 |
 | `TZ` | `Asia/Shanghai` | 时区 |
 | `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | 空 | 容器内代理模式固定为 `env`，应用内自动检测不生效 |
 | `RIKKAHUB_PC_DATA_DIR` | `/app/pc-data` | 数据目录；改动时挂载点要跟着改 |

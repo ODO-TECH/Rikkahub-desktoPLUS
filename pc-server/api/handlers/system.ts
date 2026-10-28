@@ -5,12 +5,12 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { customFontsDir, dataDir } from "../../foundation/paths";
 import { saveState, state } from "../../persistence/json-store";
-import { APP_VERSION } from "../../updates/index";
 import { loadModelsDev, modelsDevCache } from "../../inference-engine/providers";
 import { findModel } from "../../model-providers";
 import { activeLoginEvents } from "../../model-providers/auth";
 import { contextWindowFor } from "../../model-providers/model-limits";
 import { error, json, readJson } from "../request";
+import { healthResponse } from "../health";
 import { isLoopbackRequest } from "../net-context";
 import { stripAuthSecrets } from "../auth";
 import { appClients, mcpHealthSnapshotFrame, openSse } from "../sse";
@@ -29,7 +29,7 @@ import { FONT_EXTENSIONS_SET, FONT_MIME, MAX_FONT_BYTES, fontCssName, fontExtens
 
 export async function handleSystemRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // 4-6:不回显绝对 dataDir 路径(未鉴权即可见的轻微信息泄露;无消费方读它)。
-  if (path === "health") return json({ ok: true, version: APP_VERSION });
+  if (path === "health") return healthResponse();
   // 沙盒档位自检结果(声明档位 / 实测边界 / 机制 / 探针位置)。
   // 界面据此显示"当前档位是实测出来的,不是你选的",而不是复述配置里的声称。
   if (path === "app/sandbox" && request.method === "GET") {

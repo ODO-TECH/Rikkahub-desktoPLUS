@@ -93,7 +93,7 @@ FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      bash coreutils grep sed gawk findutils procps \
+      bash coreutils grep sed gawk findutils procps passwd \
       zip unzip curl ca-certificates tzdata fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
@@ -114,6 +114,25 @@ RUN printf '%s\n' \
       > /etc/fonts/conf.d/99-rikkahub.conf \
     && fc-cache -f >/dev/null
 
+# —— 运行身份：非 root ——
+# 容器内的 root 并不会让 agent 看见更多宿主路径（可见范围完全由挂载表决定），但会放大
+# 两件事：挂进来的宿主目录里它能把文件 chown 成 root（回到宿主你就改不回来了），以及
+# 任何提权链路的起点都是 uid 0。这里固定 uid/gid 1000；需要别的 uid 时用 compose 的
+# user: 覆盖，并同步 chown 宿主上的 ./pc-data。
+RUN groupadd -g 1000 rikkahub \
+    && useradd -u 1000 -g 1000 -M -d /app/pc-data/home -s /usr/sbin/nologin rikkahub \
+    && mkdir -p /app/pc-data/home /app/pc-data/tmp \
+    && chown -R 1000:1000 /app/pc-data
+
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 0755 /app/docker-entrypoint.sh
+
+# HOME 落在数据卷内而非 /root：agent 的 ~ 展开与工具缓存需要可写目录。
+# 数据卷是 bind mount 时镜像里的 home 目录会被宿主目录遮住，入口脚本会补建。
+ENV HOME=/app/pc-data/home
+
+USER 1000:1000
+
 VOLUME ["/app/pc-data"]
 # 容器内端口钉在 11451(镜像契约:EXPOSE / compose 的 11451:11451 映射 / 文档反代示例)。
 # 需求里的 114514 超出 TCP 端口上限 65535,内核与 docker -p 都会拒绝,故取有效前缀 11451。
@@ -125,8 +144,8 @@ VOLUME ["/app/pc-data"]
 # 启动计数;分支不维护那个看板,也不该把本地部署记到上游账上。需要时显式设 1。
 # RIKKAHUB_CONTAINER=1:除 /.dockerenv 外的容器检测兜底(Podman 放 /run/.containerenv),
 # 保证监听 0.0.0.0、端口不受界面设置影响、原地更新与 origin 接力保持关闭。
-# 不覆盖 HOME:默认 root 用 /root;若用 compose 的 user: 切到普通用户,记得同时把
-# HOME 指到可写目录(例如 /tmp),否则 agent 的 ~ 展开会落到不可写的 /root。
+# HOME 已固定为 /app/pc-data/home（见上方 USER 段）。用 compose 的 user: 覆盖成其他
+# uid 时，需自行把 HOME 指到该用户可写的目录，否则 agent 的 ~ 展开会落到不可写处。
 ENV PORT=11451 \
     RIKKAHUB_ANALYTICS=0 \
     RIKKAHUB_CONTAINER=1
@@ -136,4 +155,4 @@ EXPOSE 11451
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
 
-ENTRYPOINT ["./rikkahub-pc", "--no-open"]
+ENTRYPOINT ["/app/docker-entrypoint.sh", "./rikkahub-pc", "--no-open"]

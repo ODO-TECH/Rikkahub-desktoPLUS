@@ -1,13 +1,14 @@
 // scripts/bump-version.ts — 版本号单一修改入口（N-6）
 // 用法：bun run version:bump 2.0.0-preview（在 pc-server/ 下）
 //
-// 版本号需要出现在四处（各有硬性理由，无法在构建/运行时互相派生）：
+// 版本号需要出现在多处（各有硬性理由，无法在构建/运行时互相派生）：
 //   - pc-server/updates/index.ts APP_VERSION：更新检查接口，编译进单 exe；
 //     Docker 构建只 COPY pc-server/，无法跨包 import web-ui 侧文件。
 //   - web-ui/src-tauri/tauri.conf.json：Tauri 安装包版本。
 //   - web-ui/src-tauri/Cargo.toml：Rust crate 版本（Tauri 构建元数据）。
 //   - web-ui/app/components/settings/about.tsx：关于页展示的前端版本号。
-// 本脚本把"四处人工同步"收敛为"一条命令"；漏跑脚本手改单处时，
+//   - compose / Docker 文档 / README 里的镜像 tag。
+// 本脚本把"多处人工同步"收敛为"一条命令"；漏跑脚本手改单处时，
 // CI 的 check-version-sync.ts 会红灯拦截。
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,7 +67,22 @@ for (const target of targets) {
   console.log(`已更新: ${target.file}`);
 }
 
-// 写完立即用同一套 CI 检查逻辑复验，确保三处真的一致
+// 镜像 tag 单独扫：compose 是运行配置，Docker 文档与 README 是复制粘贴给用户的
+// 示例，三者任意一处落后都会让用户拉到旧镜像。只改 `rikkahub-desktop-plus:<版本>`。
+const dockerTagFiles = ["docker-compose.yml", "docs/DOCKER.md", "README.md"];
+for (const rel of dockerTagFiles) {
+  const file = join(root, rel);
+  const content = readFileSync(file, "utf8");
+  const next = content.replace(/rikkahub-desktop-plus:[0-9][0-9A-Za-z.+-]*/g, `rikkahub-desktop-plus:${newVersion}`);
+  if (next === content) {
+    console.error(`未找到镜像 tag: ${rel}`);
+    process.exit(1);
+  }
+  writeFileSync(file, next);
+  console.log(`已更新: ${file}`);
+}
+
+// 写完立即用同一套 CI 检查逻辑复验，确保各处真的一致
 const proc = Bun.spawnSync(["bun", "run", join(import.meta.dir, "check-version-sync.ts")], {
   stdout: "inherit",
   stderr: "inherit",

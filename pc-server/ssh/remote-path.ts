@@ -31,6 +31,39 @@ export function lexicalNormalize(path: string): string {
   return `/${parts.join("/")}` || "/";
 }
 
+/** 绝对路径是否落在授权根内(含根自身)。root="/" 是所有绝对路径的共同根,
+ *  必须单独处理——直接拼 `${root}/` 会得到 "//",把 /tmp 等合法路径判成越界。 */
+export function isRemotePathWithinRoot(root: string, absolutePath: string): boolean {
+  const rootNormalized = lexicalNormalize(root);
+  const pathNormalized = lexicalNormalize(absolutePath);
+  if (rootNormalized === "/") return true;
+  return pathNormalized === rootNormalized || pathNormalized.startsWith(`${rootNormalized}/`);
+}
+
+/** 授权根内绝对路径 → 相对根路径(root 自身返回空串)。调用方应先做边界检查。 */
+export function relativeToRemoteRoot(root: string, absolutePath: string): string {
+  const rootNormalized = lexicalNormalize(root);
+  const pathNormalized = lexicalNormalize(absolutePath);
+  if (rootNormalized === "/") return pathNormalized === "/" ? "" : pathNormalized.slice(1);
+  if (pathNormalized === rootNormalized) return "";
+  return pathNormalized.startsWith(`${rootNormalized}/`) ? pathNormalized.slice(rootNormalized.length + 1) : "";
+}
+
+/** Windows 绝对形态(盘符 X:\ 或 UNC \\server\share)。会话原先绑本地工作区、后来换到远程
+ *  工作区时,库里残留的本机 cwd 就是这个样子——它在 POSIX 侧不是路径,只是会被拼成
+ *  "/srv/app/C:\Users\me" 这种永远 cd 不到的目录,让每条命令都失败。自愈回边界根。 */
+const WINDOWS_ABSOLUTE = /^[a-zA-Z]:[\\/]|^\\\\/;
+
+/** 远程会话 cwd:纯词法(远端目录存在与否不在热路径上问服务器,由工具自己报错)。
+ *  越界与本地同语义——自愈回边界根,而不是让每条命令都撞在 escape 报错上。 */
+export function resolveRemoteWorkspaceCwd(root: string, workspaceCwd: string | null | undefined): string {
+  const rootNormalized = lexicalNormalize(root);
+  const raw = String(workspaceCwd ?? "").trim();
+  if (!raw || WINDOWS_ABSOLUTE.test(raw)) return rootNormalized;
+  const absolute = lexicalNormalize(raw.startsWith("/") ? raw : `${rootNormalized}/${raw}`);
+  return isRemotePathWithinRoot(rootNormalized, absolute) ? absolute : rootNormalized;
+}
+
 /**
  * 拼子路径并夹在根内;越界抛错(安卓端 Path escapes workspace root)。
  *
@@ -42,8 +75,7 @@ export function lexicalNormalize(path: string): string {
  */
 export function resolveInsideRoot(root: string, path: string): string {
   const joined = lexicalNormalize(`${normalizeRemotePath(root)}/${String(path ?? "").replace(/^\/+/, "")}`);
-  const rootNormalized = lexicalNormalize(root);
-  if (rootNormalized !== "/" && joined !== rootNormalized && !joined.startsWith(`${rootNormalized}/`)) {
+  if (!isRemotePathWithinRoot(root, joined)) {
     throw new SshInputError(`Path escapes workspace root: ${path}`, "ssh.path_escape");
   }
   return joined;

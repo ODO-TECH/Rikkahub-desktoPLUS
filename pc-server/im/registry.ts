@@ -29,6 +29,8 @@ type Instance = {
   connected: boolean;
   connectedAt: number | null;
   lastError: string | null;
+  /** stopInstance 幂等句柄:停机与在途 chain 可能同时收同一个实例。 */
+  stopping: Promise<void> | null;
 };
 
 const instances = new Map<ImPlatformId, Instance>();
@@ -40,6 +42,11 @@ const instances = new Map<ImPlatformId, Instance>();
  * 因为停掉的实例已经不在表里了——链要跨实例存在。
  */
 const chains = new Map<ImPlatformId, Promise<void>>();
+/** 进程停机开始后禁止任何迟到的 reconcile/queued start 再拉起新连接。 */
+let shuttingDown = false;
+/** 小于 docker stop 默认宽限(10s),给后续 SQLite/WAL 收尾留足时间。 */
+const DEFAULT_STOP_BUDGET_MS = 5_000;
+let stopBudgetMs = DEFAULT_STOP_BUDGET_MS;
 
 function currentConfig(): ImAccessConfig {
   // updateSettings 是所有设置的公共写入口,调用方可能带着不含 imAccess 的局部 state
@@ -73,6 +80,7 @@ function build(platform: ImPlatformId, config: ImAccessConfig): Instance {
     connected: false,
     connectedAt: null,
     lastError: null,
+    stopping: null,
   };
   // 只认还在表里的自己:被停掉的适配器退出时还会补报一次 connected=false,那时新实例可能
   // 已经起来了,不能被旧实例的连接状态误伤。
@@ -94,13 +102,17 @@ function applyEvent(instance: Instance, event: ImAdapterEvent): void {
 
 async function stopInstance(platform: ImPlatformId, instance: Instance): Promise<void> {
   if (instances.get(platform) === instance) instances.delete(platform);
-  try {
-    await instance.adapter.stop();
-  } catch (err) {
-    console.error(`[IM] 停止 ${platform} 适配器时出错:`, err);
-  }
-  instance.runtime.destroy();
-  console.info(`[IM] ${platform} 适配器已停止`);
+  if (instance.stopping) return instance.stopping;
+  instance.stopping = (async () => {
+    try {
+      await instance.adapter.stop();
+    } catch (err) {
+      console.error(`[IM] 停止 ${platform} 适配器时出错:`, err);
+    }
+    instance.runtime.destroy();
+    console.info(`[IM] ${platform} 适配器已停止`);
+  })();
+  return instance.stopping;
 }
 
 /**
@@ -110,6 +122,7 @@ async function stopInstance(platform: ImPlatformId, instance: Instance): Promise
  * 用户可以在界面上关掉开关。重连由适配器自己管(QQ 网关 SDK 内置,微信是轮询循环重试)。
  */
 export function reconcileImAdapters(): void {
+  if (shuttingDown) return;
   const config = currentConfig();
   for (const platform of ["qq", "wechat"] as const) {
     // 队列里还有动作没跑完:那个动作起来时会重新读配置,这里不叠加。
@@ -148,6 +161,7 @@ function schedule(platform: ImPlatformId, task: () => Promise<void>): void {
 }
 
 async function startFresh(platform: ImPlatformId): Promise<void> {
+  if (shuttingDown) return;
   // 重新读一次配置:排队的这几毫秒里用户可能又改了一次,不能沿用 reconcile 开头的快照。
   const config = currentConfig();
   if (!desired(platform, config)) return;
@@ -181,14 +195,33 @@ export function getImStatus(): ImPlatformStatus[] {
   });
 }
 
-/** 退出前收口:与 server.ts 里其它 closeAll* 同位置调用。 */
+/** 退出前收口:与 server.ts 里其它 closeAll* 同位置调用。
+ *  必须先停实例(adapter.stop 会取消 QQ 首连/微信长轮询),再等 chain;
+ *  先等 chain 会把 QQ 最长 20 秒的首连预算整段拖进停机路径。 */
 export async function stopAllImAdapters(): Promise<void> {
-  // 先等在途的启停动作落地,否则可能在实例已被 stop 之后又起一个新的孤儿连接。
-  await Promise.all([...chains.values()].map((run) => run.catch(() => undefined)));
-  await Promise.all(
-    [...instances.entries()].map(([platform, instance]) => stopInstance(platform, instance)),
-  );
+  shuttingDown = true;
+  const active = [...instances.entries()].map(([platform, instance]) => stopInstance(platform, instance));
+  const pendingChains = [...chains.values()].map((run) => run.catch(() => undefined));
+  const finished = await waitWithin(Promise.all([...active, ...pendingChains]), stopBudgetMs);
+  if (!finished) {
+    console.warn(`[IM] 停机收口超过 ${stopBudgetMs}ms,继续刷新持久化状态(不再等待后台连接)`);
+  }
   chains.clear();
+}
+
+async function waitWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+    timer.unref?.();
+  });
+  const done = work.then(
+    () => true,
+    () => true,
+  );
+  const finished = await Promise.race([done, timeout]);
+  if (timer) clearTimeout(timer);
+  return finished;
 }
 
 /** 测试隔离:清掉所有实例,不触碰 settings。 */
@@ -199,6 +232,13 @@ export function __resetImRegistryForTest(): void {
   }
   instances.clear();
   chains.clear();
+  shuttingDown = false;
+  stopBudgetMs = DEFAULT_STOP_BUDGET_MS;
+}
+
+/** 测试用:缩短停机预算,避免真实等待 5 秒。传 null 恢复默认。 */
+export function __setImStopBudgetForTest(ms: number | null): void {
+  stopBudgetMs = ms ?? DEFAULT_STOP_BUDGET_MS;
 }
 
 function errMessage(err: unknown): string {

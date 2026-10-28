@@ -18,7 +18,7 @@ export interface SandboxStatusDto {
   probePath: string;
   probeError: string;
   mechanism: "windows_integrity" | "container_mounts" | "none";
-  writableAreas: string[];
+  rwMounts: string[];
   notes: string[];
   checkedAt: number;
 }

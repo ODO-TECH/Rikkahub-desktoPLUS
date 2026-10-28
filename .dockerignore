@@ -3,6 +3,10 @@ pc-server/node_modules/
 web-ui/build/
 dist/
 pc-data/
+# 本地环境变量含访问密码,不送进构建上下文(镜像里也用不到;compose 在运行期注入)。
+.env
+.env.*
+!.env.example
 .git/
 .gitignore
 **/*.exe

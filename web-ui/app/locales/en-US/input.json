@@ -198,7 +198,7 @@
     "sandbox_mismatch_detail": "The deployment declares the restricted tier, but writes outside the workspace still succeed: only in-app approvals and the dangerous-command list apply.",
     "sandbox_off_detail": "No system boundary: out-of-workspace writes rely only on in-app approvals and the dangerous-command list.",
     "sandbox_enable_hint": "Enable the restricted sandbox in Settings › Network › Web service; the OS kernel then enforces read-only outside workspaces.",
-    "sandbox_writable": "Writable areas: {{areas}}",
+    "sandbox_rw_mounts": "rw mounts (still subject to directory permissions): {{areas}}",
     "sandbox_mechanism_windows": "Windows low-integrity kernel",
     "sandbox_mechanism_container": "Container mounts",
     "sandbox_mechanism_none": "none"

@@ -44,7 +44,7 @@ import { sandboxBoundaryActive } from "./sandbox";
 import { resolveSshBinding } from "../ssh/workspace-binding";
 import type { SshWorkspaceTarget } from "../ssh/workspace-binding";
 import { buildRemoteWorkspaceTool, REMOTE_WORKSPACE_TOOL_NAMES } from "../ssh/workspace-tools";
-import { lexicalNormalize } from "../ssh/remote-path";
+import { resolveRemoteWorkspaceCwd } from "../ssh/remote-path";
 import { createReadTool } from "./tools/read";
 import { createWriteTool } from "./tools/write";
 import { createEditTool } from "./tools/edit";
@@ -129,20 +129,6 @@ function resolveCwd(workspace: Workspace, workspaceCwd: string | null | undefine
   }
 }
 
-/** Windows 绝对形态(盘符 X:\ 或 UNC \\server\share)。会话原先绑本地工作区、后来换到远程
- *  工作区时,库里残留的本机 cwd 就是这个样子——它在 POSIX 侧不是路径,只是会被拼成
- *  "/srv/app/C:\Users\me" 这种永远 cd 不到的目录,让每条命令都失败。自愈回边界根。 */
-const WINDOWS_ABSOLUTE = /^[a-zA-Z]:[\\/]|^\\\\/;
-
-/** 远程会话 cwd:纯词法(远端目录存在与否不在热路径上问服务器,由工具自己报错)。
- *  越界与本地同语义——自愈回边界根,而不是让每条命令都撞在 escape 报错上。 */
-function resolveRemoteCwd(root: string, workspaceCwd: string | null | undefined): string {
-  const raw = String(workspaceCwd ?? "").trim();
-  if (!raw || WINDOWS_ABSOLUTE.test(raw)) return root;
-  const absolute = lexicalNormalize(raw.startsWith("/") ? raw : `${root}/${raw}`);
-  return absolute === root || absolute.startsWith(`${root}/`) ? absolute : root;
-}
-
 /** 运行时构造的单一出处:挂载判定与执行分发都走这里,两条路径的 root/cwd/engineCwd/remote
  *  口径不允许分叉(分叉过一次就是在"声明能用的工具"与"执行时的工作目录"之间制造偏差)。 */
 function buildRuntime(workspace: Workspace, workspaceCwd: string | null | undefined): WorkspaceRuntime {
@@ -152,7 +138,7 @@ function buildRuntime(workspace: Workspace, workspaceCwd: string | null | undefi
   // 调用方没先查不可用原因,兜底回落到 workspace.root 让后续守卫报错,不静默造空边界。
   const remote = binding?.target ?? null;
   const root = remote?.root ?? workspace.root;
-  const cwd = remote ? resolveRemoteCwd(root, workspaceCwd) : resolveCwd(workspace, workspaceCwd);
+  const cwd = remote ? resolveRemoteWorkspaceCwd(root, workspaceCwd) : resolveCwd(workspace, workspaceCwd);
   if (remote) {
     // 引擎本地目录自愈创建(与 bash 的 tmp/ 同一套路):宿主目录在"创建工作区"时就建了,
     // 这里只兜住手改库/删过目录的存量状态,免得 pi 对着一个不存在的 cwd 报诊断。

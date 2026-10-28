@@ -18,19 +18,24 @@
 档位决定"要不要弹卡"，系统边界决定"弹了卡也拦不拦得住"。混为一谈就会出现
 "用户点了允许，写入还是失败"的错位体验。
 
-## 1. 已落地：一份声明、一个探针、两种机制
+## 1. 已落地：一份声明、一套判定、两种机制
 
 新增 `pc-server/workspace/sandbox.ts`：
 
 - **声明**：环境变量 `RIKKAHUB_SANDBOX=restricted|full|off`（容器 compose 默认 `restricted`）。
-- **实测**：启动时往"声明为区外"的代表点写一个临时文件。
+- **Windows 判定**：往 `%LOCALAPPDATA%\Temp`（Medium 标签，低完整性进程写不进去）写临时文件。
   - 写成功 ⇒ 没有边界（`measured=not_enforced`），日志与 `/api/app/sandbox` 显式点名；
   - 写被拒 ⇒ 边界在起作用（`measured=enforced`）；
   - 探针位置不存在 ⇒ `unknown`（不能新建，也不能当成边界生效）。
-- **探针位置**：默认按平台选——Windows 用 `%LOCALAPPDATA%\Temp`（Medium 标签，低完整性进程写不进去），
-  Linux/容器用 `/`（只读根 fs 下 EROFS）。可用 `RIKKAHUB_SANDBOX_PROBE_PATH` 改道。
-  **不能用 `os.tmpdir()`**：启动时 TEMP/TMP 已改道到 `dataDir/tmp`（那正是区内可写处），用它探针会永远得出假阴性。
-- **汇报**：`GET /api/app/sandbox` 返回档位、实测结论、机制、可写区域、差异说明；启动日志打一行 `[sandbox] ...`。
+- **容器判定**：读 `/proc/self/mounts` 的根 fs 挂载标志——`ro` ⇒ `enforced`；`rw` ⇒ `not_enforced`；
+  读不到或无法解析 ⇒ `unknown`。普通目录权限不足（例如 `/` 的 EACCES）不再当成边界：
+  Linux 非容器部署没有这类系统级机制，结论是 `not_enforced`，不会误报“受限中”。
+  可选的 `RIKKAHUB_SANDBOX_PROBE_PATH` 会对指定“区外代表点”再做一次写探针；
+  写得进去说明存在 rw 例外挂载，不能宣称全局边界。
+- **不能用 `os.tmpdir()` 当探针**：启动时 TEMP/TMP 已改道到 `dataDir/tmp`（那正是区内可写处），
+  用它探针会永远得出假阴性。这条对 Windows 探针尤其关键。
+- **汇报**：`GET /api/app/sandbox` 返回档位、实测结论、机制、`rwMounts`（标为 rw 的挂载点，
+  不代表当前 uid 一定有写权限）、差异说明；启动日志打一行 `[sandbox] ...`。
 
 权限层联动（`workspace/approval.ts` + `tools/approval.ts` + `workspace/runtime.ts`）：
 
@@ -131,7 +136,7 @@
 
 ## 4. 明确不做的事
 
-- **不做"两套实现"**：策略声明一份、探针一份；Windows 与容器只换机制，不换承诺。
+- **不做"两套实现"**：策略声明一份、判定口径一份；Windows 用写探针、容器用挂载表，只换机制，不换承诺。
 - **不承诺做不到的事**：边界没生效时，应用层不弹"允许一次写区外"（反正会被系统打回）；
   边界生效时，审批卡直接说明"操作系统会拒绝"。
 - **不静默降级**：声明 `restricted` 但实测 `not_enforced` 时，启动日志与 `/api/app/sandbox`
