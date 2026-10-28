@@ -23,6 +23,11 @@ export interface FakeSseTurn {
   /** 收到请求后、写响应前执行:确定性模拟"LLM 调用进行中"发生的并发事件
    *  (如压缩落库防线测试在摘要生成期间注入新消息)。 */
   beforeRespond?: () => void | Promise<void>;
+  /** beforeRespond 放行后返回失败响应,用于需要「先卡住再失败」的时序用例。 */
+  fail?: { status?: number; message?: string };
+  /** 正文帧写出后、终帧之前执行:模拟"流式已产出、会话尚未收尾"窗口内的并发事件
+   *  (如 D2 导入运行态替换用例)。 */
+  beforeFinish?: () => void | Promise<void>;
 }
 
 export interface FakeOpenAiSseServer {
@@ -51,6 +56,11 @@ export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpen
       return;
     }
     if (turn.beforeRespond) await turn.beforeRespond();
+    if (turn.fail) {
+      res.writeHead(turn.fail.status ?? 500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: turn.fail.message ?? "fake sse failure" } }));
+      return;
+    }
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     const frame = (payload: object) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
     if (turn.content !== undefined) {
@@ -83,6 +93,7 @@ export async function startFakeOpenAiSse(turns: FakeSseTurn[]): Promise<FakeOpen
         }],
       });
     }
+    if (turn.beforeFinish) await turn.beforeFinish();
     frame({
       id: "chatcmpl-fake",
       object: "chat.completion.chunk",

@@ -1,128 +1,78 @@
-// ssh/client.ts — SSH 连接、连接测试与一次性命令执行(ssh2)。
-// 纪律:凭据只在进程内用于握手,绝不写日志、绝不进错误文案;每次调用新建连接,
-// 用完即断(控制台不做长驻会话——命令之间不共享 cwd,见前端提示)。
+// ssh/client.ts — 面向调用方的 SSH 服务门面:连接复用走池,探测走临时连接。
+//
+// 对齐前这里是「每次调用新建连接、用完即断」:一条命令一次完整握手,控制台不能 cd,
+// 密码认证被服务器按多次失败风控,也没有任何地方承载主机密钥确认。现在连接层在
+// ssh/connection.ts、复用在 ssh/pool.ts,本文件只做两件事:
+// 1) 把 handler/工具的用词(探测、执行一条命令)翻译成池的操作;
+// 2) 收口超时夹取与错误到 HTTP 语义的边界,让上层不必自己重复这些纪律。
+//
+// 纪律:凭据只在建连参数里出现一次,绝不写日志、绝不进错误文案;对外只有 user@host:port。
 
-import { Client, type ConnectConfig } from "ssh2";
 import type { SshDevice } from "../foundation/types/settings";
+import { EXEC_TIMEOUT_DEFAULT_MS, EXEC_TIMEOUT_MAX_MS, SHELL_TIMEOUT_MAX_MS } from "./constants";
+import type { SshExecOptions, SshExecOutcome, SshProbeResult } from "./connection";
+import { sshPool } from "./pool";
 
-const READY_TIMEOUT_MS = 12_000;
-/** 单路输出上限:远端 cat 一个大文件不该把整进程内存拖垮。 */
-const MAX_OUTPUT_BYTES = 200 * 1024;
-
-export interface SshTestResult {
-  latencyMs: number;
+export interface SshRunOptions {
+  /** 远程工作目录(绝对路径);给定了才套安卓端那层外壳,cwd 缺省即「不进入任何目录」。 */
+  cwd?: string;
+  /** 调用方请求的超时;缺省 30s,上限按用途夹取(界面 120s,AI 工具 600s)。 */
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** 写类操作传 false:连接断了也不重放,避免不可重复的命令跑两遍。 */
+  retry?: boolean;
+  onData?: SshExecOptions["onData"];
+  stdin?: SshExecOptions["stdin"];
 }
 
-export interface SshExecResult {
-  stdout: string;
-  stderr: string;
-  /** 远端退出码;null = 被信号终止。 */
-  code: number | null;
-  signal: string;
-  /** 输出超过上限,已截断。 */
-  truncated: boolean;
+/** 界面用的超时夹取:缺省 30s,最大 120s(和安卓端控制台一致)。 */
+export function consoleTimeout(timeoutMs?: number): number {
+  return clampTimeout(timeoutMs, EXEC_TIMEOUT_DEFAULT_MS, EXEC_TIMEOUT_MAX_MS);
 }
 
-function connectConfig(device: SshDevice): ConnectConfig {
-  const base: ConnectConfig = {
-    host: device.host,
-    port: device.port,
-    username: device.username,
-    readyTimeout: READY_TIMEOUT_MS,
-    keepaliveInterval: 10_000,
-    keepaliveCountMax: 2,
-  };
-  if (device.authType === "key") {
-    return {
-      ...base,
-      privateKey: device.privateKey,
-      ...(device.passphrase ? { passphrase: device.passphrase } : {}),
-    };
-  }
-  return { ...base, password: device.password };
+/** AI shell 工具用的超时夹取:最大 600s(安卓端 SHELL_TIMEOUT_MAX_SECONDS)。 */
+export function agentTimeout(timeoutMs?: number): number {
+  return clampTimeout(timeoutMs, EXEC_TIMEOUT_DEFAULT_MS, SHELL_TIMEOUT_MAX_MS);
 }
 
-/** 建立到 ready(认证完成)即断开,返回握手耗时。 */
-export function testSshConnection(device: SshDevice): Promise<SshTestResult> {
-  return new Promise((resolve, reject) => {
-    const client = new Client();
-    const startedAt = Date.now();
-    let settled = false;
-    const finish = (error?: unknown, result?: SshTestResult) => {
-      if (settled) return;
-      settled = true;
-      client.end();
-      if (error) reject(error instanceof Error ? error : new Error(String(error)));
-      else resolve(result!);
-    };
-    client.on("ready", () => finish(undefined, { latencyMs: Date.now() - startedAt }));
-    client.on("error", (error) => finish(error));
-    client.on("close", () => finish(new Error("Connection closed before authentication completed")));
-    client.connect(connectConfig(device));
-  });
+function clampTimeout(requested: number | undefined, fallback: number, max: number): number {
+  const value = Number(requested);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(Math.floor(value), max);
 }
 
-/** 单条命令(非交互 shell):收集 stdout/stderr 与退出码,超时/异常即收掉连接。 */
-export function runSshCommand(device: SshDevice, command: string, timeoutMs: number): Promise<SshExecResult> {
-  return new Promise((resolve, reject) => {
-    const client = new Client();
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let stdout = "";
-    let stderr = "";
-    let truncated = false;
+/**
+ * 测试连接 = 一次性探测(临时连接,不进池):握手、认证、核对主机密钥,再读回
+ * shell / 主目录 / 目标目录是否存在。主机密钥未确认时抛 SshHostKeyUnknownError,
+ * 里面带着服务器出示的密钥,界面据此弹首次确认。
+ * remoteDir 留空即「只测连通性」;填了但不是绝对路径会抛 ssh.path_relative(400),
+ * 路径本身只做词法归一,进远端时仍走 command-wrap 的逐字引用,不存在拼命令。
+ */
+export function probeSshDevice(
+  device: SshDevice,
+  remoteDir?: string | null,
+  signal?: AbortSignal,
+): Promise<SshProbeResult> {
+  return sshPool.probe(device, remoteDir ?? "", signal);
+}
 
-    const append = (current: string, chunk: Buffer): string => {
-      if (current.length >= MAX_OUTPUT_BYTES) {
-        truncated = true;
-        return current;
-      }
-      const next = current + chunk.toString("utf8");
-      if (next.length > MAX_OUTPUT_BYTES) {
-        truncated = true;
-        return next.slice(0, MAX_OUTPUT_BYTES);
-      }
-      return next;
-    };
+/** 在设备的复用连接上执行一条命令(远程目录给了就套外壳;退出码/截断/超时语义见 connection.ts)。 */
+export function runSshCommand(device: SshDevice, command: string, options: SshRunOptions = {}): Promise<SshExecOutcome> {
+  return sshPool.use(device, (connection) => connection.exec(command, {
+    cwd: options.cwd,
+    timeoutMs: clampTimeout(options.timeoutMs, EXEC_TIMEOUT_DEFAULT_MS, SHELL_TIMEOUT_MAX_MS),
+    signal: options.signal,
+    stdin: options.stdin,
+    onData: options.onData,
+  }), { retry: options.retry, signal: options.signal });
+}
 
-    const finish = (error?: unknown, result?: SshExecResult) => {
-      if (settled) return;
-      settled = true;
-      if (timer !== null) clearTimeout(timer);
-      client.end();
-      if (error) reject(error instanceof Error ? error : new Error(String(error)));
-      else resolve(result!);
-    };
+/** 设备保存/删除后丢掉它的连接(配置变化本身由池按指纹自动重连,不需要这里)。 */
+export function closeSshDevice(deviceId: string): void {
+  sshPool.close(deviceId);
+}
 
-    timer = setTimeout(() => {
-      finish(new Error(`Command timed out after ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
-
-    client.on("ready", () => {
-      client.exec(command, (error, stream) => {
-        if (error) {
-          finish(error);
-          return;
-        }
-        let exitCode: number | null = null;
-        let exitSignal = "";
-        stream.on("exit", (code: number | null, signal?: string) => {
-          exitCode = code ?? null;
-          exitSignal = signal ?? "";
-        });
-        stream.on("data", (chunk: Buffer) => {
-          stdout = append(stdout, chunk);
-        });
-        stream.stderr.on("data", (chunk: Buffer) => {
-          stderr = append(stderr, chunk);
-        });
-        stream.on("close", () => {
-          finish(undefined, { stdout, stderr, code: exitCode, signal: exitSignal, truncated });
-        });
-      });
-    });
-    client.on("error", (error) => finish(error));
-    client.on("close", () => finish(new Error("SSH connection closed before the command completed")));
-    client.connect(connectConfig(device));
-  });
+/** 进程退出前调用:关掉所有连接,免得退出流程里还挂着远端会话。 */
+export function closeAllSshConnections(): void {
+  sshPool.closeAll();
 }
