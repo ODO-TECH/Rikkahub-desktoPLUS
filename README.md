@@ -236,7 +236,7 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.1.1
+  rikkahub-desktop-plus:0.1.2
 ```
 
 只有 `/app/pc-data` 必须挂载。不要把宿主目录挂到 `/app` 或 `/app/web-ui`，那会覆盖镜像里的程序文件。要交给 agent 使用的 NAS 目录，通过挂载表划边界：

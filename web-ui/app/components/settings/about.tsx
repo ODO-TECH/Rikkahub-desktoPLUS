@@ -76,7 +76,7 @@ export function AboutSection() {
   const { t } = useTranslation();
   // 版本号由 pc-server/scripts/bump-version.ts 统一改写(四处之一),
   // 勿手改;CI 的 check-version-sync.ts 校验四处一致。
-  const APP_VERSION = "0.1.1";
+  const APP_VERSION = "0.1.2";
 
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
