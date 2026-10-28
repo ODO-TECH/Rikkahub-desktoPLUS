@@ -789,6 +789,7 @@
     "port_restart_note": "After clicking Save, restart the app for the port to take effect. The running instance still uses the old port.",
     "port_container_locked": "In container deployments the port is decided by the image and docker -p mapping; changing it here has no effect.",
     "restart_failed": "Restart failed. Please quit and reopen the app manually.",
+    "restart_timeout": "Timed out waiting for the backend to restart. Refresh the page; if you just changed the port, open the new port instead; if it still does not respond, quit and reopen the app.",
     "active_from_system": "{{url}} (from system proxy)",
     "not_active": "Not enabled (direct connection)",
     "socks_not_supported": "SOCKS proxy is not supported (runtime limitation). Please use the proxy tool's HTTP port.",

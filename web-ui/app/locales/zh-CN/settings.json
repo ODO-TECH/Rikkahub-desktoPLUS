@@ -789,6 +789,7 @@
     "port_restart_note": "端口点「保存」后仍需重启应用才生效。当前运行中的实例仍使用原端口。",
     "port_container_locked": "容器部署的端口由镜像与 docker -p 端口映射决定，应用内修改无效。",
     "restart_failed": "重启失败，请手动退出并重新打开应用",
+    "restart_timeout": "等待后端重启超时，请手动刷新页面；若刚改过端口，请改用新端口访问；仍无响应则退出并重新打开应用",
     "active_from_system": "{{url}}（来自系统代理）",
     "not_active": "未启用（所有请求直连）",
     "socks_not_supported": "不支持 SOCKS 代理（运行时不支持），请改用代理工具的 HTTP 端口。",

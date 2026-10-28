@@ -25,10 +25,12 @@ describe("/api/health 存活探针", () => {
     expect(await response.json()).toMatchObject({ ok: true, ready: false, failed: true, phase: "starting" });
   });
 
-  test("就绪后返回 ready=true", async () => {
+  test("就绪后返回 ready=true,并带 pid/spawnedByShell 供重启分流", async () => {
     markStartupReady();
     const response = healthResponse();
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ ok: true, ready: true, phase: "ready" });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ ok: true, ready: true, phase: "ready", pid: process.pid });
+    expect(body.spawnedByShell).toBe(false);
   });
 });

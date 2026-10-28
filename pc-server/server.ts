@@ -4,7 +4,7 @@ import { setActualServingHostnames, setActualServingPort } from "./foundation/ne
 import { bindFirstUsable, CONTAINER_PORT, DESKTOP_DEFAULT_PORT, defaultPreferredPort, isLoopbackHostname, planBindAttempts, resolveListenHostnames, stopListeners, uiOrigin } from "./foundation/port-binding";
 import { planOriginRelay } from "./foundation/origin-relay";
 import { createOriginRelayApi, readUiOriginRecord } from "./api/origin-relay";
-import { flushSaveState, peekPreferredPort, saveState } from "./persistence/json-store";
+import { flushSaveState, peekPreferredPort, peekSandboxRestricted, saveState } from "./persistence/json-store";
 import { asrRealtimeSessions, sendAsrAudio, startAsrRealtimeSession, stopAsrRealtimeSession } from "./media/asr";
 import { disposeTerminalSession, handleTerminalFrame } from "./ssh/terminal-session";
 import { error, json } from "./api/request";
@@ -263,6 +263,44 @@ function serveOn(hostname: string, port: number) {
           await gracefulShutdown.run({ fromHttp: true });
           return json({ ok: true });
         }
+        // S2b 补充:「重启」的负责人在两种部署下不同。壳自己拉起的后端归壳管
+        // （rikkahub://restart 先停后拉，并等受限沙盒自降级后的慢半拍重启）；但壳会
+        // attach 到端口上已有的后端（dev 实例、残留旧实例），此时壳的 restart 因不持有
+        // 进程句柄直接返回——沙盒开关永远等不到一次真正的重启，界面一直显示未生效。
+        // 本端点让后端在刷盘、释放端口与数据目录锁之后，用同一命令行 detached 拉起替代
+        // 进程；前端轮询 /api/health 的 pid 变化后刷新。闸门与 shutdown 同源：只收本机
+        // 回环直连（不持有 token 的壳/前端共用），带代理转发头一律拒绝。
+        if (url.pathname === "/api/app/restart" && request.method === "POST") {
+          const ip = server.requestIP(request)?.address ?? "";
+          if (hasProxyForwardHeaders(request) || !isLoopbackAddress(ip)) {
+            return error("Forbidden: restart is loopback-only", 403);
+          }
+          if (RUNNING_IN_CONTAINER) {
+            return error("容器内不能从进程内部重启（会连容器一起退出），请重启容器", 400);
+          }
+          // 壳管后端由壳的协议重启；从内部自重启会让壳持有的进程句柄与 Job Object
+          // 生命周期脱节（壳退出时收不到新进程）。
+          if (process.env.RIKKAHUB_SHELL === "webview2") {
+            return error("当前后端由桌面壳管理，请通过壳的重启入口重启", 409, "restart_managed_by_shell");
+          }
+          // 低完整性进程无法把自己提回 Medium：关沙盒要做的标签还原只能由下一次 Medium
+          // 启动完成，自重启只会得到一个同样受限的替代进程，开关看起来毫无反应。
+          if (process.env.RIKKAHUB_SANDBOX_LAUNCHED === "1" && !peekSandboxRestricted()) {
+            return error(
+              "受限沙盒正在生效。关闭它需要先完全退出当前后端进程，再以普通权限重新启动应用（低完整性进程无法自行解除限制）",
+              409,
+              "restart_requires_medium_process",
+            );
+          }
+          // 已经在停机途中（信号/另一请求）：重启标记来不及参与本次退出，如实拒绝，
+          // 不让调用方误以为替代进程会起来。
+          if (gracefulShutdown.started()) {
+            return error("服务正在关闭，请稍后重新打开应用", 409, "restart_during_shutdown");
+          }
+          restartRequested = true;
+          await gracefulShutdown.run({ fromHttp: true });
+          return json({ ok: true, pid: process.pid, restarting: true });
+        }
         // Web 鉴权（阶段 5.2）：仅在配置了访问密码时生效。auth/token 端点先于
         // 鉴权检查处理（它就是换 token 的入口）；其余 /api/* 一律要求有效 token。
         if (url.pathname === "/api/auth/token" && request.method === "POST") {
@@ -488,6 +526,9 @@ void (async () => {
 })();
 
 let shutdownStarted = false;
+/** /api/app/restart 置位：停机编排（已刷盘、已释放端口与数据目录锁）完成后，
+ *  由 exit 钩子拉起替代进程；信号路径不置位，退出就是退出。 */
+let restartRequested = false;
 
 /** 全面审查 1-1/8-11/2-0b:关停前的完整刷盘链。信号路径与 /api/app/shutdown 端点共用,
  *  幂等(双触发只跑一次)。顺序:state.json(saveState 清节流定时器并立即起写 +
@@ -530,6 +571,29 @@ async function flushAllStateBeforeExit(): Promise<void> {
   bootCleanExit();
 }
 
+/** 自重启的最后一跳：此时端口已释放（stopIngress 是编排第一步）、数据目录锁已释放
+ *  （flushAll 末尾），替代进程用同一命令行/同一 cwd/同一数据目录直接重启，端口不变。
+ *  detached + 忽略 stdio 让它活过本进程退出（Windows 上不受父进程句柄影响）。
+ *  RIKKAHUB_SANDBOX_LAUNCHED 随 env 继承、不清理：低完整性后端拉起的替代进程仍是
+ *  Low，抹掉标记会让它重跑标注/自降级（子进程仍是 Low，只会自我循环）。 */
+function spawnReplacementProcess(): void {
+  try {
+    const child = Bun.spawn({
+      cmd: [process.execPath, ...process.argv.slice(1)],
+      cwd: process.cwd(),
+      env: { ...process.env, RIKKAHUB_PC_DATA_DIR: dataDir },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+    });
+    child.unref();
+    console.log(`[shutdown] 自重启:替代进程已拉起(pid ${child.pid})`);
+  } catch (err) {
+    console.error("[shutdown] 自重启拉起替代进程失败", err);
+  }
+}
+
 // HTTP 端点与信号共用同一套停机编排：停接收 → 停生产者(生成/IM) → 清 detached →
 // 关 stdio MCP/SSH → 刷盘/checkpoint/解锁 → 退出。幂等与顺序由 shutdown.ts 锁定。
 const gracefulShutdown = createGracefulShutdown({
@@ -553,6 +617,7 @@ const gracefulShutdown = createGracefulShutdown({
   },
   flushAll: flushAllStateBeforeExit,
   exit(code) {
+    if (restartRequested) spawnReplacementProcess();
     process.exit(code);
   },
 });

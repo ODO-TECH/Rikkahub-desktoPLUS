@@ -18,7 +18,7 @@ import {
   setWebPassword,
   type WebAuthStatus,
 } from "~/services/api";
-import api from "~/services/api";
+import api, { ApiError } from "~/services/api";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { isDesktopShell, isTauriEnvironment } from "~/lib/system-info";
 import { patchSettingsLocal } from "~/lib/settings-patch";
@@ -85,12 +85,15 @@ export function WebServiceSection({
   const [restarting, setRestarting] = React.useState(false);
 
   // ── 重启机制(端口与受限沙盒共用)──
-  // 两条壳路径: Tauri 先拿到 relaunch 再停机(插件不可用时绝不先停后端造成死页面),
-  // 保存 → POST app/shutdown → 等 600ms → relaunch;
+  // Tauri:先拿 relaunch 再停机(插件不可用时绝不先停后端造成死页面),
+  // 保存 → POST app/shutdown → 等 600ms → relaunch。
   // WebView2 轻量壳没有 Tauri IPC,保存后导航到 rikkahub://restart,由壳停掉后端、
   // 重新拉起并重新导航(壳自己保证释放端口与数据目录锁)。
+  // 但壳会 attach 到端口上已有的后端(dev 实例、残留旧实例),此时壳的 restart 因不持有
+  // 进程句柄直接返回——所以先问 /api/health 的 spawnedByShell:外挂后端改走后端自重启
+  // (POST app/restart → 轮询 pid 变化 → 刷新)。
   // 受限沙盒开启时,重启的后端会在启动编排里自降级(标目录 → Low 令牌重启 → 准备进程
-  // 退出),壳要等的是"慢半拍的同一端口"(S4)。
+  // 退出),壳/前端要等的是"慢半拍的同一端口"(S4)。
   const restartWith = async (save: () => Promise<boolean>) => {
     setRestarting(true);
     try {
@@ -113,10 +116,40 @@ export function WebServiceSection({
         setRestarting(false);
         return;
       }
-      window.location.href = "rikkahub://restart";
+      const health = await api
+        .get<{ pid?: number; spawnedByShell?: boolean }>("health", { timeout: 5000, retry: 0 })
+        .catch(() => null);
+      if (health?.spawnedByShell !== false) {
+        window.location.href = "rikkahub://restart";
+        return;
+      }
+      try {
+        await api.post("app/restart", undefined, { timeout: 10_000, retry: 0 });
+      } catch (err) {
+        // 4xx 是端点明确拒绝(壳管后端/低完整性关沙盒/容器),要原样告诉用户;
+        // 连接在响应前断开与 shutdown 同源(服务端已退出),按重启已触发继续等。
+        if (err instanceof ApiError && err.code >= 400 && err.code < 500) throw err;
+      }
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        const next = await api
+          .get<{ pid?: number }>("health", { timeout: 3000, retry: 0 })
+          .catch(() => null);
+        if (next?.pid && next.pid !== health.pid) {
+          window.location.reload();
+          return;
+        }
+      }
+      toast.error(t("settings:proxy.restart_timeout"));
+      setRestarting(false);
     } catch (err) {
       setRestarting(false);
-      toast.error(t("settings:proxy.restart_failed"));
+      toast.error(
+        err instanceof ApiError && err.code >= 400 && err.code < 500
+          ? err.message
+          : t("settings:proxy.restart_failed"),
+      );
       console.warn("[restart] failed", err);
     }
   };
