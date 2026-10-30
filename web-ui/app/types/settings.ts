@@ -49,6 +49,9 @@ export type { MemoryVectorSettings } from "@server/foundation/types/settings";
 // 实验：记忆与上下文的失真 / 遗忘设置切片（PC 独有，`memoryExperimentSettings`）。
 export type { MemoryExperimentSettings } from "@server/foundation/types/settings";
 
+// 实验：心情状态设置切片（PC 独有，`moodExperimentSettings`）。
+export type { MoodExperimentSettings, MoodInjectMode } from "@server/foundation/types/settings";
+
 /**
  * Display settings — user nickname, avatar, theme, fonts and other purely visual preferences.
  * 服务端存 Record<string, JsonValue>(安卓透传 + PC-only 字段剥离逻辑见 pcOnlyDisplayFields),

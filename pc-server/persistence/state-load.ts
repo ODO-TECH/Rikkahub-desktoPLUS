@@ -25,6 +25,7 @@ import { GLOBAL_MEMORY_ID, memoryStore } from "../memory";
 import { memorySqlReady } from "../memory/sqlite";
 import { normalizeMemoryVectorSettings } from "../memory/vector-settings";
 import { normalizeMemoryExperimentSettings } from "../memory/experiment/config";
+import { normalizeMoodExperimentSettings } from "../mood/config";
 import { DEFAULT_AUTO_MODEL_ID, NA_API_PRESET_MODELS, NA_API_PROVIDER_ID, OAUTH_PROVIDER_IDS, SUNSET_PROVIDER_IDS, TENCENT_PROVIDER_ID, builtinProviderRank, enrichModel, inferModelAbilities, model, placeOAuthProvidersAfterAnchors } from "../model-providers";
 import { isPresetOAuthProviderId } from "../model-providers/auth/flows";
 import { normalizeTtsProviders } from "../media/tts";
@@ -38,6 +39,7 @@ import {
 import { normalizeSshDevices } from "../ssh/devices";
 import { normalizeSubagentConfig } from "../foundation/types/settings/subagent-config";
 import { normalizeImAccess } from "../im/config";
+import { ensureBuiltinMcpServers } from "../tools/mcp-builtin";
 import { hashFileSha256, rewriteAndroidFileUrlsDeep, rewritePcFileUrlsDeep } from "../backup/file-refs";
 import { writeExtractedTextSidecar } from "../files/index";
 import { rebuildFtsFromNodeTable } from "../conversations/fts";
@@ -231,6 +233,10 @@ export function normalizeState(input: Partial<State>): State {
   // 实验：记忆与上下文。老 state 无此键 → 全部关闭（含 dry-run），行为不变。
   normalized.settings.memoryExperimentSettings = normalizeMemoryExperimentSettings(
     (parsedSettings as unknown as Record<string, unknown>).memoryExperimentSettings,
+  );
+  // 实验：心情状态。老 state 无此键 → 总开关关闭，不判定、不调模型。
+  normalized.settings.moodExperimentSettings = normalizeMoodExperimentSettings(
+    (parsedSettings as unknown as Record<string, unknown>).moodExperimentSettings,
   );
   // Backfill keybindings:以默认表为基底,逐 action 用用户保存的条目覆盖。保证新增 action 自动补
   // 默认、过滤未知 action、且每条 entry 字段完整(即使用户手改 state.json 造成残缺,默认值兜底)。
@@ -492,6 +498,12 @@ export function normalizeState(input: Partial<State>): State {
       return clone as JsonValue;
     });
   }
+  // 内置 MCP 服务器(@rikkahub/fetch):进程内传输,每次装载播回列表首位。用户能关
+  // (总开关与逐工具开关都继承原值),但删不掉——删了下次装载还会出现。备份恢复与安卓
+  // 导入同样经过本函数,所以这三条入口都自带播种。
+  normalized.settings.mcpServers = ensureBuiltinMcpServers(
+    Array.isArray(normalized.settings.mcpServers) ? normalized.settings.mcpServers : [],
+  );
   return normalized;
 }
 

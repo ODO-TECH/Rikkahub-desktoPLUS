@@ -380,7 +380,7 @@ export function MemoryBadge({ conversationId, refreshKey }: { conversationId?: s
                   <Textarea
                     defaultValue={entry.content}
                     rows={3}
-                    className="w-full text-sm resize-none"
+                    className="field-sizing-fixed max-h-40 w-full resize-none overflow-y-auto text-sm"
                   />
                   <div className="flex gap-2">
                     <Button

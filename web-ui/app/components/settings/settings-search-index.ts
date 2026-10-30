@@ -340,6 +340,28 @@ const ROW_ENTRIES: readonly SettingsSearchEntry[] = [
   row("experiments/memory", "experiments.max_candidates"),
   row("experiments/memory", "experiments.dynamic_recall_top_k"),
 
+  // 实验功能（心情）
+  row("experiments/mood", "experiments.mood.notice_title"),
+  row("experiments/mood", "experiments.mood.master_title"),
+  row("experiments/mood", "experiments.mood.enable", { keywords: "mood_experiment" }),
+  row("experiments/mood", "experiments.mood.dry_run", { keywords: "mood_experiment" }),
+  row("experiments/mood", "experiments.mood.model_title"),
+  row("experiments/mood", "experiments.mood.model_row", { keywords: "mood_experiment" }),
+  row("experiments/mood", "experiments.mood.params_title"),
+  row("experiments/mood", "experiments.mood.mood_base"),
+  row("experiments/mood", "experiments.mood.decay_half_hours"),
+  row("experiments/mood", "experiments.mood.sig_mood"),
+  row("experiments/mood", "experiments.mood.sig_dim"),
+  row("experiments/mood", "experiments.mood.inject_confidence"),
+  row("experiments/mood", "experiments.mood.inject_per_day"),
+  row("experiments/mood", "experiments.mood.inject_mode"),
+  row("experiments/mood", "experiments.mood.status_title"),
+  row("experiments/mood", "experiments.mood.status_mood"),
+  row("experiments/mood", "experiments.mood.status_confidence"),
+  row("experiments/mood", "experiments.mood.preview_title"),
+  row("experiments/mood", "experiments.mood.timeline_title"),
+  row("experiments/mood", "experiments.mood.timeline_empty"),
+
   // 数据管理
   row("data", "data.backup_title"),
   row("data", "data.sync_options_title", { keywords: "backup" }),

@@ -118,7 +118,10 @@ export const SETTINGS_NAV = [
     id: "experiments",
     labelKey: "settings:nav.experiments",
     icon: FlaskConical,
-    children: [{ id: "memory", labelKey: "settings:subnav.experiments.memory" }],
+    children: [
+      { id: "memory", labelKey: "settings:subnav.experiments.memory" },
+      { id: "mood", labelKey: "settings:subnav.experiments.mood" },
+    ],
   },
   {
     id: "stats",

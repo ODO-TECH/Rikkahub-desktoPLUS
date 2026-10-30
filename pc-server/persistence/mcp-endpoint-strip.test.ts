@@ -10,6 +10,13 @@ function servers(state: ReturnType<typeof normalizeState>) {
   return state.settings.mcpServers as Array<Record<string, JsonValue>>;
 }
 
+// normalizeState 会把内置服务器播在列表首位，按 id 取才不受顺序影响。
+function serverOf(state: ReturnType<typeof normalizeState>, serverId: string) {
+  const found = servers(state).find((server) => String(server.id) === serverId);
+  if (!found) throw new Error(`server ${serverId} missing`);
+  return found;
+}
+
 describe("R3-3 mcpServers.ssePostEndpoint 剥离 + SSE 迁移", () => {
   test("持久化的 ssePostEndpoint 被剥除，旧 SSE 服务器迁移为 Streamable HTTP", () => {
     const state = normalizeState({
@@ -25,7 +32,7 @@ describe("R3-3 mcpServers.ssePostEndpoint 剥离 + SSE 迁移", () => {
         ],
       } as any,
     });
-    const s = servers(state)[0];
+    const s = serverOf(state, "s1");
     expect("ssePostEndpoint" in s).toBe(false);
     expect(s.id).toBe("s1");
     expect(s.type).toBe("streamable_http");
@@ -39,7 +46,7 @@ describe("R3-3 mcpServers.ssePostEndpoint 剥离 + SSE 迁移", () => {
         mcpServers: [{ id: "s3", type: "sse", url: "https://mcp.example/sse", commonOptions: { enable: true } }],
       } as any,
     });
-    expect(servers(state)[0].type).toBe("streamable_http");
+    expect(serverOf(state, "s3").type).toBe("streamable_http");
   });
 
   test("无该字段的 streamable_http 服务器原样通过", () => {
@@ -48,8 +55,9 @@ describe("R3-3 mcpServers.ssePostEndpoint 剥离 + SSE 迁移", () => {
         mcpServers: [{ id: "s2", type: "streamable_http", url: "https://mcp.example/mcp", commonOptions: { enable: true } }],
       } as any,
     });
-    expect("ssePostEndpoint" in servers(state)[0]).toBe(false);
-    expect(servers(state)[0].id).toBe("s2");
-    expect(servers(state)[0].type).toBe("streamable_http");
+    const s = serverOf(state, "s2");
+    expect("ssePostEndpoint" in s).toBe(false);
+    expect(s.id).toBe("s2");
+    expect(s.type).toBe("streamable_http");
   });
 });

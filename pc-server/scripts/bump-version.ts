@@ -6,7 +6,7 @@
 //     Docker 构建只 COPY pc-server/，无法跨包 import web-ui 侧文件。
 //   - web-ui/src-tauri/tauri.conf.json：Tauri 安装包版本。
 //   - web-ui/src-tauri/Cargo.toml：Rust crate 版本（Tauri 构建元数据）。
-//   - web-ui/app/components/settings/about.tsx：关于页展示的前端版本号。
+//   - web-ui/app/lib/app-version.ts：界面侧版本号（关于页展示 + update/check 的 current）。
 //   - compose / Docker 文档 / README 里的镜像 tag。
 // 本脚本把"多处人工同步"收敛为"一条命令"；漏跑脚本手改单处时，
 // CI 的 check-version-sync.ts 会红灯拦截。
@@ -40,11 +40,11 @@ const targets: Array<{ file: string; pattern: RegExp; replacement: string }> = [
     replacement: `version = "${newVersion}"`,
   },
   {
-    // 关于页展示的前端版本号。SPA 与 pc-server 分属两个包,构建期无法互相 import,
-    // 运行时从 /api/health 取又引入异步闪烁,故同样收敛到本脚本统一改写。
-    file: join(root, "web-ui", "app", "components", "settings", "about.tsx"),
-    pattern: /const APP_VERSION = "[^"]+";/,
-    replacement: `const APP_VERSION = "${newVersion}";`,
+    // 界面侧版本号。SPA 与 pc-server 分属两个包,构建期无法互相 import,
+    // 故同样收敛到本脚本统一改写。关于页只展示这一处。
+    file: join(root, "web-ui", "app", "lib", "app-version.ts"),
+    pattern: /export const APP_VERSION = "[^"]+";/,
+    replacement: `export const APP_VERSION = "${newVersion}";`,
   },
   {
     // Cargo.lock 里 rikkahub 包自身的版本必须与 Cargo.toml 同步：Tauri 打包与 CI 的

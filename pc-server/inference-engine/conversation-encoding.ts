@@ -16,6 +16,7 @@ import { isEmptyAssistantPlaceholder } from "./parts";
 import { enrichMessages, templateVariables } from "./message-enrichment";
 import { findEffectiveCompaction, parseEngineCompactions, pinnedMessagesBefore } from "./engine-compaction";
 import { readDynamicRecallBlock } from "../memory/dynamic-recall";
+import { readMoodInjectionBlock } from "../mood/injection";
 
 // 消息模板/时间提醒/lorebook+模式注入/滞回截断 已上收至 message-enrichment.ts
 // (引擎无关层);本文件只负责"富化产物 → 三家 Provider 请求体"的编码。
@@ -81,8 +82,10 @@ export function conversationTransformedMessages(
   conversation: Conversation,
   assistant: Assistant,
   /** dynamicRecall=true 时把按最新用户消息检索的易变召回块追加到该 USER 消息末尾。
-   *  只给真实生成/压缩估算开；辅助调用（标题、翻译等）保持关闭，不带实验注入。 */
-  options?: { dynamicRecall?: boolean },
+   *  只给真实生成/压缩估算开；辅助调用（标题、翻译等）保持关闭，不带实验注入。
+   *  moodInjection=true 时再把心情块追加到同一末尾（排在召回块之后）；调用方须先
+   *  prepareMoodInjection，否则读不到缓存。 */
+  options?: { dynamicRecall?: boolean; moodInjection?: boolean },
 ) {
   const picked = findModel(assistant.chatModelId ?? state.settings.chatModelId);
   // 1.5.0 跟进安卓 Migration_16_17:truncateIndex("清除上下文"分割线)机制废弃,
@@ -159,14 +162,23 @@ export function conversationTransformedMessages(
     internalMessages.push(message("SYSTEM", [{ type: "text", text: systemWithInjections }]));
   }
   internalMessages.push(...enriched.messages);
-  if (options?.dynamicRecall) {
-    // 易变召回块贴在最新 USER 消息末尾:Google / Responses 会丢弃序列中段的
+  if (options?.dynamicRecall || options?.moodInjection) {
+    // 易变块贴在最新 USER 消息末尾:Google / Responses 会丢弃序列中段的
     // system 消息,尾部 SYSTEM 在三家方言里并不可靠;用户消息是唯一处处保真的插槽。
+    // 召回块在前、心情块在后——先给事实,再给当下状态。
     for (let index = internalMessages.length - 1; index >= 0; index -= 1) {
       const candidate = internalMessages[index]!;
       if (candidate.role !== "USER") continue;
-      const block = readDynamicRecallBlock(conversation.id, assistant, candidate.id);
-      if (block) internalMessages[index] = appendMessageText(candidate, block);
+      let patched = candidate;
+      if (options.dynamicRecall) {
+        const recall = readDynamicRecallBlock(conversation.id, assistant, candidate.id);
+        if (recall) patched = appendMessageText(patched, recall);
+      }
+      if (options.moodInjection) {
+        const mood = readMoodInjectionBlock(conversation.id, assistant, candidate.id);
+        if (mood) patched = appendMessageText(patched, mood);
+      }
+      internalMessages[index] = patched;
       break;
     }
   }
@@ -195,8 +207,10 @@ export function conversationMessagesForApi(
   includeHistoryReasoning: boolean = true,
   /** 真实生成才置 true：把易变召回块追加到最新 USER 消息（见 S9）。 */
   dynamicRecall: boolean = false,
+  /** 真实生成才置 true：把心情块追加到最新 USER 消息（见 mood/injection.ts）。 */
+  moodInjection: boolean = false,
 ) {
-  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall });
+  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall, moodInjection });
 
   const items: ApiMessage[] = [];
   for (const selected of transformedMessages) {
@@ -238,8 +252,10 @@ export function conversationResponseApiInput(
   assistant: Assistant,
   /** 真实生成才置 true：易变召回块追加到最新 USER 输入项。 */
   dynamicRecall: boolean = false,
+  /** 真实生成才置 true：心情块追加到最新 USER 输入项（排在召回块之后）。 */
+  moodInjection: boolean = false,
 ) {
-  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall });
+  const { messages: transformedMessages, picked } = conversationTransformedMessages(conversation, assistant, { dynamicRecall, moodInjection });
   // 历史思考项回传方言：仅官方 OpenAI 主机（第三方 Responses 端点形态各异，火山
   // 直接 400，见 responsesHistoryReasoningAllowed 头注）；另尊重 provider 级
   // includeHistoryReasoning 开关（与 chat-completions 路径 e63d017 同语义——

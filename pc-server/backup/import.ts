@@ -99,6 +99,7 @@ export const PC_ONLY_SETTINGS_PRESERVED_ON_ANDROID_IMPORT = [
   "memorySettings",
   "memoryVectorSettings",
   "memoryExperimentSettings",
+  "moodExperimentSettings",
   "subagent",
   // 凭据与外部接入
   "sshDevices",

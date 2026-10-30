@@ -23,6 +23,7 @@ import Markdown from "~/components/markdown/markdown";
 import { useAutosaveDraft } from "~/hooks/use-autosave-draft";
 import { AutosaveStatusRow } from "~/components/settings/autosave-status";
 import { openExternal } from "~/lib/external-link";
+import { loadSandboxStatus, type SandboxStatusDto } from "~/lib/sandbox-status";
 import { cn } from "~/lib/utils";
 import { copyItemName } from "~/lib/copy-name";
 import { createId } from "~/lib/id";
@@ -75,8 +76,11 @@ function argsOf(server: Record<string, unknown>): string[] {
   return Array.isArray(server.args) ? server.args.map((arg) => String(arg ?? "")) : [];
 }
 
-function transportOf(server: Record<string, unknown>): "streamable_http" | "stdio" {
-  return String(server.type ?? "") === "stdio" ? "stdio" : "streamable_http";
+/** builtin = 进程内内置服务器（@rikkahub/fetch）：没有连接参数，只有开关。 */
+function transportOf(server: Record<string, unknown>): "streamable_http" | "stdio" | "builtin" {
+  const type = String(server.type ?? "");
+  if (type === "builtin") return "builtin";
+  return type === "stdio" ? "stdio" : "streamable_http";
 }
 
 /** 工具行内的紧凑开关:标签与开关同排,标签可点击。 */
@@ -155,6 +159,22 @@ function McpServerEditor({
   const [importOpen, setImportOpen] = React.useState(false);
   const [importText, setImportText] = React.useState("");
   const [importBusy, setImportBusy] = React.useState(false);
+  // 本地 stdio 服务器受系统沙盒约束（受限档 = 低完整性子进程，只能写数据目录与工作区）。
+  // 添加/导入本地服务器时就把机制摆出来：否则"服务器写自己的数据目录报 Permission denied"
+  // 只能靠猜。状态来自 /api/app/sandbox（实测结论），开关本身来自 settings。
+  const [sandbox, setSandbox] = React.useState<SandboxStatusDto | null>(null);
+  React.useEffect(() => {
+    void loadSandboxStatus().then(setSandbox);
+  }, []);
+  const sandboxOn = settings.sandboxRestricted === true;
+  const sandboxActive = sandbox?.boundaryActive === true;
+  const sandboxMessage = sandboxActive
+    ? sandbox.mechanism === "container_mounts"
+      ? t("settings:mcp.server.sandbox_container")
+      : t("settings:mcp.server.sandbox_active")
+    : sandboxOn
+      ? t("settings:mcp.server.sandbox_pending")
+      : t("settings:mcp.server.sandbox_off");
   // R8-2:三件套竞态防护("URL input eats characters" 的修复)抽成共享 hook,本编辑器是
   // 原始出处——语义与病史见 hooks/use-autosave-draft.ts 文件头。
   // draft/headers 走 ref 取最新值:persist 既被防抖调用(渲染早已提交),
@@ -221,12 +241,20 @@ function McpServerEditor({
     autosave.reset();
   }, [selectedId]);
 
+  // 冷启动直达本页时,settings 可能在挂载后才到:上面那个 effect 已经跑完(当时列表为空),
+  // 右侧会停在空白的新建表单。只在「当前选中项无效」时补一次对齐,正常保存不会触发。
+  React.useEffect(() => {
+    if (selectedId && servers.some((item) => String(item.id) === selectedId)) return;
+    if (servers[0]) setSelectedId(String(servers[0].id));
+  }, [selectedId, servers]);
+
   const common =
     draft.commonOptions && typeof draft.commonOptions === "object"
       ? (draft.commonOptions as Record<string, unknown>)
       : {};
   const transport = transportOf(draft);
   const isStdio = transport === "stdio";
+  const isBuiltin = transport === "builtin";
   const tools = Array.isArray(common.tools) ? (common.tools as Array<Record<string, unknown>>) : [];
   // Master switch (commonOptions.enable). When OFF, the per-tool child switches stay
   // visible AND show their last preference, but are read-only & greyed — the user can
@@ -462,6 +490,8 @@ function McpServerEditor({
       rowMenuOf={(item) => {
         const id = String(item.id ?? "");
         if (!id) return undefined;
+        // 内置服务器既不许复制（副本会伪装成独立服务器）也不许删（装载时总会播回）。
+        if (transportOf(item) === "builtin") return undefined;
         return [
           copyRowAction(() => copyServerById(id)),
           deleteRowAction(() => removeServerById(id)),
@@ -515,8 +545,9 @@ function McpServerEditor({
             title={textValue(common.name)}
             titlePlaceholder={t("settings:mcp.server.default_name")}
             titleLabel={t("settings:mcp.name")}
-            onTitleCommit={(name) => patchDraft({ ...draft, commonOptions: { ...common, name } })}
-            description={t("settings:mcp.server.detail_desc")}
+            // 内置服务器的名字来自注册表，改名会在下一次装载被冲掉，索性不给编辑入口。
+            onTitleCommit={isBuiltin ? undefined : (name) => patchDraft({ ...draft, commonOptions: { ...common, name } })}
+            description={isBuiltin ? t("settings:mcp.builtin.detail_desc") : t("settings:mcp.server.detail_desc")}
             action={
               <LabeledSwitch
                 label={t("settings:mcp.enabled")}
@@ -527,16 +558,26 @@ function McpServerEditor({
           />
 
           <SettingsGroup title={t("settings:mcp.connection_title")} fields>
-            <SettingsField label={t("settings:mcp.transport")} hint={t("settings:mcp.transport_desc")}>
-              <SegmentedControl
-                items={[
-                  { value: "streamable_http", label: t("settings:mcp.transport_http") },
-                  { value: "stdio", label: t("settings:mcp.transport_stdio") },
-                ]}
-                value={transport}
-                onChange={(next) => patchDraft({ ...draft, type: next })}
-              />
-            </SettingsField>
+            {isBuiltin ? (
+              // 进程内传输：没有地址、没有子进程、没有授权，唯一的变量就是开关。
+              <>
+                <SettingsField label={t("settings:mcp.transport")}>
+                  <StatusBadge tone="brand">{t("settings:mcp.transport_builtin")}</StatusBadge>
+                </SettingsField>
+                <Notice tone="info">{t("settings:mcp.builtin.notice")}</Notice>
+              </>
+            ) : (
+              <SettingsField label={t("settings:mcp.transport")} hint={t("settings:mcp.transport_desc")}>
+                <SegmentedControl
+                  items={[
+                    { value: "streamable_http", label: t("settings:mcp.transport_http") },
+                    { value: "stdio", label: t("settings:mcp.transport_stdio") },
+                  ]}
+                  value={transport}
+                  onChange={(next) => patchDraft({ ...draft, type: next })}
+                />
+              </SettingsField>
+            )}
             {isStdio ? (
               <>
                 <SettingsField label={t("settings:mcp.server.command")} hint={t("settings:mcp.server.command_desc")}>
@@ -564,8 +605,11 @@ function McpServerEditor({
                     className="font-mono"
                   />
                 </SettingsField>
+                {/* 沙盒机制提示：本地服务器由本机进程启动，受限档下是低完整性进程——写自身
+                    数据目录失败时，用户要能在这里直接读到原因和出路，而不是去猜权限问题。 */}
+                <Notice tone={sandboxOn && !sandboxActive ? "warning" : "info"}>{sandboxMessage}</Notice>
               </>
-            ) : (
+            ) : isBuiltin ? null : (
               <SettingsField label={t("settings:mcp.server.url")} hint={t("settings:mcp.server.url_desc")}>
                 <Input
                   value={textValue(draft.url)}
@@ -574,8 +618,9 @@ function McpServerEditor({
                 />
               </SettingsField>
             )}
-            {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。 */}
-            {serverEnabled && liveHealth ? (
+            {/* 决策①③:实时健康状态行——只在"已启用"时显示;故障给人话原因 + 立即重连/重新授权。
+                内置服务器不做健康判定（tools/list 在进程内，连不上这件事不存在）。 */}
+            {!isBuiltin && serverEnabled && liveHealth ? (
               <Notice
                 tone={liveHealth.status === "ready" ? "success" : liveHealth.status === "reconnecting" ? "warning" : "danger"}
                 icon={
@@ -612,7 +657,7 @@ function McpServerEditor({
             ) : null}
           </SettingsGroup>
 
-          {!isStdio ? (
+          {!isStdio && !isBuiltin ? (
             <SettingsGroup
               title={t("settings:mcp.oauth.title")}
               description={t("settings:mcp.oauth.desc")}
@@ -744,44 +789,47 @@ function McpServerEditor({
           </SettingsGroup>
 
           {/* 请求头里通常是鉴权凭据:配置过就亮圆点,默认折叠也不会把它藏起来。
-              stdio 没有 HTTP 请求头,同一位置换成进程环境变量(密钥同样默认折叠)。 */}
-          <SettingsAdvancedSection
-            open={advancedOpen}
-            onOpenChange={setAdvancedOpen}
-            attention={isStdio ? envPairs.length > 0 : headers.length > 0}
-          >
-            <div className="space-y-5 pt-2">
-              {isStdio ? (
-                <SettingsKeyValueList
-                  label={t("settings:mcp.server.env")}
-                  description={t("settings:mcp.server.env_desc")}
-                  items={envPairs}
-                  onChange={(next) => {
-                    markDirty();
-                    setEnvPairs(next);
-                  }}
-                  keyPlaceholder={t("settings:common.header_name")}
-                  valuePlaceholder={t("settings:common.header_value")}
-                  emptyText={t("settings:common.no_headers")}
-                  removeLabel={t("settings:common.delete_header")}
-                />
-              ) : (
-                <SettingsKeyValueList
-                  label={t("settings:mcp.server.headers")}
-                  description={t("settings:mcp.server.headers_desc")}
-                  items={headers}
-                  onChange={(next) => {
-                    markDirty();
-                    setHeaders(next);
-                  }}
-                  keyPlaceholder={t("settings:common.header_name")}
-                  valuePlaceholder={t("settings:common.header_value")}
-                  emptyText={t("settings:common.no_headers")}
-                  removeLabel={t("settings:common.delete_header")}
-                />
-              )}
-            </div>
-          </SettingsAdvancedSection>
+              stdio 没有 HTTP 请求头,同一位置换成进程环境变量(密钥同样默认折叠)。
+              内置服务器既没有端点也没有子进程,请求头与环境变量都不存在,整节隐藏。 */}
+          {!isBuiltin ? (
+            <SettingsAdvancedSection
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              attention={isStdio ? envPairs.length > 0 : headers.length > 0}
+            >
+              <div className="space-y-5 pt-2">
+                {isStdio ? (
+                  <SettingsKeyValueList
+                    label={t("settings:mcp.server.env")}
+                    description={t("settings:mcp.server.env_desc")}
+                    items={envPairs}
+                    onChange={(next) => {
+                      markDirty();
+                      setEnvPairs(next);
+                    }}
+                    keyPlaceholder={t("settings:common.header_name")}
+                    valuePlaceholder={t("settings:common.header_value")}
+                    emptyText={t("settings:common.no_headers")}
+                    removeLabel={t("settings:common.delete_header")}
+                  />
+                ) : (
+                  <SettingsKeyValueList
+                    label={t("settings:mcp.server.headers")}
+                    description={t("settings:mcp.server.headers_desc")}
+                    items={headers}
+                    onChange={(next) => {
+                      markDirty();
+                      setHeaders(next);
+                    }}
+                    keyPlaceholder={t("settings:common.header_name")}
+                    valuePlaceholder={t("settings:common.header_value")}
+                    emptyText={t("settings:common.no_headers")}
+                    removeLabel={t("settings:common.delete_header")}
+                  />
+                )}
+              </div>
+            </SettingsAdvancedSection>
+          ) : null}
 
           <SettingsDetailFooter
             status={<AutosaveStatusRow status={autosave.status} onRetry={() => void autosave.saveNow()} />}
@@ -795,12 +843,16 @@ function McpServerEditor({
             <DialogTitle>{t("settings:mcp.import.title")}</DialogTitle>
             <DialogDescription>{t("settings:mcp.import.desc")}</DialogDescription>
           </DialogHeader>
+          {/* 导入的多是本地 stdio 配置：沙盒约束同样适用，开启/已生效时在导入前就说明。 */}
+          {sandboxOn || sandboxActive ? (
+            <Notice tone={sandboxOn && !sandboxActive ? "warning" : "info"}>{sandboxMessage}</Notice>
+          ) : null}
           <Textarea
             autoFocus
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
             placeholder={t("settings:mcp.import.placeholder")}
-            className="min-h-56 font-mono text-xs"
+            className="field-sizing-fixed h-56 max-h-[45vh] overflow-y-auto font-mono text-xs"
             spellCheck={false}
             aria-label={t("settings:mcp.import.title")}
           />

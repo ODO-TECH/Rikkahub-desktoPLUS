@@ -169,7 +169,8 @@ cd pc-server && bun run version:bump 2.0.1
 ```
 
 一次同步 `pc-server/updates/index.ts` 的 `APP_VERSION`、`web-ui/src-tauri/tauri.conf.json`、
-`web-ui/src-tauri/Cargo.toml` 三处。手改单处会被 CI 的 `check-version-sync.ts` 拦成红灯。
+`web-ui/src-tauri/Cargo.toml`、`web-ui/app/lib/app-version.ts` 四处。手改单处会被 CI 的
+`check-version-sync.ts` 拦成红灯。
 
 ## 7. 测试与已知噪音
 

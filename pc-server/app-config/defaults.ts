@@ -13,6 +13,7 @@ import { defaultAssistant } from "../assistants";
 import { defaultRequestStats } from "../api/logs";
 import { DEFAULT_MEMORY_VECTOR_SETTINGS } from "../memory/vector-settings";
 import { DEFAULT_MEMORY_EXPERIMENT_SETTINGS } from "../memory/experiment/config";
+import { DEFAULT_MOOD_EXPERIMENT_SETTINGS } from "../mood/config";
 import {
   DEFAULT_COMPRESS_PROMPT,
   DEFAULT_OCR_PROMPT,
@@ -281,6 +282,8 @@ export function defaultSettings(): Settings {
     memoryVectorSettings: { ...DEFAULT_MEMORY_VECTOR_SETTINGS },
     // 实验：记忆与上下文的失真/遗忘。默认全关 + dry-run，关闭时零副作用。
     memoryExperimentSettings: { ...DEFAULT_MEMORY_EXPERIMENT_SETTINGS },
+    // 实验：心情状态。默认全关 + dry-run，关闭时不判定、不调模型、不写库。
+    moodExperimentSettings: { ...DEFAULT_MOOD_EXPERIMENT_SETTINGS },
   };
 }
 

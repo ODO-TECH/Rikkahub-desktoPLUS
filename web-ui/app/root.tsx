@@ -25,6 +25,7 @@ import { StartupGate } from "./components/startup-gate";
 import Logo from "./components/logo";
 import { FontFaceInjector } from "./components/font-face-injector";
 import { openExternal } from "./lib/external-link";
+import { APP_VERSION } from "./lib/app-version";
 import { createId } from "./lib/id";
 import {
   CHAT_CJK_OVERRIDE_FAMILY,
@@ -158,7 +159,7 @@ function SilentUpdateChecker() {
   React.useEffect(() => {
     let cancelled = false;
     api
-      .get<UpdateInfo>("update/check")
+      .get<UpdateInfo>(`update/check?current=${encodeURIComponent(APP_VERSION)}`)
       .then((info) => {
         if (!cancelled && info.isNewer && !info.isSkipped) setUpdate(info);
       })

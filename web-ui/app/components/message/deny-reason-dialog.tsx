@@ -50,7 +50,7 @@ export function DenyReasonDialog({ open, onOpenChange, onConfirm }: DenyReasonDi
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           placeholder={t("tool_part.deny_dialog_placeholder")}
-          className="min-h-24"
+          className="field-sizing-fixed h-24 max-h-[40vh] overflow-y-auto"
           autoFocus
         />
         <DialogFooter>

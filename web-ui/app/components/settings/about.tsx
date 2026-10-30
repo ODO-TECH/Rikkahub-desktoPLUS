@@ -20,6 +20,7 @@ import { getSystemInfo } from "~/lib/system-info";
 import { openExternal } from "~/lib/external-link";
 import { cn } from "~/lib/utils";
 import { SettingsRows, SettingsStack } from "~/components/settings/shared";
+import { APP_VERSION } from "~/lib/app-version";
 
 // 爱发电品牌图标。path 数据取自 Rikkahub-Android 的 VectorDrawable,保持品牌识别度。
 function AfdianIcon({ className }: { className?: string }) {
@@ -74,10 +75,6 @@ export function DonateSection() {
 
 export function AboutSection() {
   const { t } = useTranslation();
-  // 版本号由 pc-server/scripts/bump-version.ts 统一改写(四处之一),
-  // 勿手改;CI 的 check-version-sync.ts 校验四处一致。
-  const APP_VERSION = "0.1.2";
-
   const [checking, setChecking] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
   // 真实系统版本(走 Tauri OS 插件),异步加载。
@@ -90,7 +87,7 @@ export function AboutSection() {
   const checkForUpdate = async () => {
     setChecking(true);
     try {
-      const info = await api.get<UpdateInfo>("update/check");
+      const info = await api.get<UpdateInfo>(`update/check?current=${encodeURIComponent(APP_VERSION)}`);
       setUpdateInfo(info);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("settings:about.check_failed"));

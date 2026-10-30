@@ -27,7 +27,7 @@ describe("Windows 命令行参数引用", () => {
 describe("Low 后端环境构造", () => {
   const DATA = join("D:\\pc-data");
 
-  test("四组重定向 + LAUNCHED 标记全部就位", () => {
+  test("重定向全部就位(TEMP/HOME/工具链缓存)+ LAUNCHED 标记", () => {
     const env = buildLowSandboxEnvironment(DATA, { PATH: "C:\\bin" });
     expect(env.TEMP).toBe(join(DATA, "tmp"));
     expect(env.TMP).toBe(join(DATA, "tmp"));
@@ -39,13 +39,25 @@ describe("Low 后端环境构造", () => {
     expect(env.PATH).toBe("C:\\bin");
   });
 
+  test("npm/uv/pip 缓存改道到 home 内(否则 Low 子进程写 %LOCALAPPDATA% 被拒)", () => {
+    const env = buildLowSandboxEnvironment(DATA, {});
+    const home = join(DATA, "home");
+    expect(env.npm_config_cache).toBe(join(home, ".npm"));
+    expect(env.UV_CACHE_DIR).toBe(join(home, ".cache", "uv"));
+    expect(env.UV_TOOL_DIR).toBe(join(home, ".local", "uv-tools"));
+    expect(env.PIP_CACHE_DIR).toBe(join(home, ".cache", "pip"));
+    expect(env.XDG_CACHE_HOME).toBe(join(home, ".cache"));
+  });
+
   test("base 里的重定向目标与 LAUNCHED 被强制覆盖(防循环硬不变量)", () => {
     const env = buildLowSandboxEnvironment(DATA, {
       TEMP: "C:\\Windows\\Temp",
+      npm_config_cache: "C:\\Users\\x\\AppData\\Local\\npm-cache",
       RIKKAHUB_SANDBOX_LAUNCHED: "0",
       RIKKAHUB_SANDBOX: "off",
     });
     expect(env.TEMP).toBe(join(DATA, "tmp"));
+    expect(env.npm_config_cache).toBe(join(DATA, "home", ".npm"));
     expect(env.RIKKAHUB_SANDBOX_LAUNCHED).toBe("1");
     expect(env.RIKKAHUB_SANDBOX).toBe("restricted");
   });

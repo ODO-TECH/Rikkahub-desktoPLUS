@@ -106,7 +106,7 @@ export function GlobalAgentsCard() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
-            className="min-h-64 flex-1 resize-none font-mono text-xs leading-5"
+            className="field-sizing-fixed min-h-64 flex-1 resize-none font-mono text-xs leading-5"
           />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>

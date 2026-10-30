@@ -2,11 +2,14 @@
 // 纪律：负责 MCP Streamable HTTP 会话、tools/list 同步、tools/call 调用；
 //       不直接读写 state，日志与 mcpServers 通过参数注入。
 //       HTTP+SSE 传输已废弃（MCP 2025-03-26 起由 Streamable HTTP 取代），不再支持。
+//       三种传输在此收口：Streamable HTTP（默认）、stdio（本地子进程）、
+//       builtin（进程内内置服务器，见 mcp-builtin.ts）——下游的同步/开关/健康层无需感知差异。
 
 import { id, isRecord } from "../foundation/utils";
 import { oauthStateOf } from "./mcp-oauth";
 import { readMcpHeaders } from "./mcp-headers";
 import { isStdioMcpServer, stdioLabel, stdioRequest } from "./mcp-stdio";
+import { builtinLabel, builtinMcpRequest, isBuiltinMcpServer } from "./mcp-builtin";
 import { jsonBody, textBody } from "../model-providers";
 import type { Assistant, JsonValue, RequestLog } from "../foundation/types";
 import { getStringArray } from "../foundation/utils";
@@ -200,13 +203,19 @@ export async function mcpJsonRpc(
   const cacheKey = mcpSessionCacheKey(server);
   // R3-10:tools/call 走放宽后的超时;控制面(list 等)仍用默认。
   const timeoutMs = method === "tools/call" ? MCP_TOOL_CALL_TIMEOUT_MS : MCP_DEFAULT_TIMEOUT_MS;
-  if (isStdioMcpServer(server)) {
+  // 本地两类传输(stdio 子进程 / 进程内内置服务器)共用同一条日志信封:没有 HTTP 状态与
+  // 响应头,请求体记 JSON-RPC 原文,失败原因记异常消息。
+  const isBuiltinTransport = isBuiltinMcpServer(server);
+  if (isBuiltinTransport || isStdioMcpServer(server)) {
     const started = Date.now();
     const common = isRecord(server.commonOptions) ? server.commonOptions : {};
-    const target = stdioLabel(server);
+    const target = isBuiltinTransport ? builtinLabel(server) : stdioLabel(server);
+    const transport = isBuiltinTransport ? "BUILTIN" : "STDIO";
     const requestBody = jsonBody({ jsonrpc: "2.0", method, params: params ?? {} });
     try {
-      const result = await stdioRequest(server, method, params, timeoutMs);
+      const result = isBuiltinTransport
+        ? await builtinMcpRequest(server, method, params)
+        : await stdioRequest(server, method, params, timeoutMs);
       log?.({
         id: id(),
         at: Date.now(),
@@ -217,7 +226,7 @@ export async function mcpJsonRpc(
         status: 200,
         kind: `mcp:${method}`,
         durationMs: Date.now() - started,
-        method: "STDIO",
+        method: transport,
         requestBody,
         responseBody: textBody(JSON.stringify(result ?? null)),
         toolName: method,
@@ -235,7 +244,7 @@ export async function mcpJsonRpc(
         status: 0,
         kind: `mcp:${method}`,
         durationMs: Date.now() - started,
-        method: "STDIO",
+        method: transport,
         requestBody,
         responseBody: "",
         toolName: method,

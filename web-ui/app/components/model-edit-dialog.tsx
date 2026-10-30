@@ -819,7 +819,7 @@ function CustomBodyRow({
       </div>
       <Textarea
         placeholder={t("model_edit.body_value_placeholder")}
-        className="font-mono text-xs"
+        className="max-h-40 overflow-y-auto font-mono text-xs"
         rows={2}
         value={rawValue}
         onChange={(event) => commit(event.target.value)}

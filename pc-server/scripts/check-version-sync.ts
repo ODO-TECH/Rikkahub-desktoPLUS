@@ -1,7 +1,7 @@
 // scripts/check-version-sync.ts — 版本一致性检查（N-6）
 // 五处版本号必须一致：pc-server/updates/index.ts 的 APP_VERSION、
 // web-ui/src-tauri/tauri.conf.json、web-ui/src-tauri/Cargo.toml、
-// web-ui/app/components/settings/about.tsx（关于页展示值），
+// web-ui/app/lib/app-version.ts（界面侧版本，关于页展示 + update/check 的 current），
 // 以及 compose / Docker 文档 / README 里的镜像 tag。
 // 更新检查用 APP_VERSION 对比 GitHub release，Tauri 安装包版本取自 tauri.conf.json/Cargo.toml，
 // 镜像 tag 决定用户拉到的版本。任何一处漏改都会导致更新提示错乱、安装包标错或部署旧镜像。
@@ -19,8 +19,8 @@ const tauriVersion = (JSON.parse(readFileSync(join(root, "web-ui", "src-tauri", 
 const cargoSource = readFileSync(join(root, "web-ui", "src-tauri", "Cargo.toml"), "utf8");
 const cargoVersion = cargoSource.match(/^version = "([^"]+)"/m)?.[1];
 
-const aboutSource = readFileSync(join(root, "web-ui", "app", "components", "settings", "about.tsx"), "utf8");
-const aboutVersion = aboutSource.match(/const APP_VERSION = "([^"]+)"/)?.[1];
+const uiVersionSource = readFileSync(join(root, "web-ui", "app", "lib", "app-version.ts"), "utf8");
+const uiVersion = uiVersionSource.match(/export const APP_VERSION = "([^"]+)"/)?.[1];
 
 // Cargo.lock 的 rikkahub 包版本：Tauri/CI 都用 `cargo build --locked`，lock 与 Cargo.toml
 // 不一致时构建直接失败。校验它，比等到 Rust 阶段报错便宜得多。
@@ -32,7 +32,7 @@ const versions: Record<string, string | undefined> = {
   "web-ui/src-tauri/tauri.conf.json": tauriVersion,
   "web-ui/src-tauri/Cargo.toml": cargoVersion,
   "web-ui/src-tauri/Cargo.lock (package rikkahub)": cargoLockVersion,
-  "web-ui/app/components/settings/about.tsx": aboutVersion,
+  "web-ui/app/lib/app-version.ts": uiVersion,
 };
 
 // 镜像 tag：compose 是运行配置，Docker 文档与 README 是给用户的复制示例。

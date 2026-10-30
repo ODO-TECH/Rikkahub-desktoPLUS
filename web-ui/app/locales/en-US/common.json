@@ -353,6 +353,7 @@
     "unknown": "unknown",
     "notes": "Release notes",
     "containerized_prefix": "Containerized deployment detected; in-app updates are unavailable. Run",
+    "backend_stale": "The UI is already {{ui}}, but the running backend is still on {{backend}}. Restart the app to bring them in sync.",
     "containerized_suffix": "to pull the latest image, then recreate the container.",
     "updating_percent": "Updating · {{percent}}%",
     "updating": "Updating…",

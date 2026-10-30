@@ -898,7 +898,7 @@ export function ConversationFilesPanel({ conversationId, workspaceId, open }: Co
               value={agentsDraft}
               onChange={(event) => setAgentsDraft(event.target.value)}
               spellCheck={false}
-              className="min-h-64 flex-1 resize-none font-mono text-xs leading-5"
+              className="field-sizing-fixed min-h-64 flex-1 resize-none font-mono text-xs leading-5"
             />
           )}
           <DialogFooter>

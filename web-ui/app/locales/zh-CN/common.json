@@ -353,6 +353,7 @@
     "unknown": "未知",
     "notes": "更新说明",
     "containerized_prefix": "检测到容器化部署，无法在应用内自动更新。请运行",
+    "backend_stale": "界面已是 {{ui}}，但当前后端进程仍在运行 {{backend}} 的旧代码。重启应用后两者会恢复一致。",
     "containerized_suffix": "拉取最新镜像后重建容器。",
     "updating_percent": "正在更新 · {{percent}}%",
     "updating": "正在更新…",

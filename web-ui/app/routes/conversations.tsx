@@ -2852,7 +2852,7 @@ const ConversationPaneView = React.memo(function ConversationPaneView({
             <Textarea
               value={systemPromptDraft}
               onChange={(event) => setSystemPromptDraft(event.target.value)}
-              className="min-h-72 font-mono text-xs leading-relaxed"
+              className="field-sizing-fixed h-72 max-h-[55vh] overflow-y-auto font-mono text-xs leading-relaxed"
               placeholder={t("conversations.custom_prompt.dialog_placeholder")}
             />
             <DialogFooter>

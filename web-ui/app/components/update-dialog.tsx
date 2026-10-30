@@ -17,6 +17,8 @@ import { cn } from "~/lib/utils";
 export type UpdateInfo = {
   current: string;
   latest: string;
+  /** 后端进程实际的 APP_VERSION。与 current 不同意味着后端仍是旧代码（前端静态已换新）。 */
+  backendVersion?: string;
   isNewer: boolean;
   isSkipped?: boolean;
   title: string;
@@ -184,6 +186,11 @@ export function UpdateDialog({ info, open, onClose }: UpdateDialogProps) {
               : t("update.desc_latest", { current: info.current, latest: info.latest || t("update.unknown") })}
           </DialogDescription>
         </DialogHeader>
+        {info.backendVersion && info.backendVersion !== info.current ? (
+          <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-warning">
+            {t("update.backend_stale", { ui: info.current, backend: info.backendVersion })}
+          </div>
+        ) : null}
         {info.notes ? (
           <div className="rounded-md border bg-muted/30 p-3">
             <div className="mb-1 text-xs font-medium text-muted-foreground">{t("update.notes")}</div>

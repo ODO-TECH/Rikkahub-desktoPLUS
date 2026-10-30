@@ -12,6 +12,7 @@ import { handleImRoutes } from "./handlers/im";
 import { handleMediaRoutes } from "./handlers/media";
 import { handleMediaGenerationRoutes } from "./handlers/media-generation";
 import { handleMemoryRoutes } from "./handlers/memory";
+import { handleMoodRoutes } from "./handlers/mood";
 import { handleSettingsRoutes } from "./handlers/settings";
 import { handleSkillRoutes } from "./handlers/skills";
 import { handleSshRoutes } from "./handlers/ssh";
@@ -25,6 +26,7 @@ const handlers = [
   handleSshRoutes,
   handleImRoutes,
   handleMemoryRoutes,
+  handleMoodRoutes,
   handleCommandRoutes,
   handleConversationRoutes,
   handleWorkspaceRoutes,

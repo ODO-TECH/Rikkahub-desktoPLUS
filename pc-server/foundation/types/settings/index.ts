@@ -5,6 +5,7 @@ import type { MemoryConfig } from "./memory-config";
 import type { MemoryExperimentConfig } from "./memory-experiment-config";
 import type { MemoryVectorConfig } from "./memory-vector-config";
 import type { ModelConfig } from "./model-config";
+import type { MoodExperimentConfig } from "./mood-experiment-config";
 import type { ModelLayerConfig } from "./model-layer";
 import type { PromptConfig } from "./prompt-config";
 import type { NetworkConfig } from "./proxy-config";
@@ -29,6 +30,7 @@ export interface Settings
     MemoryConfig,
     MemoryVectorConfig,
     MemoryExperimentConfig,
+    MoodExperimentConfig,
     SshConfig,
     ImAccessSlice,
     MediaGenerationConfig {
@@ -43,6 +45,7 @@ export type * from "./memory-config";
 export type * from "./memory-experiment-config";
 export type * from "./memory-vector-config";
 export type * from "./model-config";
+export type * from "./mood-experiment-config";
 export type * from "./model-layer";
 export type * from "./prompt-config";
 export type * from "./proxy-config";

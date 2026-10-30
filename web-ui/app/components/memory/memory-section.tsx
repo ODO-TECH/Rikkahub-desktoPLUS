@@ -445,7 +445,7 @@ export function MemorySection({
           <Textarea
             value={batchText}
             onChange={(e) => setBatchText(e.target.value)}
-            className="min-h-96 font-mono text-xs"
+            className="field-sizing-fixed h-96 max-h-[55vh] overflow-y-auto font-mono text-xs"
           />
           {batchError && <div className="text-sm text-destructive">{batchError}</div>}
           <DialogFooter>

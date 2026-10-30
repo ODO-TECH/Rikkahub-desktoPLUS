@@ -300,12 +300,14 @@ function createRuntime(server: Record<string, JsonValue>): StdioRuntime {
     if (runtimes.get(serverId) === runtime) runtimes.delete(serverId);
   });
   // 初始化握手：MCP 规范要求 initialize 后紧跟 notifications/initialized。
+  // 超时放宽到 60s：npx -y / uvx 冷启动要先下载安装整个包（受限沙盒下缓存还是全新的），
+  // midi-file-mcp 这类带大依赖的包 30s 装不完，会被误判成"进程已退出/无响应"。
   runtime.ready = (async () => {
     await sendRequest(runtime, "initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: "RikkaHub PC", version: "pc-dev" },
-    }, 30_000);
+    }, 60_000);
     sendNotification(runtime, "notifications/initialized");
   })().catch((err) => {
     closeRuntime(runtime);

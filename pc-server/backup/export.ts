@@ -29,6 +29,7 @@ import { adaptWorkspaceToolPartForAndroid } from "./workspace-android-export";
 import androidSchemaV24 from "./android-schema-v24.json";
 import { exportSkills } from "../tools";
 import { normalizeMcpHeaders } from "../tools/mcp-headers";
+import { BUILTIN_MCP_TRANSPORT } from "../tools/mcp-builtin";
 
 export function copyDirRecursive(src: string, dest: string): number {
   let count = 0;
@@ -178,6 +179,10 @@ export const PC_ONLY_DISPLAY_SETTING_FIELDS: ReadonlySet<string> = new Set([
   "pcPasteLongTextAsFile", "pcPasteLongTextThreshold",
 ]);
 
+/** PC 独有的 MCP 传输:stdio 要子进程、builtin 跑在 pc-server 进程里,安卓两者都不存在。
+ *  导出到安卓时整条剔除(见 rewriteAvatarsInSettings),同时清掉助手侧的引用。 */
+const PC_ONLY_MCP_TRANSPORTS: ReadonlySet<string> = new Set(["stdio", BUILTIN_MCP_TRANSPORT]);
+
 /** 方向感知的 settings 转换。
  *  - "to-android"(默认,PC→APP 导出):映射 avatar + strip PC-only 字段 + role/reasoningLevel
  *    转小写 + 空 UUID 填随机。strip 是 Android kotlinx.serialization 的硬要求——PC-only 字段
@@ -190,12 +195,12 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
   if (!isRecord(settings)) return settings;
   const stripPcOnly = direction === "to-android";
   const copy: any = { ...settings };
-  // 本地 stdio MCP 是 PC 专有能力：安卓没有子进程传输，type:"stdio" 会让 APP 的
-  // settings 解码失败。导出到安卓时整条剔除，并清掉助手侧对它们的引用。
-  const stdioServerIds = new Set<string>(
+  // 本地 stdio 与进程内内置服务器都是 PC 专有能力：安卓既没有子进程传输也没有内置工具，
+  // 这两种 type 会让 APP 的 settings 解码失败。导出到安卓时整条剔除，并清掉助手侧对它们的引用。
+  const pcOnlyServerIds = new Set<string>(
     stripPcOnly && Array.isArray(copy.mcpServers)
       ? copy.mcpServers
-          .filter((server: any) => isRecord(server) && String(server.type ?? "") === "stdio")
+          .filter((server: any) => isRecord(server) && PC_ONLY_MCP_TRANSPORTS.has(String(server.type ?? "")))
           .map((server: any) => String(server.id ?? ""))
           .filter(Boolean)
       : [],
@@ -216,8 +221,8 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
         // 安卓对齐批6:allowConversationSystemPrompt 已是安卓正式字段(Assistant.kt),
         // 不再 strip——此前误删导致 PC→APP 后所有助手的会话级系统提示词开关归 false。
         delete fixed.mcpToolOverrides;
-        if (stdioServerIds.size > 0 && Array.isArray(fixed.mcpServers)) {
-          fixed.mcpServers = fixed.mcpServers.filter((serverId: any) => !stdioServerIds.has(String(serverId)));
+        if (pcOnlyServerIds.size > 0 && Array.isArray(fixed.mcpServers)) {
+          fixed.mcpServers = fixed.mcpServers.filter((serverId: any) => !pcOnlyServerIds.has(String(serverId)));
         }
       }
       return fixed;
@@ -227,7 +232,7 @@ export function rewriteAvatarsInSettings(settings: any, mapping: Record<string, 
   // 旧版设置页落成的 [["k","v"]] 元组会让 APP 的 settings 解码整体失败,导出时一律归一。
   if (stripPcOnly && Array.isArray(copy.mcpServers)) {
     copy.mcpServers = copy.mcpServers
-      .filter((server: any) => !(isRecord(server) && String(server.type ?? "") === "stdio"))
+      .filter((server: any) => !(isRecord(server) && PC_ONLY_MCP_TRANSPORTS.has(String(server.type ?? ""))))
       .map((server: any) =>
         isRecord(server) && isRecord(server.commonOptions)
           ? { ...server, commonOptions: { ...server.commonOptions, headers: normalizeMcpHeaders(server.commonOptions.headers) } }

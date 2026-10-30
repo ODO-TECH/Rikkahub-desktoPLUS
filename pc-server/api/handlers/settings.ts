@@ -28,7 +28,8 @@ import { backfillModelDisplayNames } from "../../model-providers/display-names";
 import { syncMcpServerTools } from "../../tools/mcp";
 import { normalizeMcpHeaders } from "../../tools/mcp-headers";
 import { parseMcpImportJson } from "../../tools/mcp-import";
-import { closeStdioClient, stdioConfigFingerprint } from "../../tools/mcp-stdio";
+import { closeStdioClient, isStdioMcpServer, stdioConfigFingerprint } from "../../tools/mcp-stdio";
+import { BUILTIN_MCP_TRANSPORT, builtinServerName, isBuiltinMcpServer, isBuiltinMcpServerId } from "../../tools/mcp-builtin";
 import { clearMcpOAuth, completeMcpOAuth, ensureFreshMcpToken, startMcpOAuth } from "../../tools/mcp-oauth";
 import { retryMcpServerNow } from "../../tools/mcp-health";
 import { listSkills } from "../../tools/skills";
@@ -502,16 +503,22 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
         if (liveCommon && "oauth" in liveCommon) return liveCommon.oauth ?? null;
         return isRecord(common.oauth) ? (common.oauth as JsonValue) : null;
       };
-      const transport = String(body.type ?? "") === "stdio" ? "stdio" : "streamable_http";
+      const transport = isBuiltinMcpServerId(serverId)
+        ? BUILTIN_MCP_TRANSPORT
+        : String(body.type ?? "") === "stdio" ? "stdio" : "streamable_http";
+      // 内置服务器的传输形态只由 id 决定：注册表里的 id 永远是进程内传输，外部 POST
+      // 既不能把它改成 HTTP，也不能用随机 id 伪装成内置（builtinMcpRequest 按 id 查表，
+      // 查不到就报错）。
+      const isBuiltin = transport === BUILTIN_MCP_TRANSPORT;
       const isStdio = transport === "stdio";
       // 切换传输方式时旧进程必须立刻退出：stdio 配置变化由运行时指纹兜底，
       // 但切回 HTTP 后不会再有请求来触发那次比对。
       if (!isStdio) closeStdioClient(serverId);
       let server: Record<string, JsonValue> = {
-        // HTTP+SSE 传输已移除；本地进程用 stdio，其余一律 Streamable HTTP。
+        // HTTP+SSE 传输已移除；本地进程用 stdio，内置用 builtin，其余一律 Streamable HTTP。
         type: transport,
         id: serverId,
-        url: isStdio ? "" : String(body.url ?? "").trim(),
+        url: isStdio || isBuiltin ? "" : String(body.url ?? "").trim(),
         ...(isStdio
           ? {
               command: String(body.command ?? "").trim(),
@@ -523,14 +530,15 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
           : {}),
         commonOptions: {
           enable: willEnable,
-          name: String(common.name ?? body.name ?? "MCP Server"),
+          // 内置服务器的名字是注册表里的常量，改名会被下一次装载冲掉，索性不许改。
+          name: isBuiltin ? builtinServerName(serverId) : String(common.name ?? body.name ?? "MCP Server"),
           // 落盘统一成安卓 Pair 形状({first,second}),历史元组/键值写法在此收敛。
-          headers: isStdio ? [] : (normalizeMcpHeaders(common.headers) as unknown as JsonValue[]),
+          headers: isStdio || isBuiltin ? [] : (normalizeMcpHeaders(common.headers) as unknown as JsonValue[]),
           tools: Array.isArray(common.tools) ? common.tools : [],
           lastSyncAt: typeof common.lastSyncAt === "number" ? common.lastSyncAt : null,
           lastSyncError: String(common.lastSyncError ?? ""),
           connected: common.connected === true,
-          oauth: isStdio ? null : liveOauth(),
+          oauth: isStdio || isBuiltin ? null : liveOauth(),
         },
       };
       // R3-3:ssePostEndpoint 是旧 SSE 传输的运行时会话缓存，已随 SSE 支持一并移除。
@@ -541,11 +549,11 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
       if (isStdio && prevServer && (!willEnable || stdioConfigFingerprint(prevServer) !== stdioConfigFingerprint(server))) {
         closeStdioClient(serverId);
       }
-      const canSync = isStdio ? Boolean(String(server.command ?? "").trim()) : Boolean(String(server.url ?? "").trim());
+      const canSync = isBuiltin ? true : isStdio ? Boolean(String(server.command ?? "").trim()) : Boolean(String(server.url ?? "").trim());
       if (isRecord(server.commonOptions) && server.commonOptions.enable !== false && canSync) {
         // 专题9 MCP OAuth:同步前补新临期令牌(对齐安卓 ensureFreshToken),刷新后重取现值。
-        // 本地 stdio 没有 OAuth。
-        if (prevServer && !isStdio) {
+        // 本地 stdio 与内置服务器都没有 OAuth。
+        if (prevServer && !isStdio && !isBuiltin) {
           await ensureFreshMcpToken(prevServer);
           server.commonOptions = { ...server.commonOptions, oauth: liveOauth() };
         }
@@ -592,9 +600,9 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
         // Transition 3 needs no action — the tools array is already preserved verbatim.
       }
       // 落盘前再取一次最新 oauth:同步的长 await 期间可能发生过回调授权/令牌刷新。
-      // 本地 stdio 没有 OAuth,恒为 null(否则切回 HTTP 会带上一份无主令牌)。
+      // 本地 stdio 与内置服务器没有 OAuth,恒为 null(否则切回 HTTP 会带上一份无主令牌)。
       if (isRecord(server.commonOptions)) {
-        server.commonOptions = { ...server.commonOptions, oauth: isStdio ? null : liveOauth() };
+        server.commonOptions = { ...server.commonOptions, oauth: isStdio || isBuiltin ? null : liveOauth() };
       }
       const result = upsertById(state.settings.mcpServers as JsonValue[], server);
       updateSettings({ ...state.settings, mcpServers: result.items });
@@ -604,6 +612,9 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
   const mcpDelete = path.match(/^settings\/mcp-server\/([^/]+)$/);
   if (mcpDelete && request.method === "DELETE") {
     const idValue = decodeURIComponent(mcpDelete[1]);
+    // 内置服务器删不掉：normalizeState 每次装载都会把它播回，允许删除只会让界面
+    // 出现"删了又回来"的假象。要停用请用总开关。
+    if (isBuiltinMcpServerId(idValue)) return error("内置 MCP 服务器不能删除，可以在设置里关闭", 400);
     // 删配置即杀进程:本地 stdio 子进程不该在配置消失后继续常驻。
     closeStdioClient(idValue);
     return withMcpServerWriteLock(idValue, async () => {
@@ -654,11 +665,11 @@ export async function handleSettingsRoutes(request: Request, url: URL, path: str
   // ::1(issue #62),localhost 回调一样落回本进程。非回环部署(网页形态)不归一,origin 原样。
   if (path === "settings/mcp-server/oauth/start" && request.method === "POST") {
     const body = await readJson<{ serverId: string }>(request);
-    // 本地 stdio 服务器没有 HTTP 端点,不存在 OAuth 授权流程。
+    // 本地 stdio 与内置服务器都没有 HTTP 端点，不存在 OAuth 授权流程。
     const oauthTarget = (state.settings.mcpServers as Array<Record<string, JsonValue>>)
       .find((item) => String(item.id) === String(body.serverId ?? ""));
-    if (oauthTarget && String(oauthTarget.type ?? "") === "stdio") {
-      return error("本地 stdio MCP 服务器不支持 OAuth 授权", 400);
+    if (oauthTarget && (isStdioMcpServer(oauthTarget) || isBuiltinMcpServer(oauthTarget))) {
+      return error("该 MCP 服务器没有 HTTP 端点，不支持 OAuth 授权", 400);
     }
     const origin = new URL(url.origin);
     if (origin.hostname === "127.0.0.1" || origin.hostname === "[::1]") origin.hostname = "localhost";

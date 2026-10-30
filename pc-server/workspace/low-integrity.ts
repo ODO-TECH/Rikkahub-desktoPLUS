@@ -87,6 +87,10 @@ export function quoteWindowsArgument(arg: string): string {
  *  HOME/USERPROFILE 指到 dataDir/home——Low 进程写不了真实的用户家目录(Medium),
  *  bash 的 ~/、PowerShell 的 $env:USERPROFILE、各类工具缓存必须落在区内,
  *  与容器部署的 HOME=/app/pc-data/home 约定一致。
+ *  npm/uv/pip 的缓存**不**跟随 HOME(Windows 下各自默认 %LOCALAPPDATA%),必须显式改道:
+ *  受限后端里的本地 MCP(npx -y xxx / uvx xxx)一启动就往 Medium 缓存目录写,_cacache
+ *  写入被内核拒绝,npm 直接 EPERM 退出("本地 MCP 进程已退出(code 1)">
+ *  "EPERM ... npm-cache\_cacache\tmp")。同理 uv 报 "Failed to initialize cache"。
  *  LAUNCHED 标记最后强制写入且不可被 base 里的同名值覆盖——它是防自重启循环的硬不变量。
  *  Windows 环境变量不区分大小写:base 里可能同时存在 Path/PATH,按大写键去重、后者胜。 */
 export function buildLowSandboxEnvironment(
@@ -98,10 +102,17 @@ export function buildLowSandboxEnvironment(
   for (const [key, value] of Object.entries(base)) {
     if (typeof value === "string") put(key, value);
   }
+  const home = join(dataDir, "home");
+  const cacheHome = join(home, ".cache");
   put("TEMP", join(dataDir, "tmp"));
   put("TMP", join(dataDir, "tmp"));
-  put("HOME", join(dataDir, "home"));
-  put("USERPROFILE", join(dataDir, "home"));
+  put("HOME", home);
+  put("USERPROFILE", home);
+  put("npm_config_cache", join(home, ".npm"));
+  put("UV_CACHE_DIR", join(cacheHome, "uv"));
+  put("UV_TOOL_DIR", join(home, ".local", "uv-tools"));
+  put("PIP_CACHE_DIR", join(cacheHome, "pip"));
+  put("XDG_CACHE_HOME", cacheHome);
   put("RIKKAHUB_PC_DATA_DIR", dataDir);
   put("RIKKAHUB_SANDBOX", "restricted");
   put("RIKKAHUB_SANDBOX_LAUNCHED", "1");

@@ -13,8 +13,10 @@ import { classifyContextOverflowError, classifyOAuthCredentialError, classifyOut
 import { state } from "../persistence/json-store";
 import { prepareMemoryRecall } from "../memory/recall";
 import { prepareDynamicRecall, readDynamicRecallBlock } from "../memory/dynamic-recall";
+import { prepareMoodInjection, readMoodInjectionBlock } from "../mood/injection";
 import { scheduleMemoryOrganize } from "../memory/organize";
 import { scheduleMentionScoring } from "../memory/experiment/mentions";
+import { scheduleMoodJudgeForTurn } from "../mood/judge";
 import { addLog } from "../api/logs";
 import { broadcastConversation, broadcastEngineStatus, broadcastList, broadcastNodeUpdate, touchStream } from "../api/sse";
 import { applyCustomBody, applyRequestHeaders, findModel } from "../model-providers";
@@ -165,6 +167,8 @@ export async function callProvider(
   // S9：易变召回块只服务真实会话生成；辅助调用（标题/翻译等无 hooks）保持原样。
   const useDynamicRecall = hooks?.message != null;
   if (useDynamicRecall) await prepareDynamicRecall(conversation, assistant);
+  // M2：心情块与易变召回同槽，同样只服务真实生成；辅助调用不准备、不注入。
+  if (useDynamicRecall) await prepareMoodInjection(conversation, assistant);
   const picked = snapshot
     ? { provider: snapshot.provider, model: snapshot.model }
     : findModel(assistant.chatModelId ?? state.settings.chatModelId);
@@ -185,6 +189,7 @@ export async function callProvider(
     conversation,
     assistant,
     includeHistoryReasoning,
+    useDynamicRecall,
     useDynamicRecall,
   );
   // 动态头取值依据(仅 Copilot 的 X-Initiator/Copilot-Vision-Request 消费)。
@@ -297,7 +302,7 @@ export async function callProvider(
       stream: false,
       store: false,
       ...(systemContent ? { instructions: systemContent } : {}),
-      input: conversationResponseApiInput(conversation, assistant, true),
+      input: conversationResponseApiInput(conversation, assistant, useDynamicRecall, useDynamicRecall),
       ...(isModelAllowTemperature(picked.model) ? { temperature: assistant.temperature ?? undefined } : {}),
       ...(isModelAllowTemperature(picked.model) ? { top_p: assistant.topP ?? undefined } : {}),
       ...(assistant.maxTokens != null ? { max_output_tokens: assistant.maxTokens } : {}),
@@ -343,6 +348,8 @@ export async function callProviderStreaming(
   await prepareMemoryRecall(conversation, assistant);
   // S9：本函数只服务真实会话生成，易变召回块恒参与编码（同消息第二次是缓存命中）。
   await prepareDynamicRecall(conversation, assistant);
+  // M2：心情块与易变召回同一门控（只服务真实生成）与同一插槽。
+  await prepareMoodInjection(conversation, assistant);
   const picked = ctx.snapshot
     ? { provider: ctx.snapshot.provider, model: ctx.snapshot.model }
     : findModel(assistant.chatModelId ?? state.settings.chatModelId);
@@ -368,6 +375,7 @@ export async function callProviderStreaming(
     // 对齐 e63d017：OpenAI 类型 provider 才尊重 includeHistoryReasoning 选项；
     // 默认 true，仅当用户显式关闭时才不回传历史 reasoning_content。
     providerItem.type === "openai" ? providerItem.includeHistoryReasoning !== false : true,
+    true,
     true,
   );
   const tools = supportsAbility(picked.model, "TOOL") ? conversationFunctionTools(assistant, picked.model) : [];
@@ -419,7 +427,7 @@ export async function callProviderStreaming(
       stream: true,
       store: false,
       ...(systemContent ? { instructions: systemContent } : {}),
-      input: conversationResponseApiInput(conversation, assistant, true),
+      input: conversationResponseApiInput(conversation, assistant, true, true),
       ...(isModelAllowTemperature(picked.model) ? { temperature: assistant.temperature ?? undefined } : {}),
       ...(isModelAllowTemperature(picked.model) ? { top_p: assistant.topP ?? undefined } : {}),
       ...(assistant.maxTokens != null ? { max_output_tokens: assistant.maxTokens } : {}),
@@ -916,12 +924,15 @@ async function runPiWorkspaceGeneration(
   // 最新用户消息；历史由 enriched.messages 承载，贴到历史里就成了过期语境。
   // 必须在 createPiSessionResources 之后：它内部先冻结开场召回，易变块才能排除已注入条目。
   await prepareDynamicRecall(conversation, deps.assistant, signal);
+  // M2：心情块与易变召回同槽同门控，排在召回块之后（更靠近「这会儿」的语境）。
+  await prepareMoodInjection(conversation, deps.assistant);
   const dynamicBlock = promptMessage
     ? readDynamicRecallBlock(conversation.id, deps.assistant, promptMessage.id)
     : "";
-  const promptText = dynamicBlock
-    ? `${promptInput.text ? `${promptInput.text}\n\n` : ""}${dynamicBlock}`
-    : promptInput.text;
+  const moodBlock = promptMessage
+    ? readMoodInjectionBlock(conversation.id, deps.assistant, promptMessage.id)
+    : "";
+  const promptText = [promptInput.text, dynamicBlock, moodBlock].filter(Boolean).join("\n\n");
 
   const modelLimits = piModelLimitsFor(deps.providerItem, deps.selectedModel, deps.assistant);
   const result = await runPiGeneration({
@@ -1393,6 +1404,12 @@ export async function generateAnswer(conversation: Conversation, regenerateAtNod
     scheduleMentionScoring(conversation.id);
     const snapshot = cloneConversation(conversation);
     void runPostGenerationTasks(conversation.id, snapshot, session.message.id, generationEpoch);
+    // 实验：心情判定。异步入队，与回复交付解耦；总开关关闭时函数直接早退。
+    scheduleMoodJudgeForTurn({
+      conversation: snapshot,
+      assistant,
+      assistantMessageId: session.message.id,
+    });
     // 语音模式回复通道:本条若源自「等回复的排队生成」,把该轮 assistant 文本交付等待方。
     // 空正文交付 null(语音模式据此跳过播报)。已交付集合防「同消息被接管重跑」重复交付。
     const replySourceId = queuedGenerationSource.get(conversation.id);

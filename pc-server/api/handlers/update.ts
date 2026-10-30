@@ -27,7 +27,7 @@ import { error, json, readJson, sseHeaders } from "../request";
 const CERT_INTERCEPT_HINT =
   "本机有程序替换了 GitHub 的 HTTPS 证书，无法校验连接安全。常见于 Steam++ / Watt Toolkit 等加速工具，请在它的加速列表中关闭 GitHub 后重试。";
 
-export async function handleUpdateRoutes(request: Request, _url: URL, path: string): Promise<Response | null> {
+export async function handleUpdateRoutes(request: Request, url: URL, path: string): Promise<Response | null> {
   // -- Update check / download ---------------------------------------------------
   // Queries GitHub Releases for the latest published release of the PC repo, compares its
   // tag (e.g. "v1.0.1") to APP_VERSION, and returns the diff so the About page can decide
@@ -46,12 +46,24 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
     const pickAsset = (assets: NonNullable<GithubRelease["assets"]>) =>
       pickUpdateAsset(assets, RUNTIME_PLATFORM, RUNNING_IN_CONTAINER);
 
+    // 界面侧版本(web-ui/app/lib/app-version.ts，经 ?current= 带上来)。前端静态文件每次
+    // 请求按磁盘重读、后端进程只在重启时换代码——桌面壳 attach 到的旧后端会让
+    // APP_VERSION 落后于用户实际装好的工件，单按后端版本比较就会把 0.1.2 的用户
+    // 反复提示"更新到 0.1.2"。取两者较高者作为「当前版本」。
+    const clientVersion = (() => {
+      const raw = (url.searchParams.get("current") ?? "").trim().replace(/^v/i, "");
+      return /^\d+(\.\d+){1,3}(-[0-9A-Za-z.-]+)?$/.test(raw) ? raw : "";
+    })();
+    const effectiveCurrent =
+      clientVersion && compareSemver(clientVersion, APP_VERSION) > 0 ? clientVersion : APP_VERSION;
+
     // Helper: build the JSON response for a given release tag + metadata, apply skip logic.
     const buildResponse = (fields: Record<string, unknown>) => {
       const latest = String(fields.latest ?? "");
-      const isNewer = compareSemver(latest, APP_VERSION) > 0;
+      const isNewer = compareSemver(latest, effectiveCurrent) > 0;
       const skipped = readSkippedVersion();
-      fields.current = APP_VERSION;
+      fields.current = effectiveCurrent;
+      fields.backendVersion = APP_VERSION;
       fields.isNewer = isNewer;
       fields.isSkipped = isNewer && latest === skipped;
       fields.platform = RUNTIME_PLATFORM;
@@ -74,7 +86,7 @@ export async function handleUpdateRoutes(request: Request, _url: URL, path: stri
     // 403s — even when the user's IP has exhausted the 60 req/hr unauthenticated quota.
     try {
       const redirect = await fetchLatestReleaseFromHtmlRedirect(repo);
-      const isNewer = compareSemver(redirect.tag, APP_VERSION) > 0;
+      const isNewer = compareSemver(redirect.tag, effectiveCurrent) > 0;
 
       // If no update available, return immediately — zero API calls.
       if (!isNewer) {
