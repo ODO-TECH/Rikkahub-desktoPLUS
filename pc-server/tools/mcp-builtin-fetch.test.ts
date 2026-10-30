@@ -15,9 +15,14 @@ interface Call {
 let calls: Call[] = [];
 type Responder = (url: string, call: Call) => Response;
 
+// 真正的 fetch 只在这一处捕获：单个 test 里连续 stub 两次（如 JSON 那条）时，
+// 若每次都以「当前 globalThis.fetch」为 original，第二次会把第一次的桩当成原始实现，
+// afterEach 还原一次后桩就永久留在 globalThis 上——bun 全量跑在同一个进程里，
+// 后面的 mcp-oauth-redirect-drift.test.ts 会拿到这坨桩，所有发现请求返回 "{not json"。
+const REAL_FETCH = globalThis.fetch;
+
 function stubFetch(respond: Responder) {
   calls = [];
-  const original = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = String(typeof input === "string" || input instanceof URL ? input : input.url);
     const headers: Record<string, string> = {};
@@ -34,7 +39,7 @@ function stubFetch(respond: Responder) {
     return respond(url, call);
   }) as typeof fetch;
   return () => {
-    globalThis.fetch = original;
+    globalThis.fetch = REAL_FETCH;
   };
 }
 
