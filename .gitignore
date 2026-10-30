@@ -49,6 +49,7 @@ node_modules/
 
 # 本地私有资料：AI 记忆/代理指导文档、过程稿、参考仓库、临时校验目录。
 # 均无构建依赖，删掉跟踪不影响编译。
+/.scratch/
 .claude/
 CLAUDE.md
 AGENTS.md

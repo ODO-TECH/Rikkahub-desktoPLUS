@@ -25,7 +25,7 @@ docker compose logs -f
 访问密码在 compose 里是**必填项**：没有设置时 `docker compose up` 会直接报错退出，而不是起一个不鉴权的服务。只构建镜像、不用 compose 时，密码同样必须显式给出：
 
 ```bash
-docker build -t rikkahub-desktop-plus:0.1.2 .
+docker build -t rikkahub-desktop-plus:0.1.3 .
 docker run -d --name rikkahub-plus \
   --restart unless-stopped \
   --read-only \
@@ -35,7 +35,7 @@ docker run -d --name rikkahub-plus \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.1.2
+  rikkahub-desktop-plus:0.1.3
 ```
 
 `docker run` 不会继承 compose 里的加固项。上面几个参数至少要补齐 `--read-only`、`--tmpfs /tmp`、`--cap-drop ALL`、`--security-opt no-new-privileges`；少了 `--read-only` 根 fs 就是可写的，沙盒会如实报 `not_enforced`。镜像已经固定 `USER 1000:1000`，不需要再传 `--user`。
