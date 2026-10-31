@@ -67,11 +67,8 @@ export function SettingsDialog() {
     >
       <DialogContent
         showCloseButton={false}
-        overlayClassName="backdrop-blur-sm"
-        // 顶带毛玻璃方案:遮罩改为覆盖整屏,让真实顶带(品牌行 + [-口×])随内容一起
-        // backdrop-blur;清晰可点的顶带由替身层复刻(见 titlebar-overlay.tsx 头注)。
-        // 替身与真实顶带逐字同源(共享 SidebarBrandRow / WindowControlsBar),模态开合
-        // 无缝衔接——打开时顶带不变色、不位移,只是从「原生 chrome」换成「替身」。
+        // 遮罩覆盖整屏并压暗主界面,但不做全屏实时模糊,避免指针移动时反复重采样。
+        // 清晰可点的顶带由替身层复刻(见 titlebar-overlay.tsx 头注),模态开合不位移。
         overlayProps={{
           "data-settings-overlay": true,
         } as React.HTMLAttributes<HTMLDivElement>}
