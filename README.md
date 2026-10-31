@@ -6,7 +6,7 @@
   <p>Windows、Linux 与 Docker 自托管的 LLM 桌面客户端 · 多供应商 · 本地数据优先</p>
 
   <p>
-    <a href="LICENSE"><img alt="Version" src="https://img.shields.io/badge/version-0.1.3-2f81f7"></a>
+    <a href="LICENSE"><img alt="Version" src="https://img.shields.io/badge/version-0.1.4-2f81f7"></a>
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0%20%7C%20Commercial-2f81f7"></a>
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Docker-3fb950">
     <img alt="Runtime" src="https://img.shields.io/badge/runtime-Bun%201.4.2-f472b6">
@@ -24,7 +24,7 @@
 - **工作区与工具链。** 会话可以绑定真实文件夹或 SSH 远程目录，模型获得读写文件、shell、grep 等工具；新增 Skills、stdio MCP、并行子智能体和内置终端。
 - **部署。** 容器运行时使用 Debian slim，自带 bash、zip/unzip 与字体注册；加入面向飞牛 OS 等 Linux NAS 的编排，并提供 Windows 本地与容器两种系统级写入边界。
 
-版本目前是 0.1.3。从 0.0.2 算起，累计变更 393 个文件、新增约 5.6 万行。下面的功能清单按模块整理，构建与部署细节在后面的章节和 `docs/` 里。
+版本目前是 0.1.4。从 0.0.2 算起，累计变更 393 个文件、新增约 5.6 万行。下面的功能清单按模块整理，构建与部署细节在后面的章节和 `docs/` 里。
 
 Windows 便携版在本仓库的 [Releases](https://github.com/ODO-TECH/Rikkahub-desktoPLUS/releases) 提供，应用内的更新检查也指向本仓库。项目名里的 PLUS 只代表本分支的增量，不属于上游品牌；数据目录、环境变量前缀与技术标识符与上游保持一致，可以和上游版本共用同一份 `pc-data/`。
 
@@ -236,7 +236,7 @@ docker run -d --name rikkahub-plus --restart unless-stopped \
   -p 11451:11451 \
   -e RIKKAHUB_PASSWORD='换成你的密码' \
   -v "$PWD/pc-data:/app/pc-data" \
-  rikkahub-desktop-plus:0.1.3
+  rikkahub-desktop-plus:0.1.4
 ```
 
 只有 `/app/pc-data` 必须挂载。不要把宿主目录挂到 `/app` 或 `/app/web-ui`，那会覆盖镜像里的程序文件。要交给 agent 使用的 NAS 目录，通过挂载表划边界：
@@ -317,6 +317,7 @@ Kelivo 方向是双向的：导入支持 8 类数据，导出遵循 schema v3 �
 | **0.1.1** | 容器加固（非 root、只读根、访问密码必填）、沙盒判定口径统一（容器看挂载表，普通 Linux 的目录权限报错不再算生效）、健康检查只判存活、SSH 授权根与路径边界修正 |
 | **0.1.2** | Windows 受限沙盒启用链路修复：后端不是由桌面壳拉起时「立即重启」原本是空操作，现在开关真正生效；关闭沙盒需退出重开的限制在界面上如实提示 |
 | **0.1.3** | 内置 `@rikkahub/fetch`（第三种 MCP 传输：进程内，不依赖供应商，HTML 转正文 Markdown，出站拦回环/内网/云元数据）、实验功能「心情」（每轮异步判定 + 按置信度与每日上限注入，默认关闭）、受限沙盒下本地 MCP 可用（npm/uv/pip 缓存改道 + 初始化超时 60 秒）、更新检查以界面版本为准 |
+| **0.1.4** | 修复设置页卡顿：移除弹窗全屏实时模糊，鼠标移动不再反复重采样背景，交互恢复到约 60fps；背景仍压暗，顶带窗控保持清晰可点 |
 
 同批修复里值得一提的：微信「已连接但收不到消息」（入站消息被误判为机器人回声）、点击停止后排队项悬挂导致 IM 串行回复链冻结、导入手机备份重置 PC 专属配置、压缩模型未配置时误兜底到 `gpt-4o-mini`、压缩后上下文用量不降反升，以及 SSH 凭据声称不导出安卓而实际从未剥离（已修复并有测试锁定）。
 

@@ -5,4 +5,4 @@
 // 后端比前端旧时，update/check 只按后端版本比较会把"工件已是新版"的用户反复提示更新。
 // 因此界面把自己的版本带给后端，由后端取两者较高者作为「当前版本」。
 // 唯一改写入口 pc-server/scripts/bump-version.ts；CI 的 check-version-sync.ts 校验同值。
-export const APP_VERSION = "0.1.3";
+export const APP_VERSION = "0.1.4";

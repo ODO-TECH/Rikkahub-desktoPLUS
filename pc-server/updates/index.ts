@@ -65,7 +65,7 @@ export function writeSkippedVersion(version: string) {
 // 一次同步本处 + tauri.conf.json + Cargo.toml + web-ui/app/lib/app-version.ts；
 // 请勿手改单处（CI 的 check-version-sync.ts 会红灯）。更新检查用本值对比 GitHub
 // release tag；界面版本比本值新时（后端进程未重启）update/check 以界面版本为准。
-export const APP_VERSION = "0.1.3";
+export const APP_VERSION = "0.1.4";
 
 // GitHub 出站统一入口:证书校验失败(本机 HTTPS 被加速 / 代理工具接管)时改用系统根证书
 // 重试一次。见 foundation/tls-trust.ts。
